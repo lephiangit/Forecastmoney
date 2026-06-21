@@ -1,0 +1,25 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Database
+supabase>=2.0.0
+
+# AI
+google-generativeai>=0.8.0
+tensorflow>=2.16.0
+
+# Data
+yfinance>=0.2.40
+pandas>=2.0.0
+numpy>=1.26.4
+scikit-learn>=1.4.0
+scipy>=1.12.0
+
+# News
+feedparser>=6.0.11
+
+# Utilities
+python-dotenv>=1.0.0
+requests>=2.32.0

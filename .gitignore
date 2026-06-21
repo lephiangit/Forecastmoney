@@ -1,0 +1,53 @@
+# ─── ForecastAI .gitignore ─────────────────────────────────────────
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets & Environment
+.env
+.streamlit/secrets.toml
+
+# Model weights
+# NOTE: Removed ignore for .keras and .pkl so that Render can pull the trained model from GitHub.
+# TFT model and scalers are small enough to be tracked by git directly.
+# models/*.keras
+models/*.h5
+# models/*.pkl
+models/*.pt
+models/*.pth
+
+# Data (downloaded at runtime & Kaggle local base)
+data/
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Internal docs
+README_INTERNAL.md
+DEPLOYMENT_CHECKLIST.md
+PROJECT_ACTIVITIES.md
+
+# Ignore design_rule directory to avoid pushing heavy design guides
+design_rule/
