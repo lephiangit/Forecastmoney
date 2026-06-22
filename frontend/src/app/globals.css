@@ -1,0 +1,315 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Binance Design System Tokens */
+  --bg-primary: #0b0e11;        /* canvas-dark */
+  --bg-secondary: #12161c;      /* Slightly lighter canvas */
+  --bg-card: #1e2329;           /* surface-card-dark */
+  --bg-elevated: #2b3139;       /* surface-elevated-dark */
+  --bg-border: #2b3139;         /* hairline-on-dark */
+  --text-primary: #ffffff;      /* on-dark */
+  --text-body: #eaecef;         /* body */
+  --text-muted: #707a8a;        /* muted */
+  --text-muted-strong: #929aa5; /* muted-strong */
+  
+  --accent: #fcd535;            /* primary */
+  --accent-hover: #f0b90b;      /* primary-active */
+  --accent-disabled: #3a3a1f;   /* primary-disabled */
+  --on-accent: #181a20;         /* on-primary */
+  
+  --green: #0ecb81;             /* trading-up */
+  --red: #f6465d;               /* trading-down */
+  --blue: #3b82f6;              /* info */
+
+  /* Animation Easing */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ═══════════════════════════════════════════════════════
+   1. GLOBAL SMOOTH SCROLL & EASING
+   ═══════════════════════════════════════════════════════ */
+html {
+  scroll-behavior: smooth;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--bg-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* ═══════════════════════════════════════════════════════
+   2. BUTTON & INTERACTIVE FEEDBACK
+   ═══════════════════════════════════════════════════════ */
+
+/* Active press — nút lún xuống khi bấm */
+button, a {
+  transition: all 0.25s var(--ease-spring);
+}
+button:active:not(:disabled) {
+  transform: scale(0.96) !important;
+}
+
+/* Primary Button glow effect */
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+  position: relative;
+  overflow: hidden;
+}
+.btn-primary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  transform: translateX(-100%);
+  transition: transform 0.5s var(--ease-out-expo);
+}
+.btn-primary:hover::before {
+  transform: translateX(100%);
+}
+
+/* ═══════════════════════════════════════════════════════
+   3. CARD HOVER — Bay lên & Đổ bóng
+   ═══════════════════════════════════════════════════════ */
+.card-hover {
+  transition: transform 0.3s var(--ease-spring), box-shadow 0.3s var(--ease-spring), border-color 0.3s ease;
+}
+.card-hover:hover {
+  transform: translateY(-4px) scale(1.015);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--accent)/20;
+}
+
+/* Micro-scale card */
+.card-micro:hover {
+  transform: scale(1.02);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* ═══════════════════════════════════════════════════════
+   4. MENU HOVER UNDERLINE — Gạch chân tự chạy
+   ═══════════════════════════════════════════════════════ */
+.nav-link {
+  position: relative;
+  padding-bottom: 2px;
+}
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width 0.3s var(--ease-out-expo), left 0.3s var(--ease-out-expo);
+}
+.nav-link:hover::after,
+.nav-link-active::after {
+  width: 100%;
+  left: 0;
+}
+.nav-link-active {
+  color: var(--accent) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   5. FLOATING LABELS — Nhãn trượt mượt mà
+   ═══════════════════════════════════════════════════════ */
+.float-input-group {
+  position: relative;
+}
+.float-input-group input {
+  padding-top: 1.5rem;
+  padding-bottom: 0.5rem;
+}
+.float-input-group label {
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: all 0.25s var(--ease-spring);
+  transform-origin: left;
+}
+.float-input-group input:focus + label,
+.float-input-group input:not(:placeholder-shown) + label {
+  top: 0.65rem;
+  transform: translateY(0) scale(0.75);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════
+   6. SCROLL ANIMATIONS — Fade-in / Slide-up
+   ═══════════════════════════════════════════════════════ */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 0.5s var(--ease-out-expo) forwards; }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up { animation: fadeInUp 0.6s var(--ease-out-expo) forwards; }
+
+/* Stagger children animation */
+.stagger-children > * {
+  opacity: 0;
+  animation: fadeInUp 0.5s var(--ease-out-expo) forwards;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.3s; }
+.stagger-children > *:nth-child(7) { animation-delay: 0.35s; }
+.stagger-children > *:nth-child(8) { animation-delay: 0.4s; }
+.stagger-children > *:nth-child(9) { animation-delay: 0.45s; }
+
+/* Scale in */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.scale-in { animation: scaleIn 0.35s var(--ease-out-expo) forwards; }
+
+/* ═══════════════════════════════════════════════════════
+   7. TABLE ROW HIGHLIGHT
+   ═══════════════════════════════════════════════════════ */
+.table-row-hover {
+  transition: background-color 0.2s ease;
+}
+.table-row-hover:hover {
+  background-color: rgba(43, 49, 57, 0.5);
+}
+
+/* ═══════════════════════════════════════════════════════
+   8. SKELETON & SHIMMER LOADING
+   ═══════════════════════════════════════════════════════ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-border) 50%, var(--bg-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* Skeleton pulse */
+.skeleton {
+  background: var(--bg-card);
+  border-radius: 8px;
+  animation: skeleton-pulse 1.8s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ═══════════════════════════════════════════════════════
+   9. PULSE DOT & FLASH ANIMATIONS
+   ═══════════════════════════════════════════════════════ */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.pulse-dot { animation: pulse-dot 2s infinite; }
+
+@keyframes flash-green { 0%,100% { color: inherit; } 50% { color: var(--green); } }
+@keyframes flash-red   { 0%,100% { color: inherit; } 50% { color: var(--red); } }
+.flash-green { animation: flash-green 0.6s; }
+.flash-red   { animation: flash-red 0.6s; }
+
+/* ═══════════════════════════════════════════════════════
+   10. PRICE RANGE BAR (High-Low indicator)
+   ═══════════════════════════════════════════════════════ */
+.range-bar {
+  position: relative;
+  height: 4px;
+  background: linear-gradient(90deg, var(--red), var(--text-muted) 50%, var(--green));
+  border-radius: 2px;
+  overflow: visible;
+}
+.range-bar-dot {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-card);
+  box-shadow: 0 0 6px rgba(252, 213, 53, 0.5);
+  transition: left 0.6s var(--ease-spring);
+}
+
+/* ═══════════════════════════════════════════════════════
+   11. CANDLESTICK STYLES
+   ═══════════════════════════════════════════════════════ */
+.candle-up { fill: var(--green); stroke: var(--green); }
+.candle-down { fill: var(--red); stroke: var(--red); }
+
+/* ═══════════════════════════════════════════════════════
+   12. FLAT CARD SURFACE (No glassmorphism)
+   ═══════════════════════════════════════════════════════ */
+.glass {
+  background: var(--bg-card);
+  border: 1px solid var(--bg-border);
+  border-radius: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════
+   13. GRADIENT TEXT (kept as solid per Binance rules)
+   ═══════════════════════════════════════════════════════ */
+.gradient-text {
+  color: var(--accent);
+}
+
+/* ═══════════════════════════════════════════════════════
+   14. SMOOTH STICKY NAVBAR
+   ═══════════════════════════════════════════════════════ */
+.navbar-sticky {
+  backdrop-filter: saturate(180%) blur(12px);
+  background: rgba(11, 14, 17, 0.85);
+  transition: background 0.3s ease, box-shadow 0.3s ease, height 0.3s var(--ease-spring);
+}
+.navbar-sticky.scrolled {
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.4);
+  background: rgba(11, 14, 17, 0.95);
+}
+
+/* ═══════════════════════════════════════════════════════
+   15. MODAL BACKDROP
+   ═══════════════════════════════════════════════════════ */
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.modal-backdrop { animation: backdrop-in 0.2s ease forwards; }
+.modal-content { animation: modal-in 0.3s var(--ease-out-expo) forwards; }
