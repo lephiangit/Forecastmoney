@@ -59,7 +59,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
         continue;
       }
 
-      if (e.name === "AbortError") {
+      if (err.name === "AbortError") {
         throw new Error("Request timed out — backend may be starting up. Please try again.");
       }
       throw e;
