@@ -84,7 +84,7 @@ function CandlestickLineChart({
   const histBars = (forecast.historical || []).slice(-30);
   const tftMedian = forecast.tft.median || [];
 
-  const chartData: Record<string, unknown>[] = [];
+  const chartData: any[] = [];
 
   // Historical data — candlesticks
   histBars.forEach((bar) => {
@@ -195,7 +195,7 @@ function ForecastBarChart({
   const histBars = (forecast.historical || []).slice(-30);
   const tftMedian = forecast.tft.median || [];
 
-  const chartData: Record<string, unknown>[] = [];
+  const chartData: any[] = [];
 
   // Historical — cột xanh/đỏ dựa trên close vs open
   histBars.forEach((bar) => {
