@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 # Copy shared model files
 COPY models/ ./models/
-COPY data/ ./data/
+RUN mkdir -p data/
 
 # Expose port
 EXPOSE 8000
