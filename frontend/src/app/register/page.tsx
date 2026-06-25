@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { Activity, Mail, Lock, User, Eye, EyeOff, Loader2, Check } from "lucide-react"
+import { api } from "@/lib/api"
 import { useAuthStore, useT } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -47,13 +48,21 @@ export default function RegisterPage() {
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
-    setTimeout(() => {
-      login(email || "trader@forecastai.io", "user")
-      router.push("/")
-    }, 700)
+    try {
+      const res = await api.register(email, password)
+      if (res.token) {
+        localStorage.setItem("forecast_ai_token", res.token)
+        login(res.username, res.role || "user")
+        router.push("/")
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to register")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

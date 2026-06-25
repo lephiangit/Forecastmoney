@@ -151,7 +151,7 @@ def get_trades(user_id: int, limit: int = 100) -> List[Dict]:
 def get_admin_config(user_id: int) -> Dict[str, Any]:
     c = _get_client()
     default = {
-        "user_id": user_id, "initial_balance": 10000.0, "current_balance": 10000.0,
+        "user_id": user_id, "initial_balance": 0.0, "current_balance": 0.0,
         "total_pnl": 0.0, "win_trades": 0, "loss_trades": 0,
         "is_running": False, "started_at": None,
     }

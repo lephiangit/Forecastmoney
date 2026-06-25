@@ -30,10 +30,11 @@ def hash_password(password: str) -> str:
     return hashed.hex()
 
 
-def create_token(user_id: int, username: str) -> str:
+def create_token(user_id: int, username: str, role: str = "user") -> str:
     payload = {
         "user_id": user_id,
         "username": username,
+        "role": role,
         "exp": time.time() + 86400 * 7  # 7 days
     }
     payload_json = json.dumps(payload)
@@ -104,6 +105,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
                 return {
                     "user_id": existing_user["id"],
                     "username": existing_user["username"],
+                    "role": existing_user.get("role", "user"),
                     "exp": time.time() + 3600
                 }
     except Exception as e:
@@ -130,11 +132,12 @@ async def register(req: AuthRequest):
         raise HTTPException(500, "Could not create user in database")
         
     # Generate token immediately
-    token = create_token(user["id"], user["username"])
+    token = create_token(user["id"], user["username"], user.get("role", "user"))
     return {
         "success": True,
         "token": token,
         "username": user["username"],
+        "role": user.get("role", "user"),
         "message": "User registered successfully"
     }
 
@@ -149,11 +152,12 @@ async def login(req: AuthRequest):
     if user["password_hash"] != hashed:
         raise HTTPException(400, "Invalid username or password")
         
-    token = create_token(user["id"], user["username"])
+    token = create_token(user["id"], user["username"], user.get("role", "user"))
     return {
         "success": True,
         "token": token,
         "username": user["username"],
+        "role": user.get("role", "user"),
         "message": "Logged in successfully"
     }
 

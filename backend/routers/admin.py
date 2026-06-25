@@ -278,3 +278,87 @@ def trigger_autotrade(background_tasks: BackgroundTasks, secret: str = None):
     background_tasks.add_task(run_autotrade_task)
     return {"success": True, "message": "Auto-trading job started in background."}
 
+@router.get("/trigger-research")
+def trigger_research(background_tasks: BackgroundTasks, secret: str = None):
+    """Hidden endpoint to trigger news fetching & NLP research via external cron services."""
+    from backend.config import settings
+    if secret != settings.admin_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized cron trigger")
+        
+    def run_research_task():
+        import backend.cron_researcher as researcher
+        try:
+            researcher.run_research()
+        except Exception as e:
+            print(f"Cron Researcher Error: {e}")
+            
+    background_tasks.add_task(run_research_task)
+    return {"success": True, "message": "Research job started in background."}
+
+@router.get("/watchlist")
+def get_watchlist(user=Depends(get_current_user)):
+    """Get current user's watchlist."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        return []
+    res = c.table("user_watchlists").select("ticker").eq("user_id", user["user_id"]).execute()
+    return [r["ticker"] for r in (res.data or [])]
+
+@router.post("/watchlist")
+def add_to_watchlist(ticker: str, user=Depends(get_current_user)):
+    """Add a ticker to the watchlist."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "Database unavailable")
+    try:
+        c.table("user_watchlists").insert({
+            "user_id": user["user_id"],
+            "ticker": ticker.upper()
+        }).execute()
+        return {"success": True}
+    except Exception as e:
+        if "duplicate key" in str(e).lower():
+            return {"success": True} # Already exists
+        raise HTTPException(500, str(e))
+
+@router.delete("/watchlist/{ticker}")
+def remove_from_watchlist(ticker: str, user=Depends(get_current_user)):
+    """Remove a ticker from the watchlist."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "Database unavailable")
+    c.table("user_watchlists").delete().eq("user_id", user["user_id"]).eq("ticker", ticker.upper()).execute()
+    return {"success": True}
+
+@router.get("/leaderboard")
+def get_leaderboard():
+    """Get top 10 traders by PnL."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        return []
+    
+    # Query admin_config and join with users to get username
+    res = c.table("admin_config").select("total_pnl, win_trades, loss_trades, users!inner(username)").order("total_pnl", desc=True).limit(10).execute()
+    
+    leaderboard = []
+    for row in (res.data or []):
+        raw_username = row.get("users", {}).get("username", "unknown")
+        # Mask username
+        if len(raw_username) > 4:
+            masked = raw_username[:4] + "***"
+        else:
+            masked = raw_username + "***"
+            
+        leaderboard.append({
+            "id": row.get("id", str(len(leaderboard))),
+            "username": masked,
+            "total_pnl": row.get("total_pnl", 0),
+            "win_trades": row.get("win_trades", 0),
+            "loss_trades": row.get("loss_trades", 0)
+        })
+    
+    return leaderboard

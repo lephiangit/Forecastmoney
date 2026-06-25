@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { Activity, Mail, Lock, Eye, EyeOff, Loader2 } from "lucide-react"
+import { api } from "@/lib/api"
 import { useAuthStore, useT } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -39,15 +40,26 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [asAdmin, setAsAdmin] = useState(false)
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
-    setTimeout(() => {
-      login(email || "trader@forecastai.io", asAdmin ? "admin" : "user")
-      router.push("/")
-    }, 700)
+    try {
+      const res = await api.login(email, password)
+      if (res.token) {
+        localStorage.setItem("forecast_ai_token", res.token)
+        login(res.username, res.role || "user")
+        
+        // Handle returnUrl if exists
+        const params = new URLSearchParams(window.location.search)
+        const returnUrl = params.get("returnUrl")
+        router.push(returnUrl || "/")
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to login")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -118,16 +130,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-xs">
-              <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={asAdmin}
-                  onChange={(e) => setAsAdmin(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-border accent-primary"
-                />
-                Sign in as admin (demo)
-              </label>
+            <div className="flex items-center justify-end text-xs">
               <button type="button" className="font-medium text-primary hover:underline">
                 Forgot password?
               </button>

@@ -7,8 +7,9 @@
 -- Users table: store accounts
 CREATE TABLE IF NOT EXISTS users (
     id              BIGSERIAL PRIMARY KEY,
-    username        VARCHAR(50) UNIQUE NOT NULL,
+    username        VARCHAR(100) UNIQUE NOT NULL,
     password_hash   VARCHAR(255) NOT NULL,
+    role            VARCHAR(20) DEFAULT 'user',
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -45,11 +46,11 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 
 -- Admin config/User portfolios: unique per user
 CREATE TABLE IF NOT EXISTS admin_config (
-    id               SERIAL PRIMARY KEY,
-    user_id          BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    initial_balance  DECIMAL(18,4) DEFAULT 10000,
-    current_balance  DECIMAL(18,4) DEFAULT 10000,
-    total_pnl        DECIMAL(18,4) DEFAULT 0,
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          BIGINT REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    initial_balance  DECIMAL(18,4) DEFAULT 0.0,
+    current_balance  DECIMAL(18,4) DEFAULT 0.0,
+    total_pnl        DECIMAL(18,4) DEFAULT 0.0,
     win_trades       INT DEFAULT 0,
     loss_trades      INT DEFAULT 0,
     is_running       BOOLEAN DEFAULT FALSE,
@@ -73,3 +74,33 @@ CREATE TABLE IF NOT EXISTS model_accuracy (
 -- ✗ price_history   → yfinance real-time
 -- ✗ forecasts       → computed on-demand per request
 -- ✗ news_cache      → fetched fresh each time (30min in-memory cache only)
+
+-- Forecast Cache Table
+-- Stores heavy API responses for 6 hours to speed up repeated queries.
+CREATE TABLE IF NOT EXISTS forecast_cache (
+    id            BIGSERIAL PRIMARY KEY,
+    ticker        VARCHAR(20) NOT NULL,
+    days          INT NOT NULL,
+    response_json JSONB NOT NULL,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index for fast lookup by ticker and days
+CREATE INDEX IF NOT EXISTS idx_forecast_cache_lookup 
+    ON forecast_cache(ticker, days, created_at DESC);
+
+
+-- User Watchlists Table
+-- Stores personalized watchlists for authenticated users.
+CREATE TABLE IF NOT EXISTS user_watchlists (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ticker     VARCHAR(20) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, ticker) -- Prevent duplicate tickers for the same user
+);
+
+-- Index for quick retrieval of a user's watchlist
+CREATE INDEX IF NOT EXISTS idx_user_watchlists_user_id 
+    ON user_watchlists(user_id);
+

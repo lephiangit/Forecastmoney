@@ -8,9 +8,9 @@ import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
 import { StatCard } from "@/components/ui/stat-card"
-import { SignalCard } from "@/components/features/signal-card"
 import { PortfolioChart } from "@/components/dashboard/portfolio-chart"
 import { Skeleton, ErrorCard } from "@/components/ui/states"
+import { AuthGuard } from "@/components/auth-guard"
 import { Sparkline } from "@/components/ui/sparkline"
 import { formatCurrency, formatPercent, timeAgo } from "@/lib/format"
 import { ActionBadge } from "@/components/ui/tags"
@@ -19,14 +19,15 @@ import { cn } from "@/lib/utils"
 export default function DashboardPage() {
   const t = useT()
   const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio })
-  const signalsQ = useQuery({ queryKey: ["signals"], queryFn: api.getSignals })
+  const leaderboardQ = useQuery({ queryKey: ["leaderboard"], queryFn: api.getLeaderboard })
   const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions })
   const marketsQ = useQuery({ queryKey: ["markets"], queryFn: api.getMarkets, refetchInterval: 30000 })
 
   const p = portfolioQ.data
 
   return (
-    <div>
+    <AuthGuard>
+      <div>
       <PageHeader title={t("accountOverview")} subtitle={t("howIsMyAccount")} />
 
       {portfolioQ.isError ? (
@@ -104,17 +105,32 @@ export default function DashboardPage() {
 
         <div className="space-y-6">
           <div>
-            <h2 className="mb-3 font-semibold text-card-foreground">{t("topSignals")}</h2>
-            {signalsQ.isError ? (
-              <ErrorCard onRetry={() => signalsQ.refetch()} />
-            ) : !signalsQ.data ? (
+            <h2 className="mb-3 font-semibold text-card-foreground">Top AI Traders</h2>
+            {leaderboardQ.isError ? (
+              <ErrorCard onRetry={() => leaderboardQ.refetch()} />
+            ) : !leaderboardQ.data ? (
               <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28" />)}
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}
               </div>
             ) : (
               <div className="space-y-3">
-                {signalsQ.data.slice(0, 3).map((s, i) => (
-                  <SignalCard key={s.id} signal={s} index={i} />
+                {leaderboardQ.data.map((l, i) => (
+                  <div key={l.id} className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary font-bold">
+                        #{i + 1}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-card-foreground">{l.username}</p>
+                        <p className="text-xs text-muted-foreground">{l.win_trades}W / {l.loss_trades}L</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={cn("font-mono text-sm", l.total_pnl >= 0 ? "text-positive" : "text-negative")}>
+                        {l.total_pnl >= 0 ? "+" : ""}{formatCurrency(l.total_pnl)}
+                      </p>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
@@ -184,5 +200,6 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+    </AuthGuard>
   )
 }

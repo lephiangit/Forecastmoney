@@ -4,7 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Search, TrendingUp, TrendingDown } from "lucide-react"
+import { Search, TrendingUp, TrendingDown, Star } from "lucide-react"
 import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import type { TranslationKey } from "@/lib/i18n"
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 
 const FILTERS: { value: string; key: TranslationKey }[] = [
   { value: "all", key: "allAssets" },
+  { value: "watchlist", key: "watchlist" },
   { value: "crypto", key: "crypto" },
   { value: "index", key: "indices" },
   { value: "commodity", key: "commodities" },
@@ -28,9 +29,21 @@ export default function MarketsPage() {
   const [search, setSearch] = useState("")
   const { data, isError, refetch } = useQuery({ queryKey: ["markets"], queryFn: api.getMarkets, refetchInterval: 30000 })
 
+  const { data: watchlist = [], refetch: refetchWatchlist } = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist })
+
   const filtered = (data ?? [])
-    .filter((a) => filter === "all" || a.category === filter)
+    .filter((a) => filter === "all" || a.category === filter || (filter === "watchlist" && watchlist.includes(a.ticker)))
     .filter((a) => a.ticker.toLowerCase().includes(search.toLowerCase()) || a.name.toLowerCase().includes(search.toLowerCase()))
+
+  const toggleWatchlist = async (e: React.MouseEvent, ticker: string) => {
+    e.preventDefault()
+    if (watchlist.includes(ticker)) {
+      await api.removeWatchlist(ticker)
+    } else {
+      await api.addWatchlist(ticker)
+    }
+    refetchWatchlist()
+  }
 
   return (
     <div>
@@ -73,6 +86,7 @@ export default function MarketsPage() {
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="px-4 py-3 font-medium w-8"></th>
                 <th className="px-4 py-3 font-medium">{t("asset")}</th>
                 <th className="px-4 py-3 text-right font-medium">{t("price")}</th>
                 <th className="px-4 py-3 text-right font-medium">{t("change24h")}</th>
@@ -93,6 +107,11 @@ export default function MarketsPage() {
                     transition={{ delay: i * 0.03 }}
                     className="border-b border-border/60 transition-colors last:border-0 hover:bg-accent/40"
                   >
+                    <td className="px-4 py-3">
+                      <button onClick={(e) => toggleWatchlist(e, a.ticker)} className="text-muted-foreground hover:text-primary transition-colors">
+                        <Star className={cn("h-4 w-4", watchlist.includes(a.ticker) && "fill-primary text-primary")} />
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <Link href={`/forecast/${a.ticker}`} className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center rounded bg-accent text-xs font-bold text-foreground">

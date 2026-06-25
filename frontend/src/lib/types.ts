@@ -156,3 +156,11 @@ export interface ResearchQueueItem {
   progress: number
   createdAt: string
 }
+
+export interface LeaderboardEntry {
+  id: string
+  username: string
+  total_pnl: number
+  win_trades: number
+  loss_trades: number
+}
