@@ -180,3 +180,20 @@ def get_pnl_report(user=Depends(get_current_user)):
         "trade_count": len(trades),
         "trades": trades[:50],
     }
+
+@router.get("/system/accuracy")
+def get_system_accuracy(user=Depends(get_current_user)):
+    """Get recent model accuracy evaluations for Admin Dashboard."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        return {"success": False, "records": []}
+    try:
+        res = (c.table("model_accuracy").select("*")
+               .not_.is_("actual_price", "null")
+               .order("forecast_date", desc=True)
+               .limit(10).execute())
+        return {"success": True, "records": res.data or []}
+    except Exception as e:
+        print(f"Error fetching system accuracy: {e}")
+        return {"success": False, "records": []}

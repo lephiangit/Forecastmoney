@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { adminApi, type Portfolio } from "@/lib/api";
-import { ArrowLeft, TrendingUp, TrendingDown, Play, Square, DollarSign, Activity, LogOut } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Play, Square, DollarSign, Activity, LogOut, CheckCircle } from "lucide-react";
 
 function cn(...c: (string | false | undefined)[]) { return c.filter(Boolean).join(" "); }
 
@@ -17,6 +17,16 @@ export default function AdminPage() {
   const [initialBalance, setInitialBalance] = useState(10000);
   const [tradeForm, setTradeForm] = useState<{ ticker: string; action: "BUY" | "SELL"; quantity: number }>({ ticker: "BTC-USD", action: "BUY", quantity: 0.001 });
   const [msg, setMsg] = useState<string | null>(null);
+  const [accuracyRecords, setAccuracyRecords] = useState<any[]>([]);
+
+  async function loadAccuracy() {
+    try {
+      const res = await adminApi.systemAccuracy() as { success: boolean, records: any[] };
+      if (res.success) setAccuracyRecords(res.records);
+    } catch (e) {
+      console.error("Failed to load accuracy:", e);
+    }
+  }
 
   async function loadPortfolio() {
     setLoading(true);
@@ -40,6 +50,7 @@ export default function AdminPage() {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (storedUser) setUsername(storedUser);
       loadPortfolio();
+      loadAccuracy();
     }
   }, [router]);
 
@@ -268,6 +279,47 @@ export default function AdminPage() {
                           <td className="py-2 text-right text-[#b7bdc6]">${t.price?.toFixed(2)}</td>
                           <td className="py-2 text-right text-[#eaecef] font-medium">${t.total_value?.toFixed(2)}</td>
                           <td className="py-2 text-center text-xs text-[#848e9c]">{t.model_signal}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            
+            {/* System Accuracy */}
+            {accuracyRecords.length > 0 && (
+              <div className="glass p-6 rounded-xl">
+                <div className="flex items-center gap-2 mb-4">
+                  <CheckCircle size={18} className="text-[#03a66d]" />
+                  <h2 className="font-semibold text-[#eaecef]">Độ chính xác AI (Auto-Evaluated)</h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-[#848e9c] text-xs border-b border-[#2b3139]">
+                        <th className="text-left py-2">Ngày dự báo</th>
+                        <th className="text-left py-2">Tài sản</th>
+                        <th className="text-center py-2">Mô hình</th>
+                        <th className="text-right py-2">Giá AI đoán</th>
+                        <th className="text-right py-2">Giá thực tế</th>
+                        <th className="text-right py-2">Sai số (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accuracyRecords.map((r, i) => (
+                        <tr key={i} className="border-b border-[#1e2329] hover:bg-[#2b3139]/30">
+                          <td className="py-2 text-[#848e9c] text-xs">{r.forecast_date}</td>
+                          <td className="py-2 font-medium text-[#eaecef]">{r.ticker}</td>
+                          <td className="py-2 text-center text-xs text-[#848e9c]">{r.model_name}</td>
+                          <td className="py-2 text-right text-[#b7bdc6]">${r.predicted_price?.toFixed(2)}</td>
+                          <td className="py-2 text-right text-[#eaecef] font-medium">${r.actual_price?.toFixed(2)}</td>
+                          <td className="py-2 text-right">
+                            <span className={cn("px-2 py-0.5 rounded text-xs font-bold",
+                              r.error_pct < 2 ? "bg-[#03a66d]/15 text-[#03a66d]" : 
+                              r.error_pct < 5 ? "bg-[#f0b90b]/15 text-[#f0b90b]" : "bg-[#cf304a]/15 text-[#cf304a]"
+                            )}>{r.error_pct?.toFixed(2)}%</span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

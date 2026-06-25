@@ -180,3 +180,144 @@ def update_admin_config(user_id: int, updates: Dict[str, Any]) -> bool:
     except Exception as e:
         print(f"DB update_admin_config error: {e}")
         return False
+
+
+# ── Forecast Cache ─────────────────────────────────────────────────────────────
+
+def get_forecast_cache(ticker: str, days: int) -> Optional[Dict]:
+    c = _get_client()
+    if c is None:
+        return None
+    try:
+        # Check cache from last 6 hours
+        res = (c.table("forecast_cache").select("*")
+               .eq("ticker", ticker).eq("days", days)
+               .order("created_at", desc=True).limit(1).execute())
+        if res.data:
+            cache_record = res.data[0]
+            # Verify if it's within 6 hours
+            created_at = datetime.fromisoformat(cache_record["created_at"].replace("Z", "+00:00"))
+            # We use naive dt comparison for simplicity if timezones are matched, or just let python handle it
+            # But let's be safe: simple string comparison if datetime isn't easily comparable
+            import time
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
+            diff = (now - created_at).total_seconds()
+            if diff < 6 * 3600:  # 6 hours
+                return cache_record["response_json"]
+        return None
+    except Exception as e:
+        print(f"DB get_forecast_cache error: {e}")
+        return None
+
+
+def save_forecast_cache(ticker: str, days: int, response_json: Dict) -> bool:
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        c.table("forecast_cache").insert({
+            "ticker": ticker,
+            "days": days,
+            "response_json": response_json
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"DB save_forecast_cache error: {e}")
+        return False
+
+
+# ── User Watchlists ────────────────────────────────────────────────────────────
+
+def get_watchlist(user_id: int) -> List[str]:
+    c = _get_client()
+    if c is None:
+        return []
+    try:
+        res = c.table("user_watchlists").select("ticker").eq("user_id", user_id).execute()
+        return [row["ticker"] for row in res.data] if res.data else []
+    except Exception as e:
+        print(f"DB get_watchlist error: {e}")
+        return []
+
+def add_to_watchlist(user_id: int, ticker: str) -> bool:
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        c.table("user_watchlists").insert({
+            "user_id": user_id,
+            "ticker": ticker.upper()
+        }).execute()
+        return True
+    except Exception as e:
+        # Might fail if already exists (UNIQUE constraint)
+        print(f"DB add_to_watchlist error (or duplicate): {e}")
+        return False
+
+def remove_from_watchlist(user_id: int, ticker: str) -> bool:
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        c.table("user_watchlists").delete().eq("user_id", user_id).eq("ticker", ticker.upper()).execute()
+        return True
+    except Exception as e:
+        print(f"DB remove_from_watchlist error: {e}")
+        return False
+
+
+# ── Model Accuracy Tracking ───────────────────────────────────────────────────
+
+def save_accuracy_prediction(ticker: str, model_name: str, forecast_date: str, predicted_price: float) -> bool:
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        # Check if we already have a prediction for this exact ticker/date/model to avoid spam
+        res = c.table("model_accuracy").select("id").eq("ticker", ticker.upper()).eq("model_name", model_name).eq("forecast_date", forecast_date).execute()
+        if res.data:
+            return True # Already exists, don't duplicate
+            
+        c.table("model_accuracy").insert({
+            "ticker": ticker.upper(),
+            "model_name": model_name,
+            "forecast_date": forecast_date,
+            "predicted_price": float(predicted_price)
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"DB save_accuracy_prediction error: {e}")
+        return False
+
+def get_pending_evaluations() -> List[Dict]:
+    c = _get_client()
+    if c is None:
+        return []
+    try:
+        today_str = datetime.now().date().isoformat()
+        # Fetch rows where actual_price is null and forecast_date is today or in the past
+        res = (c.table("model_accuracy").select("*")
+               .is_("actual_price", "null")
+               .lte("forecast_date", today_str)
+               .execute())
+        return res.data or []
+    except Exception as e:
+        print(f"DB get_pending_evaluations error: {e}")
+        return []
+
+def update_accuracy_evaluation(record_id: int, actual_price: float, error_pct: float) -> bool:
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        c.table("model_accuracy").update({
+            "actual_price": float(actual_price),
+            "error_pct": float(error_pct)
+        }).eq("id", record_id).execute()
+        return True
+    except Exception as e:
+        print(f"DB update_accuracy_evaluation error: {e}")
+        return False
+
+

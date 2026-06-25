@@ -121,3 +121,31 @@ async def login(req: AuthRequest):
         "username": user["username"],
         "message": "Logged in successfully"
     }
+
+
+@router.get("/watchlist")
+async def get_user_watchlist(current_user: dict = Depends(get_current_user)):
+    from backend.database import get_watchlist
+    tickers = get_watchlist(current_user["user_id"])
+    return {"success": True, "watchlist": tickers}
+
+
+@router.post("/watchlist")
+async def add_user_watchlist(req: dict, current_user: dict = Depends(get_current_user)):
+    ticker = req.get("ticker")
+    if not ticker:
+        raise HTTPException(400, "Ticker is required")
+    from backend.database import add_to_watchlist
+    success = add_to_watchlist(current_user["user_id"], ticker)
+    if not success:
+        raise HTTPException(500, "Could not add to watchlist (maybe already exists)")
+    return {"success": True, "ticker": ticker.upper()}
+
+
+@router.delete("/watchlist/{ticker}")
+async def remove_user_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
+    from backend.database import remove_from_watchlist
+    success = remove_from_watchlist(current_user["user_id"], ticker)
+    if not success:
+        raise HTTPException(500, "Could not remove from watchlist")
+    return {"success": True, "ticker": ticker.upper()}

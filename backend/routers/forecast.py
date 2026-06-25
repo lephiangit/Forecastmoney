@@ -26,8 +26,16 @@ def combined_forecast(
     """
     ticker = ticker.upper()
 
+    from backend.database import get_forecast_cache, save_forecast_cache
+    cached_res = get_forecast_cache(ticker, days)
+    if cached_res:
+        # Include a flag to let the frontend know it's a cached response
+        cached_res["cached"] = True
+        return cached_res
+
     # Run research first for context
     from backend.agents.research_agent import analyze_market
+    from backend.models.forecaster import get_live_quote, run_combined_forecast
     live = get_live_quote(ticker)
     price_info = f"Giá: {live['price']:,.4f}" if live else ""
 
@@ -52,6 +60,16 @@ def combined_forecast(
         "analyzed_at": research.get("analyzed_at"),
     }
     result["live"] = live
+
+    # Save to cache before returning
+    save_forecast_cache(ticker, days, result)
+
+    # Log T+1 prediction for future accuracy evaluation (non-blocking)
+    from backend.database import save_accuracy_prediction
+    if result.get("forecast") and result["forecast"].get("median") and len(result["forecast"]["median"]) > 0:
+        t1 = result["forecast"]["median"][0]
+        import threading
+        threading.Thread(target=save_accuracy_prediction, args=(ticker, "sentiment_fusion", t1["date"], t1["price"])).start()
 
     return result
 
@@ -78,7 +96,7 @@ def tft_only_forecast(
         return [{"date": str(d.date()), "price": round(float(v), 6)} for d, v in s.items()]
 
     live = get_live_quote(ticker)
-    return {
+    result = {
         "ticker": ticker,
         "model": "TFT",
         "days": days,
@@ -90,6 +108,15 @@ def tft_only_forecast(
         },
         "generated_at": __import__("datetime").datetime.now().isoformat(),
     }
+
+    # Log T+1 prediction for future accuracy evaluation (non-blocking)
+    from backend.database import save_accuracy_prediction
+    if result["forecast"]["median"] and len(result["forecast"]["median"]) > 0:
+        t1 = result["forecast"]["median"][0]
+        import threading
+        threading.Thread(target=save_accuracy_prediction, args=(ticker, "tft", t1["date"], t1["price"])).start()
+
+    return result
 
 
 @router.get("/accuracy/{ticker}")

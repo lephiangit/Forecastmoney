@@ -212,6 +212,17 @@ export const authApi = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  getWatchlist: () =>
+    apiFetch<{ success: boolean; watchlist: string[] }>("/auth/watchlist"),
+  addWatchlist: (ticker: string) =>
+    apiFetch<{ success: boolean; ticker: string }>("/auth/watchlist", {
+      method: "POST",
+      body: JSON.stringify({ ticker }),
+    }),
+  removeWatchlist: (ticker: string) =>
+    apiFetch<{ success: boolean; ticker: string }>(`/auth/watchlist/${ticker}`, {
+      method: "DELETE",
+    }),
 };
 
 // ── Admin API ──────────────────────────────────────────────────────────────────
@@ -236,13 +247,7 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ ticker, action, quantity }),
     }),
-  startTrading: (balance: number) =>
-    apiFetch("/admin/trading/start", {
-      method: "POST",
-      body: JSON.stringify({ initial_balance: balance }),
-    }),
-  stopTrading: () =>
-    apiFetch("/admin/trading/stop", {
-      method: "POST",
-    }),
+  startTrading: async (budget: number) => apiFetch('/admin/trading/start', { method: 'POST', body: JSON.stringify({ budget }) }),
+  stopTrading: async () => apiFetch('/admin/trading/stop', { method: 'POST' }),
+  systemAccuracy: async () => apiFetch('/admin/system/accuracy', { method: 'GET' }),
 };
