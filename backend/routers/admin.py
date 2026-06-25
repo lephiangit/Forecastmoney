@@ -6,7 +6,7 @@ NOTE: All endpoints are sync `def` so FastAPI runs them in a threadpool,
 preventing blocking calls from freezing the event loop.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime
@@ -197,3 +197,24 @@ def get_system_accuracy(user=Depends(get_current_user)):
     except Exception as e:
         print(f"Error fetching system accuracy: {e}")
         return {"success": False, "records": []}
+
+@router.get("/trigger-learner")
+def trigger_learner(background_tasks: BackgroundTasks, secret: str = None):
+    """Hidden endpoint to trigger auto-learning via external cron services (e.g. cron-job.org)."""
+    from backend.config import settings
+    # We use admin_secret_key as the password for this cron job
+    if secret != settings.admin_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized cron trigger")
+        
+    def run_learning_task():
+        import backend.cron_accuracy_learner as learner
+        try:
+            tickers = learner.run_evaluations()
+            learner.online_learning(tickers)
+        except Exception as e:
+            print(f"Cron Learner Error: {e}")
+            
+    # Run in background so the external cron ping doesn't timeout
+    background_tasks.add_task(run_learning_task)
+    return {"success": True, "message": "Accuracy evaluation and online learning started in background."}
+
