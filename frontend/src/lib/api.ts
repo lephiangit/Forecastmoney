@@ -68,8 +68,16 @@ const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms))
 
 export const api = {
   async getMarkets(): Promise<MarketAsset[]> {
-    const res = await tryFetch<{ data: MarketAsset[] }>("/market/overview")
-    return res?.data || MARKET_ASSETS.map(jitter)
+    const res = await tryFetch<{ data: any[] }>("/market/overview")
+    if (res?.data) {
+      return res.data.map((d: any) => ({
+        ...d,
+        changePercent: d.change_pct ?? d.changePercent,
+        high24h: d.high_24h ?? d.high24h,
+        low24h: d.low_24h ?? d.low24h,
+      }))
+    }
+    return MARKET_ASSETS.map(jitter)
   },
 
   async getAsset(ticker: string): Promise<MarketAsset | undefined> {
@@ -80,7 +88,7 @@ export const api = {
 
   async getForecasts(): Promise<Forecast[]> {
     return Promise.all(MARKET_ASSETS.slice(0, 5).map(async (a) => {
-      const f = await this.getForecast(a.ticker)
+      const f = await api.getForecast(a.ticker)
       return f
     }))
   },
