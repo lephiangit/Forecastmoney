@@ -250,4 +250,5 @@ export const adminApi = {
   startTrading: async (budget: number) => apiFetch('/admin/trading/start', { method: 'POST', body: JSON.stringify({ budget }) }),
   stopTrading: async () => apiFetch('/admin/trading/stop', { method: 'POST' }),
   systemAccuracy: async () => apiFetch('/admin/system/accuracy', { method: 'GET' }),
+  portfolioChart: () => apiFetch<{ time: string; balance: number; pnl: number }[]>("/admin/portfolio/chart"),
 };

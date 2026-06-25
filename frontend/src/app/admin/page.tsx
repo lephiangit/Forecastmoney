@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { adminApi, type Portfolio } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { ArrowLeft, TrendingUp, TrendingDown, Play, Square, DollarSign, Activity, LogOut, CheckCircle, Shield } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 function cn(...c: (string | false | undefined)[]) { return c.filter(Boolean).join(" "); }
 
@@ -19,6 +20,20 @@ export default function AdminPage() {
   const [tradeForm, setTradeForm] = useState<{ ticker: string; action: "BUY" | "SELL"; quantity: number }>({ ticker: "BTC-USD", action: "BUY", quantity: 0.001 });
   const [msg, setMsg] = useState<string | null>(null);
   const [accuracyRecords, setAccuracyRecords] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<any[]>([]);
+
+  async function loadChart() {
+    try {
+      const data = await adminApi.portfolioChart();
+      const formatted = data.map(d => ({
+        ...d,
+        timeLabel: new Date(d.time).toLocaleString("vi-VN", { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      }));
+      setChartData(formatted);
+    } catch (e) {
+      console.error("Failed to load chart", e);
+    }
+  }
 
   async function loadAccuracy() {
     try {
@@ -53,6 +68,7 @@ export default function AdminPage() {
         setUsername(email);
         loadPortfolio();
         loadAccuracy();
+        loadChart();
         return;
       }
 
@@ -65,6 +81,7 @@ export default function AdminPage() {
         if (storedUser) setUsername(storedUser);
         loadPortfolio();
         loadAccuracy();
+        loadChart();
       }
     }
     
@@ -75,6 +92,7 @@ export default function AdminPage() {
     try {
       const p = await adminApi.portfolio();
       setPortfolio(p);
+      loadChart();
     } catch (e: unknown) {
       console.error(e);
     }
@@ -189,6 +207,56 @@ export default function AdminPage() {
                 </div>
               ))}
             </div>
+
+            {/* Portfolio Performance Chart */}
+            {chartData.length > 0 && (
+              <div className="glass p-6 rounded-xl">
+                <h2 className="font-semibold text-[#eaecef] mb-4">Hiệu suất danh mục (Số dư tài khoản)</h2>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#fcd535" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#fcd535" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#2b3139" vertical={false} />
+                      <XAxis 
+                        dataKey="timeLabel" 
+                        stroke="#848e9c" 
+                        fontSize={12} 
+                        tickLine={false} 
+                        axisLine={false} 
+                        minTickGap={30}
+                      />
+                      <YAxis 
+                        domain={['dataMin - 1000', 'dataMax + 1000']} 
+                        stroke="#848e9c" 
+                        fontSize={12} 
+                        tickLine={false} 
+                        axisLine={false}
+                        tickFormatter={(val) => `$${val.toLocaleString()}`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#1e2329', borderColor: '#2b3139', color: '#eaecef' }}
+                        itemStyle={{ color: '#fcd535' }}
+                        formatter={(value: number) => [`$${value.toLocaleString()}`, 'Số dư']}
+                        labelStyle={{ color: '#848e9c' }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="balance" 
+                        stroke="#fcd535" 
+                        strokeWidth={2}
+                        fillOpacity={1} 
+                        fill="url(#colorBalance)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
 
             {/* Status + Controls */}
             <div className="glass p-6 rounded-xl">

@@ -181,6 +181,49 @@ def get_pnl_report(user=Depends(get_current_user)):
         "trades": trades[:50],
     }
 
+@router.get("/portfolio/chart")
+def get_portfolio_chart(user=Depends(get_current_user)):
+    """Get balance history for chart plotting."""
+    user_id = user["user_id"]
+    config = get_admin_config(user_id)
+    # Fetch trades in ascending order (oldest first)
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        return []
+        
+    res = c.table("paper_trades").select("*").eq("user_id", user_id).order("trade_time", desc=False).execute()
+    trades = res.data or []
+    
+    initial = config.get("initial_balance", 10000.0)
+    current_balance = initial
+    
+    history = []
+    # Add initial point
+    start_date = config.get("started_at") or (trades[0]["trade_time"] if trades else datetime.now().isoformat())
+    history.append({
+        "time": start_date,
+        "balance": initial,
+        "pnl": 0
+    })
+    
+    for t in trades:
+        # Simulate balance change. Note: BUY decreases cash, SELL increases cash
+        val = float(t.get("total_value", 0))
+        if t["action"] == "BUY":
+            current_balance -= val
+        else:
+            current_balance += val
+            
+        history.append({
+            "time": t["trade_time"],
+            "balance": round(current_balance, 2),
+            "pnl": round(current_balance - initial, 2)
+        })
+        
+    return history
+
+
 @router.get("/system/accuracy")
 def get_system_accuracy(user=Depends(get_current_user)):
     """Get recent model accuracy evaluations for Admin Dashboard."""
