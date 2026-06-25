@@ -45,12 +45,7 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      user: {
-        id: "u_1",
-        name: "Alex Chen",
-        email: "alex@forecastai.io",
-        role: "admin",
-      },
+      user: null,
       login: (email, role = "user") =>
         set({
           user: {
