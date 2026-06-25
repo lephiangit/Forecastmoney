@@ -1,0 +1,104 @@
+import time
+from backend.database import _get_client, get_admin_config, update_admin_config, save_trade, get_watchlist
+from backend.models.forecaster import get_live_quote, get_forecast
+
+def run_auto_trade():
+    """Execute auto trading for all users who have is_running = True."""
+    print("🤖 [Cron] Auto-Trader started...")
+    c = _get_client()
+    if not c:
+        print("❌ [Cron] Auto-Trader: Database not available.")
+        return
+        
+    # Get all users with is_running = True
+    configs_res = c.table("admin_config").select("*").eq("is_running", True).execute()
+    running_users = configs_res.data or []
+    
+    if not running_users:
+        print("ℹ️ [Cron] Auto-Trader: No users are currently running auto-trade.")
+        return
+        
+    print(f"📊 [Cron] Auto-Trader: Found {len(running_users)} active users.")
+    
+    # Cache forecasts to avoid calling the model repeatedly for the same ticker
+    forecast_cache = {}
+    live_price_cache = {}
+    
+    for config in running_users:
+        user_id = config["user_id"]
+        balance = config["current_balance"]
+        
+        # We need to find what this user wants to trade.
+        # Let's get their watchlist.
+        watchlist = get_watchlist(user_id)
+        if not watchlist:
+            continue
+            
+        print(f"  👤 Processing User {user_id} with watchlist: {watchlist}")
+        
+        for ticker in watchlist:
+            ticker = ticker.upper()
+            
+            # Fetch Live Price
+            if ticker not in live_price_cache:
+                live = get_live_quote(ticker)
+                if not live:
+                    continue
+                live_price_cache[ticker] = live["price"]
+                
+            current_price = live_price_cache[ticker]
+            
+            # Fetch Forecast
+            if ticker not in forecast_cache:
+                try:
+                    # We just need 1 day forecast to decide
+                    fc = get_forecast(ticker, days=1)
+                    if not fc or "forecast" not in fc or len(fc["forecast"]) == 0:
+                        continue
+                    forecast_cache[ticker] = fc["forecast"][0]["median"]
+                except Exception as e:
+                    print(f"     Forecast error for {ticker}: {e}")
+                    continue
+                    
+            predicted_price = forecast_cache[ticker]
+            
+            # Decision Logic:
+            # We buy if predicted > current * 1.01 (1% gain expected)
+            # We sell if predicted < current * 0.99 (1% drop expected)
+            
+            qty = 0.01  # Trade a small fixed quantity for paper trading
+            total_value = current_price * qty
+            
+            trade_executed = False
+            
+            if predicted_price > current_price * 1.01:
+                # BUY Signal
+                if balance >= total_value:
+                    balance -= total_value
+                    save_trade(user_id, ticker, "BUY", qty, current_price, total_value, "AUTO")
+                    trade_executed = True
+                    print(f"     ✅ User {user_id} AUTO BUY {qty} {ticker} @ {current_price}")
+                    
+            elif predicted_price < current_price * 0.99:
+                # SELL Signal
+                # Ideally we check if they own it, but for simple paper trading we just allow selling (shorting or reducing position)
+                balance += total_value
+                save_trade(user_id, ticker, "SELL", qty, current_price, total_value, "AUTO")
+                trade_executed = True
+                print(f"     ✅ User {user_id} AUTO SELL {qty} {ticker} @ {current_price}")
+                
+            if trade_executed:
+                # Update user's PnL config
+                # Actually, to update PnL properly, we should calculate win/loss.
+                # Since this is a simple paper trade where PnL is based on current_balance vs initial,
+                # we just update the balance.
+                total_pnl = balance - config["initial_balance"]
+                update_admin_config(user_id, {
+                    "current_balance": balance,
+                    "total_pnl": total_pnl
+                })
+                
+    print("✅ [Cron] Auto-Trader finished.")
+
+if __name__ == "__main__":
+    run_auto_trade()

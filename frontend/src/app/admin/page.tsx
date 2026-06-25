@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { adminApi, type Portfolio } from "@/lib/api";
-import { ArrowLeft, TrendingUp, TrendingDown, Play, Square, DollarSign, Activity, LogOut, CheckCircle } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { ArrowLeft, TrendingUp, TrendingDown, Play, Square, DollarSign, Activity, LogOut, CheckCircle, Shield } from "lucide-react";
 
 function cn(...c: (string | false | undefined)[]) { return c.filter(Boolean).join(" "); }
 
@@ -42,16 +43,32 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    const storedToken = localStorage.getItem("forecast_ai_token");
-    const storedUser = localStorage.getItem("forecast_ai_username");
-    if (!storedToken) {
-      router.push("/login");
-    } else {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (storedUser) setUsername(storedUser);
-      loadPortfolio();
-      loadAccuracy();
+    async function checkAuth() {
+      // First check Supabase session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        localStorage.setItem("forecast_ai_token", session.access_token);
+        const email = session.user.email || "Google User";
+        localStorage.setItem("forecast_ai_username", email);
+        setUsername(email);
+        loadPortfolio();
+        loadAccuracy();
+        return;
+      }
+
+      // Fallback to custom token
+      const storedToken = localStorage.getItem("forecast_ai_token");
+      const storedUser = localStorage.getItem("forecast_ai_username");
+      if (!storedToken) {
+        router.push("/login");
+      } else {
+        if (storedUser) setUsername(storedUser);
+        loadPortfolio();
+        loadAccuracy();
+      }
     }
+    
+    checkAuth();
   }, [router]);
 
   async function refresh() {
@@ -94,9 +111,10 @@ export default function AdminPage() {
     }
   }
 
-  function handleLogout() {
+  async function handleLogout() {
     localStorage.removeItem("forecast_ai_token");
     localStorage.removeItem("forecast_ai_username");
+    await supabase.auth.signOut();
     router.push("/login");
   }
 
@@ -129,6 +147,11 @@ export default function AdminPage() {
               <span className="w-1.5 h-1.5 rounded-full bg-[#03a66d] pulse-dot" />
               Hi, {username}
             </div>
+            {username === 'admin' && (
+              <Link href="/superadmin" className="px-3 py-1.5 rounded-lg bg-[#fcd535] text-black font-semibold text-sm hover:bg-[#f0b90b] transition-colors flex items-center gap-1">
+                <Shield size={14} /> Superadmin
+              </Link>
+            )}
             <button onClick={handleLogout}
               className="px-3 py-1.5 rounded-lg bg-[#1e2329] border border-[#2b3139] text-[#848e9c] text-sm hover:text-[#eaecef] transition-colors flex items-center gap-1">
               <LogOut size={14} /> Đăng xuất

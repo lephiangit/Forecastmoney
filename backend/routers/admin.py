@@ -218,3 +218,20 @@ def trigger_learner(background_tasks: BackgroundTasks, secret: str = None):
     background_tasks.add_task(run_learning_task)
     return {"success": True, "message": "Accuracy evaluation and online learning started in background."}
 
+@router.get("/trigger-autotrade")
+def trigger_autotrade(background_tasks: BackgroundTasks, secret: str = None):
+    """Hidden endpoint to trigger auto-trading logic via external cron services."""
+    from backend.config import settings
+    if secret != settings.admin_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized cron trigger")
+        
+    def run_autotrade_task():
+        import backend.cron_auto_trader as trader
+        try:
+            trader.run_auto_trade()
+        except Exception as e:
+            print(f"Cron AutoTrader Error: {e}")
+            
+    background_tasks.add_task(run_autotrade_task)
+    return {"success": True, "message": "Auto-trading job started in background."}
+

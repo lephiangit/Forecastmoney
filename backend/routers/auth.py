@@ -71,10 +71,45 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication token required")
     token = authorization.split(" ")[1]
+    
+    # 1. Try custom token
     payload = verify_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return payload
+    if payload:
+        return payload
+        
+    # 2. Try Supabase token (Google Auth)
+    try:
+        from backend.database import _get_client, get_user_by_username, create_user
+        supabase = _get_client()
+        if not supabase:
+            raise Exception("Supabase client not available")
+            
+        # Verify token by fetching user
+        user_response = supabase.auth.get_user(token)
+        if user_response and user_response.user:
+            email = user_response.user.email
+            if not email:
+                email = "google_user_" + user_response.user.id[:8]
+                
+            # Check if user exists in our DB
+            existing_user = get_user_by_username(email)
+            if not existing_user:
+                # Auto create
+                # We use a dummy hash since they login via Google
+                dummy_hash = "GOOGLE_OAUTH_USER"
+                create_user(email, dummy_hash)
+                existing_user = get_user_by_username(email)
+                
+            if existing_user:
+                return {
+                    "user_id": existing_user["id"],
+                    "username": existing_user["username"],
+                    "exp": time.time() + 3600
+                }
+    except Exception as e:
+        print(f"Supabase auth check error: {e}")
+        
+    raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
