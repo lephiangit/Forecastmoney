@@ -17,22 +17,4 @@ services:
       - key: GEMINI_API_KEY
         sync: false
 
-  # ── Kịch bản chạy ngầm (Cron Job) ──
-  - type: cron
-    name: forecastai-auto-learner
-    env: python
-    region: singapore
-    plan: free
-    # "0 1 * * *" nghĩa là chạy lúc 01:00 UTC (tương đương 08:00 sáng giờ Việt Nam)
-    schedule: "0 1 * * *"
-    buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "python backend/cron_accuracy_learner.py"
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.12
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
+
