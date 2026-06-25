@@ -184,10 +184,27 @@ export const api = {
   },
 
   async getAdminUsers(): Promise<AdminUser[]> {
-    const real = await tryFetch<AdminUser[]>("/api/admin/users")
-    if (real) return real
-    await delay()
-    return ADMIN_USERS
+    const real = await tryFetch<AdminUser[]>("/admin/users")
+    return real || ADMIN_USERS
+  },
+
+  async updateUserBalance(userId: string, amount: number) {
+    return tryFetch(`/admin/users/${userId}/balance`, {
+      method: "PUT",
+      body: JSON.stringify({ amount })
+    })
+  },
+
+  async updateUserStatus(userId: string) {
+    return tryFetch(`/admin/users/${userId}/status`, { method: "PUT" })
+  },
+
+  async updateUserRole(userId: string) {
+    return tryFetch(`/admin/users/${userId}/role`, { method: "PUT" })
+  },
+
+  async deleteUser(userId: string) {
+    return tryFetch(`/admin/users/${userId}`, { method: "DELETE" })
   },
 
   async getModelAccuracy(): Promise<ModelAccuracy[]> {

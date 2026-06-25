@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
     username        VARCHAR(100) UNIQUE NOT NULL,
     password_hash   VARCHAR(255) NOT NULL,
     role            VARCHAR(20) DEFAULT 'user',
+    status          VARCHAR(20) DEFAULT 'active',
+    last_active     TIMESTAMPTZ DEFAULT NOW(),
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 

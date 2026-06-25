@@ -7,7 +7,7 @@ import hmac
 import hashlib
 import base64
 import json
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 
@@ -76,6 +76,14 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     # 1. Try custom token
     payload = verify_token(token)
     if payload:
+        # Fire and forget update last_active
+        try:
+            from backend.database import _get_client
+            c = _get_client()
+            if c:
+                c.table("users").update({"last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).eq("id", payload["user_id"]).execute()
+        except:
+            pass
         return payload
         
     # 2. Try Supabase token (Google Auth)
@@ -112,6 +120,12 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
         print(f"Supabase auth check error: {e}")
         
     raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def get_current_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return user
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

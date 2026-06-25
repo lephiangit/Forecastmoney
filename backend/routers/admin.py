@@ -16,7 +16,7 @@ from backend.database import (
     get_admin_config, update_admin_config,
     save_trade, get_trades,
 )
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, get_current_admin
 
 router = APIRouter()
 
@@ -362,3 +362,97 @@ def get_leaderboard():
         })
     
     return leaderboard
+
+# ── User Management (Admin Only) ─────────────────────────────────────────────
+
+@router.get("/users")
+def get_all_users(admin=Depends(get_current_admin)):
+    """Get all users for Admin Dashboard."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        return []
+    
+    # We need to join users with admin_config to get portfolioValue
+    # In Supabase, we can select from users and embed admin_config
+    res = c.table("users").select("id, username, role, status, created_at, last_active, admin_config(current_balance)").execute()
+    
+    mapped = []
+    for u in (res.data or []):
+        configs = u.get("admin_config", [])
+        balance = 0
+        if isinstance(configs, list) and len(configs) > 0:
+            balance = configs[0].get("current_balance", 0)
+        elif isinstance(configs, dict):
+            balance = configs.get("current_balance", 0)
+            
+        mapped.append({
+            "id": str(u["id"]),
+            "name": u["username"].split("@")[0],
+            "email": u["username"],
+            "role": u.get("role", "user"),
+            "status": u.get("status", "active"),
+            "portfolioValue": balance,
+            "joinedAt": u.get("created_at"),
+            "lastActive": u.get("last_active")
+        })
+    return mapped
+
+class BalanceRequest(BaseModel):
+    amount: float
+
+@router.put("/users/{user_id}/balance")
+def update_user_balance(user_id: int, req: BalanceRequest, admin=Depends(get_current_admin)):
+    """Update user's current_balance."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "DB unavailable")
+    
+    c.table("admin_config").update({"current_balance": req.amount}).eq("user_id", user_id).execute()
+    return {"success": True, "new_balance": req.amount}
+
+@router.put("/users/{user_id}/status")
+def update_user_status(user_id: int, admin=Depends(get_current_admin)):
+    """Toggle user active/suspended status."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "DB unavailable")
+        
+    res = c.table("users").select("status").eq("id", user_id).execute()
+    if not res.data:
+        raise HTTPException(404, "User not found")
+        
+    current = res.data[0].get("status", "active")
+    new_status = "suspended" if current == "active" else "active"
+    c.table("users").update({"status": new_status}).eq("id", user_id).execute()
+    return {"success": True, "new_status": new_status}
+
+@router.put("/users/{user_id}/role")
+def update_user_role(user_id: int, admin=Depends(get_current_admin)):
+    """Toggle user role admin/user."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "DB unavailable")
+        
+    res = c.table("users").select("role").eq("id", user_id).execute()
+    if not res.data:
+        raise HTTPException(404, "User not found")
+        
+    current = res.data[0].get("role", "user")
+    new_role = "user" if current == "admin" else "admin"
+    c.table("users").update({"role": new_role}).eq("id", user_id).execute()
+    return {"success": True, "new_role": new_role}
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: int, admin=Depends(get_current_admin)):
+    """Delete a user."""
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "DB unavailable")
+        
+    c.table("users").delete().eq("id", user_id).execute()
+    return {"success": True}

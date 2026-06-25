@@ -51,3 +51,6 @@ PROJECT_ACTIVITIES.md
 
 # Ignore design_rule directory to avoid pushing heavy design guides
 design_rule/
+
+# Admin credentials
+admin_account.txt

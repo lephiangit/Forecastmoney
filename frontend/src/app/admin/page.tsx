@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import { Users, UserCheck, DollarSign, Server, Activity, Cpu, ListChecks } from "lucide-react"
 import { api } from "@/lib/api"
@@ -19,6 +19,7 @@ type Tab = "users" | "system" | "accuracy" | "queue"
 export default function AdminPage() {
   const t = useT()
   const [tab, setTab] = useState<Tab>("users")
+  const queryClient = useQueryClient()
 
   const usersQ = useQuery({ queryKey: ["adminUsers"], queryFn: api.getAdminUsers })
   const systemQ = useQuery({ queryKey: ["systemMetrics"], queryFn: api.getSystemMetrics })
@@ -36,6 +37,48 @@ export default function AdminPage() {
     { value: "accuracy", label: t("modelAccuracy"), icon: Cpu },
     { value: "queue", label: t("researchQueue"), icon: ListChecks },
   ]
+
+  const statusMut = useMutation({
+    mutationFn: (id: string) => api.updateUserStatus(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["adminUsers"] })
+  })
+
+  const roleMut = useMutation({
+    mutationFn: (id: string) => api.updateUserRole(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["adminUsers"] })
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.deleteUser(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["adminUsers"] })
+  })
+
+  const balanceMut = useMutation({
+    mutationFn: ({ id, amount }: { id: string; amount: number }) => api.updateUserBalance(id, amount),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["adminUsers"] })
+  })
+
+  const handleEditBalance = (id: string, currentBalance: number) => {
+    const newBal = prompt("Enter new balance:", currentBalance.toString())
+    if (newBal !== null) {
+      const parsed = parseFloat(newBal)
+      if (!isNaN(parsed)) {
+        balanceMut.mutate({ id, amount: parsed })
+      }
+    }
+  }
+
+  const handleDelete = (id: string, name: string) => {
+    if (confirm(`Are you sure you want to permanently delete user ${name}?`)) {
+      deleteMut.mutate(id)
+    }
+  }
+
+  const isOnline = (lastActive?: string) => {
+    if (!lastActive) return false
+    const diff = new Date().getTime() - new Date(lastActive).getTime()
+    return diff < 5 * 60 * 1000 // 5 minutes
+  }
 
   return (
     <div>
@@ -85,7 +128,7 @@ export default function AdminPage() {
                     <th className="px-4 py-3 font-medium">{t("role")}</th>
                     <th className="px-4 py-3 font-medium">{t("status")}</th>
                     <th className="px-4 py-3 text-right font-medium">{t("totalValue")}</th>
-                    <th className="px-4 py-3 font-medium">Joined</th>
+                    <th className="px-4 py-3 font-medium">Online</th>
                     <th className="px-4 py-3 text-right font-medium">{t("actions")}</th>
                   </tr>
                 </thead>
@@ -123,17 +166,45 @@ export default function AdminPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(u.portfolioValue, { compact: true })}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{u.joinedAt}</td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-xs">
+                        {isOnline(u.lastActive) ? (
+                          <span className="flex items-center gap-1.5 text-positive">
+                            <span className="h-2 w-2 rounded-full bg-positive animate-pulse"></span>
+                            Online
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">{u.lastActive ? timeAgo(u.lastActive) : "Never"}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right flex justify-end gap-2">
                         <button
+                          onClick={() => handleEditBalance(u.id, u.portfolioValue)}
+                          className="rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-accent/40"
+                        >
+                          $$
+                        </button>
+                        <button
+                          onClick={() => roleMut.mutate(u.id)}
+                          className="rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-accent/40"
+                        >
+                          Role
+                        </button>
+                        <button
+                          onClick={() => statusMut.mutate(u.id)}
                           className={cn(
-                            "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                            "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
                             u.status === "active"
-                              ? "border-negative/30 text-negative hover:bg-negative/10"
+                              ? "border-warning/30 text-warning hover:bg-warning/10"
                               : "border-positive/30 text-positive hover:bg-positive/10",
                           )}
                         >
                           {u.status === "active" ? t("suspend") : t("activate")}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(u.id, u.name)}
+                          className="rounded-md border border-negative/30 px-2 py-1 text-xs font-medium text-negative hover:bg-negative/10"
+                        >
+                          Del
                         </button>
                       </td>
                     </motion.tr>
