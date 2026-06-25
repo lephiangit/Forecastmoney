@@ -106,3 +106,38 @@ CREATE TABLE IF NOT EXISTS user_watchlists (
 CREATE INDEX IF NOT EXISTS idx_user_watchlists_user_id 
     ON user_watchlists(user_id);
 
+
+-- ─────────────────────────────────────────────────────────
+-- Safe Migration Block (Run this to update existing tables)
+-- ─────────────────────────────────────────────────────────
+DO $$
+BEGIN
+    -- Update users table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='role') THEN
+        ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='status') THEN
+        ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='last_active') THEN
+        ALTER TABLE users ADD COLUMN last_active TIMESTAMPTZ DEFAULT NOW();
+    END IF;
+
+    -- Update admin_config table defaults to 0 as requested
+    ALTER TABLE admin_config ALTER COLUMN initial_balance SET DEFAULT 0.0;
+    ALTER TABLE admin_config ALTER COLUMN current_balance SET DEFAULT 0.0;
+END $$;
+
+-- ─────────────────────────────────────────────────────────
+-- Row Level Security (RLS)
+-- We use FastAPI for auth and the backend uses the service_role key to bypass RLS.
+-- Enabling RLS with no policies effectively blocks all direct `anon` key access from the frontend,
+-- which secures the DB from unauthorized public API requests.
+-- ─────────────────────────────────────────────────────────
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE research_reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE paper_trades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE model_accuracy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE forecast_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_watchlists ENABLE ROW LEVEL SECURITY;
