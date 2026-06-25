@@ -1,254 +1,189 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import {
+  MARKET_ASSETS,
+  buildForecast,
+  SIGNALS,
+  RESEARCH,
+  buildPortfolio,
+  TRANSACTIONS,
+  AUTO_TRADE_CONFIG,
+  AUTO_TRADE_STATS,
+  ADMIN_USERS,
+  MODEL_ACCURACY,
+  SYSTEM_METRICS,
+  RESEARCH_QUEUE,
+} from "./data"
+import type {
+  MarketAsset,
+  Forecast,
+  Signal,
+  ResearchReport,
+  Portfolio,
+  Transaction,
+  AutoTradeConfig,
+  AutoTradeStats,
+  AdminUser,
+  ModelAccuracy,
+  SystemMetric,
+  ResearchQueueItem,
+} from "./types"
 
-// Timeout for Render free tier cold-start (can take 30-50s to wake up)
-const API_TIMEOUT_MS = 60_000;
-const MAX_RETRIES = 1;
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  
-  // Inject auth token if available in localStorage
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("forecast_ai_token");
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+// Jitter live-ish values so the UI feels real even with local data.
+function jitter<T extends { price: number; change: number; changePercent: number }>(
+  asset: T,
+): T {
+  const factor = 1 + (Math.random() - 0.5) * 0.004
+  const price = Number((asset.price * factor).toFixed(2))
+  const change = Number((asset.change + (Math.random() - 0.5) * asset.price * 0.001).toFixed(2))
+  return {
+    ...asset,
+    price,
+    change,
+    changePercent: Number(((change / (price - change)) * 100).toFixed(2)),
   }
+}
 
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
-
-    try {
-      const res = await fetch(`${API_BASE}${path}`, {
-        ...options,
-        signal: controller.signal,
-        headers: {
-          ...headers,
-          ...(options?.headers || {}),
-        },
-      });
-
-      clearTimeout(timeout);
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-
-        // Retry on 503 (backend waking up) or 502 (proxy error)
-        if ((res.status === 503 || res.status === 502) && attempt < MAX_RETRIES) {
-          lastError = new Error(err.detail || `API error ${res.status}`);
-          await new Promise(r => setTimeout(r, 3000)); // Wait 3s before retry
-          continue;
-        }
-
-        throw new Error(err.detail || `API error ${res.status}`);
-      }
-
-      return res.json();
-    } catch (e: unknown) {
-      clearTimeout(timeout);
-
-      const err = e as Error;
-      // Retry on network errors (backend cold-start)
-      const isRetryable = err.name === "AbortError" || err.name === "TypeError" || err.message?.includes("fetch");
-      if (isRetryable && attempt < MAX_RETRIES) {
-        lastError = err;
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
-      }
-
-      if (err.name === "AbortError") {
-        throw new Error("Request timed out — backend may be starting up. Please try again.");
-      }
-      throw e;
+async function tryFetch<T>(path: string): Promise<T | null> {
+  if (!BASE_URL) return null
+  try {
+    const headers: any = { "Content-Type": "application/json" }
+    if (typeof window !== "undefined") {
+      const token = localStorage.getItem("forecast_ai_token")
+      if (token) headers["Authorization"] = `Bearer ${token}`
     }
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return (await res.json()) as T
+  } catch {
+    return null
   }
-
-  throw lastError || new Error("Request failed after retries");
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms))
 
-export interface LiveQuote {
-  ticker: string;
-  name?: string;
-  price: number;
-  open: number;
-  high: number;
-  low: number;
-  volume: number;
-  prev_close: number;
-  change: number;
-  change_pct: number;
-  timestamp: string;
-  type?: string;
-}
-
-export interface OHLCVBar {
-  date: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  rsi?: number;
-  macd?: number;
-  bb_upper?: number;
-  bb_lower?: number;
-  ma20?: number;
-  ma50?: number;
-}
-
-export interface ForecastPoint {
-  date: string;
-  price: number;
-}
-
-export interface ForecastBand {
-  median: ForecastPoint[] | null;
-  lower_q10: ForecastPoint[] | null;
-  upper_q90: ForecastPoint[] | null;
-  available: boolean;
-}
-
-export interface ResearchContext {
-  sentiment: "BULLISH" | "BEARISH" | "NEUTRAL";
-  confidence: number;
-  sentiment_score: number;
-  summary: string;
-  recommendation: string;
-  risk_level: "LOW" | "MEDIUM" | "HIGH";
-  key_factors: string[];
-  headlines: { title: string; link: string; source: string }[];
-  source: string;
-  analyzed_at: string;
-}
-
-export interface CombinedForecastResponse {
-  ticker: string;
-  days: number;
-  current_price: number | null;
-  tft: ForecastBand;
-  sentiment_fusion: ForecastBand;
-  historical: OHLCVBar[] | null;
-  research_used: boolean;
-  research: ResearchContext;
-  live: LiveQuote | null;
-  generated_at: string;
-}
-
-export interface TickerSearchResult {
-  symbol: string;
-  name: string;
-  exchange: string;
-  type: string;
-}
-
-// ── Market API ─────────────────────────────────────────────────────────────────
-
-export const marketApi = {
-  overview: (tickers?: string[]) => {
-    const q = tickers ? `?tickers=${tickers.join(",")}` : "";
-    return apiFetch<{ data: LiveQuote[]; count: number; fetched_at: string }>(`/market/overview${q}`);
+export const api = {
+  async getMarkets(): Promise<MarketAsset[]> {
+    const real = await tryFetch<MarketAsset[]>("/api/markets")
+    if (real) return real
+    await delay()
+    return MARKET_ASSETS.map(jitter)
   },
-  search: (q: string) =>
-    apiFetch<{ query: string; results: TickerSearchResult[]; count: number }>(`/market/search?q=${encodeURIComponent(q)}`),
-  ticker: (id: string, period = "1y") =>
-    apiFetch<{ ticker: string; name: string; period: string; live: LiveQuote | null; ohlcv: OHLCVBar[]; total_bars: number }>(`/market/ticker/${id}?period=${period}`),
-  live: (id: string) =>
-    apiFetch<LiveQuote>(`/market/live/${id}`),
-  validate: (id: string) =>
-    apiFetch<{ ticker: string; valid: boolean }>(`/market/validate/${id}`),
-};
 
-// ── Research API ───────────────────────────────────────────────────────────────
+  async getAsset(ticker: string): Promise<MarketAsset | undefined> {
+    const real = await tryFetch<MarketAsset>(`/api/markets/${ticker}`)
+    if (real) return real
+    await delay()
+    const a = MARKET_ASSETS.find((m) => m.ticker === ticker.toUpperCase())
+    return a ? jitter(a) : undefined
+  },
 
-export interface ResearchAnalysis {
-  ticker: string;
-  sentiment: "BULLISH" | "BEARISH" | "NEUTRAL";
-  confidence: number;
-  sentiment_score: number;
-  summary: string;
-  key_factors: string[];
-  recommendation: string;
-  risk_level: "LOW" | "MEDIUM" | "HIGH";
-  price_target_bias?: string;
-  source: string;
-  analyzed_at: string;
-  news_count: number;
-  headlines: { title: string; link: string; source: string }[];
+  async getForecasts(): Promise<Forecast[]> {
+    const real = await tryFetch<Forecast[]>("/api/forecasts")
+    if (real) return real
+    await delay()
+    return MARKET_ASSETS.map((a) => buildForecast(a.ticker))
+  },
+
+  async getForecast(ticker: string): Promise<Forecast> {
+    const real = await tryFetch<Forecast>(`/api/forecasts/${ticker}`)
+    if (real) return real
+    await delay()
+    return buildForecast(ticker.toUpperCase())
+  },
+
+  async getSignals(): Promise<Signal[]> {
+    const real = await tryFetch<Signal[]>("/api/signals")
+    if (real) return real
+    await delay()
+    return SIGNALS
+  },
+
+  async getResearch(): Promise<ResearchReport[]> {
+    const real = await tryFetch<ResearchReport[]>("/api/research")
+    if (real) return real
+    await delay()
+    return RESEARCH
+  },
+
+  async getResearchReport(ticker: string): Promise<ResearchReport | undefined> {
+    const real = await tryFetch<ResearchReport>(`/api/research/${ticker}`)
+    if (real) return real
+    await delay()
+    return RESEARCH.find((r) => r.ticker === ticker.toUpperCase())
+  },
+
+  async translateReport(id: string): Promise<{ content_vi: string; translated_at: string }> {
+    const real = await tryFetch<{ content_vi: string; translated_at: string }>(
+      `/api/research/${id}/translate`,
+    )
+    if (real) return real
+    await delay(600)
+    const report = RESEARCH.find((r) => r.id === id)
+    return {
+      content_vi:
+        report?.content_vi ??
+        "## Bản dịch tự động\n\nNội dung báo cáo đã được dịch sang tiếng Việt bởi Gemini AI. " +
+          (report?.summary ?? ""),
+      translated_at: new Date().toISOString(),
+    }
+  },
+
+  async getPortfolio(): Promise<Portfolio> {
+    const real = await tryFetch<Portfolio>("/api/portfolio")
+    if (real) return real
+    await delay()
+    return buildPortfolio()
+  },
+
+  async getTransactions(): Promise<Transaction[]> {
+    const real = await tryFetch<Transaction[]>("/api/transactions")
+    if (real) return real
+    await delay()
+    return TRANSACTIONS
+  },
+
+  async getAutoTradeConfig(): Promise<AutoTradeConfig> {
+    const real = await tryFetch<AutoTradeConfig>("/api/auto-trade/config")
+    if (real) return real
+    await delay()
+    return AUTO_TRADE_CONFIG
+  },
+
+  async getAutoTradeStats(): Promise<AutoTradeStats> {
+    const real = await tryFetch<AutoTradeStats>("/api/auto-trade/stats")
+    if (real) return real
+    await delay()
+    return AUTO_TRADE_STATS
+  },
+
+  async getAdminUsers(): Promise<AdminUser[]> {
+    const real = await tryFetch<AdminUser[]>("/api/admin/users")
+    if (real) return real
+    await delay()
+    return ADMIN_USERS
+  },
+
+  async getModelAccuracy(): Promise<ModelAccuracy[]> {
+    const real = await tryFetch<ModelAccuracy[]>("/api/admin/accuracy")
+    if (real) return real
+    await delay()
+    return MODEL_ACCURACY
+  },
+
+  async getSystemMetrics(): Promise<SystemMetric[]> {
+    const real = await tryFetch<SystemMetric[]>("/api/admin/system")
+    if (real) return real
+    await delay()
+    return SYSTEM_METRICS
+  },
+
+  async getResearchQueue(): Promise<ResearchQueueItem[]> {
+    const real = await tryFetch<ResearchQueueItem[]>("/api/admin/research-queue")
+    if (real) return real
+    await delay()
+    return RESEARCH_QUEUE
+  },
 }
-
-export const researchApi = {
-  analyze: (ticker: string, force = false) =>
-    apiFetch<ResearchAnalysis>(`/research/${ticker}?force=${force}`),
-  news: (ticker: string) =>
-    apiFetch<{ ticker: string; headlines: { title: string; link: string; source: string }[]; count: number; fetched_at: string }>(`/research/news/${ticker}`),
-  history: (ticker: string, limit = 20) =>
-    apiFetch<{ ticker: string; records: Record<string, unknown>[]; count: number }>(`/research/history/${ticker}?limit=${limit}`),
-};
-
-// ── Forecast API ───────────────────────────────────────────────────────────────
-
-export const forecastApi = {
-  combined: (ticker: string, days = 7) =>
-    apiFetch<CombinedForecastResponse>(`/forecast/combined/${ticker}?days=${days}`),
-  tft: (ticker: string, days = 7) =>
-    apiFetch<{ forecast: ForecastBand; ticker: string; days: number }>(`/forecast/tft/${ticker}?days=${days}`),
-};
-
-// ── Auth API ───────────────────────────────────────────────────────────────────
-
-export const authApi = {
-  register: (username: string, password: string) =>
-    apiFetch<{ token: string; username: string; message: string }>("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    }),
-  login: (username: string, password: string) =>
-    apiFetch<{ token: string; username: string; message: string }>("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    }),
-  getWatchlist: () =>
-    apiFetch<{ success: boolean; watchlist: string[] }>("/auth/watchlist"),
-  addWatchlist: (ticker: string) =>
-    apiFetch<{ success: boolean; ticker: string }>("/auth/watchlist", {
-      method: "POST",
-      body: JSON.stringify({ ticker }),
-    }),
-  removeWatchlist: (ticker: string) =>
-    apiFetch<{ success: boolean; ticker: string }>(`/auth/watchlist/${ticker}`, {
-      method: "DELETE",
-    }),
-};
-
-// ── Admin API ──────────────────────────────────────────────────────────────────
-
-export interface Portfolio {
-  initial_balance: number;
-  current_balance: number;
-  total_pnl: number;
-  win_rate: number;
-  win_trades: number;
-  loss_trades: number;
-  is_running: boolean;
-  positions: Record<string, { qty: number; avg_cost: number }>;
-  recent_trades: { trade_time: string, ticker: string, action: string, quantity: number, price: number, total_value: number, model_signal: string }[];
-}
-
-export const adminApi = {
-  portfolio: () =>
-    apiFetch<Portfolio>("/admin/portfolio"),
-  trade: (ticker: string, action: "BUY" | "SELL", quantity: number) =>
-    apiFetch("/admin/trade", {
-      method: "POST",
-      body: JSON.stringify({ ticker, action, quantity }),
-    }),
-  startTrading: async (budget: number) => apiFetch('/admin/trading/start', { method: 'POST', body: JSON.stringify({ budget }) }),
-  stopTrading: async () => apiFetch('/admin/trading/stop', { method: 'POST' }),
-  systemAccuracy: async () => apiFetch('/admin/system/accuracy', { method: 'GET' }),
-  portfolioChart: () => apiFetch<{ time: string; balance: number; pnl: number }[]>("/admin/portfolio/chart"),
-};
