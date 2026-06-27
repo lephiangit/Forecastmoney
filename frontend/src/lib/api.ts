@@ -216,8 +216,19 @@ export const api = {
   },
 
   async getModelAccuracy(): Promise<ModelAccuracy[]> {
-    const real = await tryFetch<ModelAccuracy[]>("/api/admin/accuracy")
-    if (real) return real
+    const real = await tryFetch<any>("/admin/system/accuracy")
+    if (real && Array.isArray(real.records) && real.records.length > 0) {
+      return real.records.map((r: any) => ({
+        model: r.model_name || "TFT-v3",
+        ticker: r.ticker || "UNKNOWN",
+        accuracy: r.error_pct ? 1 - (r.error_pct / 100) : 0.85,
+        mae: 0,
+        rmse: 0,
+        directionAccuracy: 0,
+        predictions: 1,
+        trend: []
+      }))
+    }
     await delay()
     return MODEL_ACCURACY
   },
