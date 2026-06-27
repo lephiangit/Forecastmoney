@@ -136,12 +136,20 @@ async def register(req: AuthRequest):
     if len(username) < 3 or len(req.password) < 4:
         raise HTTPException(400, "Username (>=3 chars) or password (>=4 chars) too short")
         
-    existing = get_user_by_username(username)
+    try:
+        existing = get_user_by_username(username)
+    except Exception as e:
+        raise HTTPException(500, f"DB error checking user: {str(e)}")
+        
     if existing:
         raise HTTPException(400, "Username already registered")
         
     hashed = hash_password(req.password)
-    user = create_user(username, hashed)
+    try:
+        user = create_user(username, hashed)
+    except Exception as e:
+        raise HTTPException(500, f"DB error creating user: {str(e)}")
+        
     if not user:
         raise HTTPException(500, "Could not create user in database")
         
@@ -158,7 +166,11 @@ async def register(req: AuthRequest):
 
 @router.post("/login")
 async def login(req: AuthRequest):
-    user = get_user_by_username(req.username.strip())
+    try:
+        user = get_user_by_username(req.username.strip())
+    except Exception as e:
+        raise HTTPException(500, f"DB error fetching user: {str(e)}")
+        
     if not user:
         raise HTTPException(400, "Invalid username or password")
         

@@ -1,0 +1,25 @@
+# Tài Khoản Test ForecastAI
+
+Dưới đây là thông tin 2 tài khoản (1 Admin, 1 User) để bạn test hệ thống:
+
+## 1. Tài khoản Admin (Quản trị viên)
+- **Email (Username):** admin@forecastai.com
+- **Password:** Capmot100123
+- **Quyền:** admin (Có quyền quản lý user, nạp tiền)
+
+## 2. Tài khoản User (Người dùng thường)
+- **Email (Username):** user@forecastai.com
+- **Password:** Capmot100123
+- **Quyền:** user (Chỉ xem và trade)
+
+---
+### Lệnh SQL để BƠM TRỰC TIẾP 2 tài khoản này vào Supabase:
+(Copy và chạy trong SQL Editor của Supabase)
+
+```sql
+INSERT INTO users (username, password_hash, role, status) 
+VALUES 
+('admin@forecastai.com', '46c6a3dfaf786e87c426a2acc9fe9134e9184590d7a8791e7dca6bece41ab2b3', 'admin', 'active'),
+('user@forecastai.com', '46c6a3dfaf786e87c426a2acc9fe9134e9184590d7a8791e7dca6bece41ab2b3', 'user', 'active')
+ON CONFLICT (username) DO NOTHING;
+```

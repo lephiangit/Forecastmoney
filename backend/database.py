@@ -85,7 +85,7 @@ def get_recent_research(ticker: str, limit: int = 10) -> List[Dict]:
 def create_user(username: str, password_hash: str) -> Optional[Dict]:
     c = _get_client()
     if c is None:
-        return None
+        raise Exception("Supabase client is None (not configured or unavailable)")
     try:
         res = c.table("users").insert({
             "username": username,
@@ -94,19 +94,19 @@ def create_user(username: str, password_hash: str) -> Optional[Dict]:
         return res.data[0] if res.data else None
     except Exception as e:
         print(f"DB create_user error: {e}")
-        return None
+        raise e
 
 
 def get_user_by_username(username: str) -> Optional[Dict]:
     c = _get_client()
     if c is None:
-        return None
+        raise Exception("Supabase client is None (not configured or unavailable)")
     try:
         res = c.table("users").select("*").eq("username", username).execute()
         return res.data[0] if res.data else None
     except Exception as e:
         print(f"DB get_user_by_username error: {e}")
-        return None
+        raise e
 
 
 # ── Paper Trading ──────────────────────────────────────────────────────────────
