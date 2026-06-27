@@ -26,10 +26,10 @@ export default function AdminPage() {
   const accuracyQ = useQuery({ queryKey: ["modelAccuracy"], queryFn: api.getModelAccuracy })
   const queueQ = useQuery({ queryKey: ["researchQueue"], queryFn: api.getResearchQueue })
 
-  const users = usersQ.data ?? []
+  const users = Array.isArray(usersQ.data) ? usersQ.data : []
   const totalUsers = users.length
-  const activeUsers = users.filter((u) => u.status === "active").length
-  const totalAum = users.reduce((s, u) => s + u.portfolioValue, 0)
+  const activeUsers = users.filter((u) => u?.status === "active").length
+  const totalAum = users.reduce((s, u) => s + (Number(u?.portfolioValue) || 0), 0)
 
   const tabs: { value: Tab; label: string; icon: typeof Users }[] = [
     { value: "users", label: t("userManagement"), icon: Users },
@@ -135,77 +135,68 @@ export default function AdminPage() {
                 <tbody>
                   {users.map((u, i) => (
                     <motion.tr
-                      key={u.id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: i * 0.04 }}
-                      className="border-b border-border/60 transition-colors last:border-0 hover:bg-accent/40"
+                      key={u?.id || i}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <span className="flex h-8 w-8 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">
-                            {u.name.slice(0, 2).toUpperCase()}
+                            {String(u?.name || "U").slice(0, 2).toUpperCase()}
                           </span>
                           <div>
-                            <p className="font-medium text-card-foreground">{u.name}</p>
-                            <p className="text-xs text-muted-foreground">{u.email}</p>
+                            <p className="font-medium text-card-foreground">{u?.name || "Unknown User"}</p>
+                            <p className="text-xs text-muted-foreground">{u?.email || ""}</p>
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-3">
                         <span className={cn(
                           "rounded px-2 py-0.5 text-xs font-semibold uppercase",
-                          u.role === "admin" ? "bg-primary/15 text-primary" : "bg-accent text-muted-foreground",
+                          u?.role === "admin" ? "bg-primary/15 text-primary" : "bg-accent text-muted-foreground",
                         )}>
-                          {u.role}
+                          {u?.role || "USER"}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         <span className="flex items-center gap-2 text-xs capitalize text-card-foreground">
-                          <StatusDot status={u.status} /> {u.status}
+                          <StatusDot status={u?.status as any || "active"} /> {u?.status || "active"}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(u.portfolioValue, { compact: true })}</td>
+                      <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(Number(u?.portfolioValue) || 0, { compact: true })}</td>
                       <td className="px-4 py-3 text-xs">
-                        {isOnline(u.lastActive) ? (
+                        {isOnline(u?.lastActive) ? (
                           <span className="flex items-center gap-1.5 text-positive">
                             <span className="h-2 w-2 rounded-full bg-positive animate-pulse"></span>
                             Online
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">{u.lastActive ? timeAgo(u.lastActive) : "Never"}</span>
+                          <span className="text-muted-foreground">{u?.lastActive ? timeAgo(u.lastActive) : "Never"}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right flex justify-end gap-2">
-                        <button
-                          onClick={() => handleEditBalance(u.id, u.portfolioValue)}
-                          className="rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-accent/40"
-                        >
-                          $$
-                        </button>
-                        <button
-                          onClick={() => roleMut.mutate(u.id)}
-                          className="rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-accent/40"
-                        >
-                          Role
-                        </button>
-                        <button
-                          onClick={() => statusMut.mutate(u.id)}
-                          className={cn(
-                            "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
-                            u.status === "active"
-                              ? "border-warning/30 text-warning hover:bg-warning/10"
-                              : "border-positive/30 text-positive hover:bg-positive/10",
-                          )}
-                        >
-                          {u.status === "active" ? t("suspend") : t("activate")}
-                        </button>
-                        <button
-                          onClick={() => handleDelete(u.id, u.name)}
-                          className="rounded-md border border-negative/30 px-2 py-1 text-xs font-medium text-negative hover:bg-negative/10"
-                        >
-                          Del
-                        </button>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => statusMut.mutate(u?.id)}
+                            className="rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            {u?.status === "active" ? t("suspend") : t("activate")}
+                          </button>
+                          <button
+                            onClick={() => roleMut.mutate(u?.id)}
+                            className="rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            {u?.role === "admin" ? "Demote" : "Promote"}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(u?.id, u?.name)}
+                            className="rounded-md border border-negative/30 px-2 py-1 text-xs font-medium text-negative hover:bg-negative/10"
+                          >
+                            Del
+                          </button>
+                        </div>
                       </td>
                     </motion.tr>
                   ))}
@@ -220,26 +211,21 @@ export default function AdminPage() {
             <Skeleton className="h-48" />
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {systemQ.data.map((m, i) => (
+              {Array.isArray(systemQ.data) ? systemQ.data.map((m, i) => (
                 <motion.div
-                  key={m.label}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                  className="rounded-lg border border-border bg-card p-5"
+                  key={m?.label || i}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="rounded-xl border border-border bg-card p-5"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">{m.label}</span>
-                    <span className="flex items-center gap-1.5 text-xs capitalize text-card-foreground">
-                      <StatusDot status={m.status} /> {m.status}
-                    </span>
-                  </div>
-                  <p className="mt-3 font-mono text-2xl font-semibold text-card-foreground">
-                    {m.value}
-                    <span className="ml-1 text-sm font-normal text-muted-foreground">{m.unit}</span>
-                  </p>
+                  <p className="text-sm font-medium text-muted-foreground">{m?.label || "Unknown"}</p>
+                  <p className="mt-2 font-mono text-2xl font-bold text-card-foreground">{m?.value || 0}</p>
+                  <span className="mt-1 flex items-center gap-2 text-xs capitalize text-muted-foreground">
+                    <StatusDot status={m?.status as any || "warning"} /> {m?.status || "warning"}
+                  </span>
                 </motion.div>
-              ))}
+              )) : null}
             </div>
           )
         )}
@@ -254,35 +240,38 @@ export default function AdminPage() {
                   <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-4 py-3 font-medium">{t("model")}</th>
                     <th className="px-4 py-3 font-medium">{t("asset")}</th>
-                    <th className="px-4 py-3 font-medium">{t("accuracy")}</th>
-                    <th className="px-4 py-3 text-right font-medium">MAE</th>
-                    <th className="px-4 py-3 text-right font-medium">RMSE</th>
-                    <th className="px-4 py-3 text-right font-medium">Predictions</th>
+                    <th className="px-4 py-3 text-right font-medium">{t("accuracy")}</th>
+                    <th className="px-4 py-3 text-right font-medium">Trades</th>
                     <th className="px-4 py-3 text-right font-medium">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {accuracyQ.data.map((m, i) => (
+                  {Array.isArray(accuracyQ.data) ? accuracyQ.data.map((m, i) => (
                     <motion.tr
-                      key={m.ticker}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: i * 0.04 }}
-                      className="border-b border-border/60 transition-colors last:border-0 hover:bg-accent/40"
+                      key={m?.model || i}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
-                      <td className="px-4 py-3 font-mono text-muted-foreground">{m.model}</td>
-                      <td className="px-4 py-3 font-mono font-semibold text-card-foreground">{m.ticker}</td>
-                      <td className="px-4 py-3"><ConfidencePill value={m.accuracy} /></td>
-                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m.mae}</td>
-                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m.rmse}</td>
-                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m.predictions.toLocaleString("en-US")}</td>
+                      <td className="px-4 py-3 font-medium text-card-foreground">{m?.model || "Unknown"}</td>
+                      <td className="px-4 py-3 font-mono text-muted-foreground">{m?.asset || "Unknown"}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className={cn(
+                          "rounded bg-accent px-2 py-0.5 text-xs font-semibold",
+                          Number(m?.accuracy || 0) >= 0.6 ? "text-positive" : Number(m?.accuracy || 0) >= 0.5 ? "text-primary" : "text-negative"
+                        )}>
+                          {(Number(m?.accuracy || 0) * 100).toFixed(1)}%
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.trades || 0}</td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end">
-                          <Sparkline data={m.trend.map((p) => p.value)} positive width={96} height={28} />
+                          <Sparkline data={Array.isArray(m?.trend) ? m.trend.map((p: any) => p?.value || 0) : []} positive width={96} height={28} />
                         </div>
                       </td>
                     </motion.tr>
-                  ))}
+                  )) : null}
                 </tbody>
               </table>
             </div>
