@@ -240,15 +240,17 @@ export default function AdminPage() {
                   <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-4 py-3 font-medium">{t("model")}</th>
                     <th className="px-4 py-3 font-medium">{t("asset")}</th>
-                    <th className="px-4 py-3 text-right font-medium">{t("accuracy")}</th>
-                    <th className="px-4 py-3 text-right font-medium">Trades</th>
+                    <th className="px-4 py-3 font-medium">{t("accuracy")}</th>
+                    <th className="px-4 py-3 text-right font-medium">MAE</th>
+                    <th className="px-4 py-3 text-right font-medium">RMSE</th>
+                    <th className="px-4 py-3 text-right font-medium">Predictions</th>
                     <th className="px-4 py-3 text-right font-medium">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
                   {Array.isArray(accuracyQ.data) ? accuracyQ.data.map((m, i) => (
                     <motion.tr
-                      key={m?.model || i}
+                      key={m?.ticker || i}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.05 }}
@@ -256,15 +258,10 @@ export default function AdminPage() {
                     >
                       <td className="px-4 py-3 font-medium text-card-foreground">{m?.model || "Unknown"}</td>
                       <td className="px-4 py-3 font-mono font-semibold text-card-foreground">{m?.ticker || "Unknown"}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span className={cn(
-                          "rounded bg-accent px-2 py-0.5 text-xs font-semibold",
-                          Number(m?.accuracy || 0) >= 0.6 ? "text-positive" : Number(m?.accuracy || 0) >= 0.5 ? "text-primary" : "text-negative"
-                        )}>
-                          {(Number(m?.accuracy || 0) * 100).toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.trades || 0}</td>
+                      <td className="px-4 py-3"><ConfidencePill value={Number(m?.accuracy) || 0} /></td>
+                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.mae || 0}</td>
+                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.rmse || 0}</td>
+                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.predictions?.toLocaleString("en-US") || 0}</td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end">
                           <Sparkline data={Array.isArray(m?.trend) ? m.trend.map((p: any) => p?.value || 0) : []} positive width={96} height={28} />
