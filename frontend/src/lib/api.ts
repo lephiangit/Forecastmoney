@@ -75,6 +75,7 @@ export const api = {
         changePercent: d.change_pct ?? d.changePercent,
         high24h: d.high_24h ?? d.high24h,
         low24h: d.low_24h ?? d.low24h,
+        sparkline: d.sparkline || [],
       }))
     }
     return MARKET_ASSETS.map(jitter)

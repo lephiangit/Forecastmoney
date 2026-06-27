@@ -8,8 +8,14 @@ interface SparklineProps {
   className?: string
 }
 
-export function Sparkline({ data, positive = true, width = 120, height = 36, className }: SparklineProps) {
-  if (!data.length) return null
+export function Sparkline({
+  data,
+  positive = true,
+  width = 120,
+  height = 30,
+  className,
+}: SparklineProps) {
+  if (!data || !data.length) return null
   const min = Math.min(...data)
   const max = Math.max(...data)
   const range = max - min || 1
