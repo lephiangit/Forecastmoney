@@ -258,7 +258,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
     })
-    if (!res.ok) throw new Error("Invalid username or password")
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.detail || errorData.message || "Invalid username or password");
+    }
     return res.json()
   },
 
@@ -268,8 +271,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
     })
-    if (!res.ok) throw new Error("Registration failed")
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.detail || errorData.message || "Registration failed");
+    }
     return res.json()
   }
 }
+
 
