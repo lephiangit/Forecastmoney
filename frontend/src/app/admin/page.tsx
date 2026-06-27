@@ -255,7 +255,7 @@ export default function AdminPage() {
                       className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
                       <td className="px-4 py-3 font-medium text-card-foreground">{m?.model || "Unknown"}</td>
-                      <td className="px-4 py-3 font-mono text-muted-foreground">{m?.asset || "Unknown"}</td>
+                      <td className="px-4 py-3 font-mono font-semibold text-card-foreground">{m?.ticker || "Unknown"}</td>
                       <td className="px-4 py-3 text-right">
                         <span className={cn(
                           "rounded bg-accent px-2 py-0.5 text-xs font-semibold",
