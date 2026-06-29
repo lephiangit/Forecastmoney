@@ -59,6 +59,7 @@ def save_research(ticker: str, analysis: Dict, source: str = "gemini") -> bool:
             "risk_level": analysis.get("risk_level", "MEDIUM"),
             "source": source,
             "news_count": analysis.get("news_count", 0),
+            "headlines": json.dumps(analysis.get("headlines", []), ensure_ascii=False),
         }).execute()
         return True
     except Exception as e:

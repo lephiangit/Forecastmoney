@@ -14,12 +14,20 @@ import { StatusDot, ConfidencePill } from "@/components/ui/tags"
 import { formatCurrency, timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
-type Tab = "users" | "system" | "accuracy" | "queue"
+import { Bell, Users, UserCheck, DollarSign, Server, Activity, Cpu, ListChecks, Send } from "lucide-react"
+
+type Tab = "users" | "system" | "accuracy" | "queue" | "notifications"
 
 export default function AdminPage() {
   const t = useT()
   const [tab, setTab] = useState<Tab>("users")
   const queryClient = useQueryClient()
+
+  // Notification form state
+  const [notifTitle, setNotifTitle] = useState("")
+  const [notifMessage, setNotifMessage] = useState("")
+  const [notifUserId, setNotifUserId] = useState("")
+  const [isSending, setIsSending] = useState(false)
 
   const usersQ = useQuery({ queryKey: ["adminUsers"], queryFn: api.getAdminUsers })
   const systemQ = useQuery({ queryKey: ["systemMetrics"], queryFn: api.getSystemMetrics })
@@ -36,6 +44,7 @@ export default function AdminPage() {
     { value: "system", label: t("systemMonitoring"), icon: Server },
     { value: "accuracy", label: t("modelAccuracy"), icon: Cpu },
     { value: "queue", label: t("researchQueue"), icon: ListChecks },
+    { value: "notifications", label: "Notifications", icon: Bell },
   ]
 
   const statusMut = useMutation({
@@ -178,6 +187,12 @@ export default function AdminPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleEditBalance(u?.id, Number(u?.portfolioValue) || 0)}
+                            className="rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            Nạp tiền
+                          </button>
                           <button
                             onClick={() => statusMut.mutate(u?.id)}
                             className="rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -324,6 +339,72 @@ export default function AdminPage() {
               })}
             </div>
           )
+        )}
+
+        {tab === "notifications" && (
+          <div className="rounded-lg border border-border bg-card p-6">
+            <h3 className="text-lg font-bold text-card-foreground mb-4">Compose Notification</h3>
+            <div className="space-y-4 max-w-2xl">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-muted-foreground">Title</label>
+                <input
+                  type="text"
+                  value={notifTitle}
+                  onChange={(e) => setNotifTitle(e.target.value)}
+                  placeholder="e.g. System Maintenance"
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-muted-foreground">Message</label>
+                <textarea
+                  value={notifMessage}
+                  onChange={(e) => setNotifMessage(e.target.value)}
+                  placeholder="Enter notification content here..."
+                  rows={4}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-muted-foreground">Target User ID (Optional)</label>
+                <input
+                  type="text"
+                  value={notifUserId}
+                  onChange={(e) => setNotifUserId(e.target.value)}
+                  placeholder="Leave empty to broadcast to ALL users"
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Global broadcasts will be seen by everyone. To target a specific user, enter their database ID.
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!notifTitle || !notifMessage) return alert("Title and Message required.")
+                  setIsSending(true)
+                  try {
+                    const uid = notifUserId.trim() ? parseInt(notifUserId.trim()) : null
+                    const ok = await api.createNotification(notifTitle, notifMessage, uid)
+                    if (ok) {
+                      alert("Notification sent successfully!")
+                      setNotifTitle("")
+                      setNotifMessage("")
+                      setNotifUserId("")
+                    } else {
+                      alert("Failed to send notification.")
+                    }
+                  } catch (e: any) {
+                    alert("Error: " + e.message)
+                  }
+                  setIsSending(false)
+                }}
+                disabled={isSending || !notifTitle || !notifMessage}
+                className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" /> {isSending ? "Sending..." : "Send Notification"}
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

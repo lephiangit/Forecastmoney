@@ -26,6 +26,7 @@ export default function AutoTradePage() {
   const t = useT()
   const configQ = useQuery({ queryKey: ["autoTradeConfig"], queryFn: api.getAutoTradeConfig })
   const statsQ = useQuery({ queryKey: ["autoTradeStats"], queryFn: api.getAutoTradeStats })
+  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio })
 
   const [config, setConfig] = useState<AutoTradeConfig | null>(null)
   const [saved, setSaved] = useState(false)
@@ -218,6 +219,57 @@ export default function AutoTradePage() {
               <Save className="h-4 w-4" /> {t("saveConfig")}
             </button>
           </div>
+          
+          {/* Portfolio & History */}
+          {portfolioQ.data && (
+            <div className="mt-8 grid gap-6 lg:grid-cols-2">
+              {/* Positions */}
+              <div className="rounded-lg border border-border bg-card p-5">
+                <h3 className="font-semibold text-card-foreground">Vị thế đang mở (Open Positions)</h3>
+                <div className="mt-4 space-y-3">
+                  {Object.keys(portfolioQ.data.positions || {}).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Không có vị thế nào.</p>
+                  ) : (
+                    Object.entries(portfolioQ.data.positions).map(([ticker, pos]: [string, any]) => (
+                      <div key={ticker} className="flex justify-between rounded-md border border-border bg-secondary p-3">
+                        <div>
+                          <span className="block font-bold text-card-foreground">{ticker}</span>
+                          <span className="block text-xs text-muted-foreground">SL: {pos.qty}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="block font-mono text-sm text-card-foreground">{formatCurrency(pos.avg_cost)}</span>
+                          <span className="block text-xs text-muted-foreground">Giá vốn</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* History */}
+              <div className="rounded-lg border border-border bg-card p-5">
+                <h3 className="font-semibold text-card-foreground">Lịch sử giao dịch (Trade History)</h3>
+                <div className="mt-4 space-y-3 max-h-80 overflow-y-auto pr-2">
+                  {(portfolioQ.data.recent_trades || []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Chưa có giao dịch.</p>
+                  ) : (
+                    portfolioQ.data.recent_trades.map((trade: any, idx: number) => (
+                      <div key={idx} className="flex justify-between rounded-md border border-border bg-secondary p-3">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-card-foreground">{trade.ticker} <span className={cn("text-xs px-1.5 py-0.5 rounded ml-2", trade.action === "BUY" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative")}>{trade.action}</span></span>
+                          <span className="text-xs text-muted-foreground mt-1">{new Date(trade.trade_time).toLocaleString()}</span>
+                        </div>
+                        <div className="text-right flex flex-col justify-center">
+                          <span className="font-mono text-sm text-card-foreground">{formatCurrency(trade.price)}</span>
+                          <span className="text-xs text-muted-foreground">x{trade.quantity}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

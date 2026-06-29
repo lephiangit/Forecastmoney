@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
     admin_password: str = "admin123"
     admin_secret_key: str = "change-this-in-production"  # ⚠️ MUST change in production
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://your-app.netlify.app"

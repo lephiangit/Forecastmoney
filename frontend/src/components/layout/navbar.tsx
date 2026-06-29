@@ -2,11 +2,13 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Bell, Menu, X, ChevronDown, LogOut, Settings, Activity } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLangStore, useT, useAuthStore } from "@/lib/store"
 import type { TranslationKey } from "@/lib/i18n"
+import { api } from "@/lib/api"
+import type { Notification } from "@/lib/types"
 
 const NAV: { href: string; key: TranslationKey; adminOnly?: boolean }[] = [
   { href: "/", key: "dashboard" },
@@ -18,7 +20,139 @@ const NAV: { href: string; key: TranslationKey; adminOnly?: boolean }[] = [
   { href: "/admin", key: "admin", adminOnly: true },
 ]
 
+import { Trash2 } from "lucide-react"
+
+function NotificationsMenu() {
+  const { user } = useAuthStore()
+  const [open, setOpen] = useState(false)
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  
+  // Local storage for global notifications states
+  const [localDeleted, setLocalDeleted] = useState<number[]>([])
+  const [localRead, setLocalRead] = useState<number[]>([])
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const del = JSON.parse(localStorage.getItem("global_notifs_deleted") || "[]")
+      const read = JSON.parse(localStorage.getItem("global_notifs_read") || "[]")
+      setLocalDeleted(del)
+      setLocalRead(read)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user) {
+      const fetchNotifs = () => {
+        api.getNotifications().then(data => {
+          // Filter out locally deleted global notifications
+          const visible = data.filter(n => !(n.user_id === null && localDeleted.includes(n.id)))
+          setNotifications(visible)
+        })
+      }
+      fetchNotifs()
+      const interval = setInterval(fetchNotifs, 60000)
+      return () => clearInterval(interval)
+    }
+  }, [user, localDeleted])
+
+  const isNotifRead = (n: Notification) => {
+    if (n.user_id === null) return localRead.includes(n.id)
+    return n.is_read
+  }
+
+  const unreadCount = notifications.filter(n => !isNotifRead(n)).length
+
+  async function markRead(n: Notification) {
+    if (n.user_id === null) {
+      const updated = [...localRead, n.id]
+      setLocalRead(updated)
+      localStorage.setItem("global_notifs_read", JSON.stringify(updated))
+    } else {
+      await api.markNotificationRead(n.id)
+      setNotifications(prev => prev.map(p => p.id === n.id ? { ...p, is_read: true } : p))
+    }
+  }
+
+  async function deleteNotif(n: Notification) {
+    if (n.user_id === null) {
+      const updated = [...localDeleted, n.id]
+      setLocalDeleted(updated)
+      localStorage.setItem("global_notifs_deleted", JSON.stringify(updated))
+      setNotifications(prev => prev.filter(p => p.id !== n.id))
+    } else {
+      const ok = await api.deleteNotification(n.id)
+      if (ok) {
+        setNotifications(prev => prev.filter(p => p.id !== n.id))
+      }
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="relative rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <Bell className="h-4.5 w-4.5" />
+        {unreadCount > 0 && (
+          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-negative" />
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-lg border border-border bg-popover shadow-xl">
+            <div className="border-b border-border px-4 py-3 font-semibold text-popover-foreground">
+              Notifications
+            </div>
+            <div className="max-h-[300px] overflow-y-auto">
+              {notifications.length === 0 ? (
+                <div className="p-4 text-center text-sm text-muted-foreground">No notifications</div>
+              ) : (
+                notifications.map(n => {
+                  const read = isNotifRead(n)
+                  return (
+                    <div 
+                      key={n.id} 
+                      className={cn("border-b border-border p-4 transition-colors relative group", !read ? "bg-accent/50" : "bg-popover")}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-popover-foreground">{n.title}</h4>
+                        <div className="flex items-center gap-2">
+                          {!read && (
+                            <button 
+                              onClick={() => markRead(n)}
+                              className="text-xs text-primary hover:underline"
+                            >
+                              Mark read
+                            </button>
+                          )}
+                          <button
+                            onClick={() => deleteNotif(n)}
+                            className="text-muted-foreground hover:text-negative opacity-0 transition-opacity group-hover:opacity-100"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{n.message}</p>
+                      <p className="mt-2 text-[10px] text-muted-foreground/60">{new Date(n.created_at).toLocaleString()}</p>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function Logo() {
+// ... UserMenu ...
+// ... LangSwitch ...
   return (
     <Link href="/" className="flex items-center gap-2">
       <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
@@ -147,13 +281,7 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          <button
-            className="relative rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            aria-label={t("notifications")}
-          >
-            <Bell className="h-4.5 w-4.5" />
-            <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-negative" />
-          </button>
+          <NotificationsMenu />
           <LangSwitch />
           <UserMenu />
           <button

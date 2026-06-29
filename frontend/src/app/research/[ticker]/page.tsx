@@ -180,6 +180,27 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
                 <BarChart3 className="h-4 w-4" /> {t("markets")}
               </Link>
             </div>
+
+            {report.headlines && report.headlines.length > 0 && (
+              <div className="mt-8 rounded-lg border border-border bg-secondary/50 p-5">
+                <h3 className="mb-4 text-sm font-semibold text-card-foreground">Nguồn tham khảo (Reference Links)</h3>
+                <ul className="space-y-3">
+                  {report.headlines.map((headline, idx) => (
+                    <li key={idx} className="text-sm">
+                      <a 
+                        href={headline.link} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {headline.title}
+                      </a>
+                      <span className="ml-2 text-xs text-muted-foreground">- {headline.source}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </aside>
         </div>
       )}

@@ -46,86 +46,56 @@ def fetch_news(ticker: str, max_items: int = 12) -> List[Dict]:
     return headlines[:max_items]
 
 
-# ── GEMINI ────────────────────────────────────────────────────────────────────
+# ── GROQ API ──────────────────────────────────────────────────────────────────
 
-_gemini_model = None
-_gemini_last_call: float = 0.0
-_GEMINI_MIN_INTERVAL = 5.0  # 15 RPM free tier → 4s min, use 5s for safety margin
-_GEMINI_MAX_RETRIES = 2
+_groq_last_call: float = 0.0
+_GROQ_MIN_INTERVAL = 3.0  # Groq is fast, but keep some rate limiting
+_GROQ_MAX_RETRIES = 2
 
-
-def _get_gemini():
-    global _gemini_model
-    if _gemini_model is not None:
-        return _gemini_model
-
+def _call_groq(prompt: str) -> Optional[str]:
+    """Call Groq API with rate limiting and retry."""
+    global _groq_last_call
     from backend.config import settings
-    if not settings.gemini_api_key:
+    import requests
+
+    if not settings.groq_api_key:
+        print("Missing GROQ_API_KEY")
         return None
 
-    try:
-        from google import genai
-        client = genai.Client(api_key=settings.gemini_api_key)
-        # Store a tuple (client, model_name) so we can call generate_content
-        _gemini_model = (client, "gemini-2.0-flash")
-        return _gemini_model
-    except ImportError:
-        # Fallback to deprecated library if google-genai not installed
-        try:
-            import google.generativeai as genai_old
-            genai_old.configure(api_key=settings.gemini_api_key)
-            _gemini_model = genai_old.GenerativeModel("gemini-2.0-flash")
-            return _gemini_model
-        except Exception as e:
-            print(f"Gemini init error: {e}")
-            return None
-    except Exception as e:
-        print(f"Gemini init error: {e}")
-        return None
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.groq_api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "llama3-70b-8192",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2
+    }
 
-
-def _call_gemini(prompt: str) -> Optional[str]:
-    """Call Gemini with rate limiting and retry on 429/transient errors."""
-    global _gemini_last_call
-
-    model = _get_gemini()
-    if model is None:
-        return None
-
-    for attempt in range(_GEMINI_MAX_RETRIES + 1):
-        # Rate limiting
-        elapsed = time.time() - _gemini_last_call
-        if elapsed < _GEMINI_MIN_INTERVAL:
-            time.sleep(_GEMINI_MIN_INTERVAL - elapsed)
+    for attempt in range(_GROQ_MAX_RETRIES + 1):
+        elapsed = time.time() - _groq_last_call
+        if elapsed < _GROQ_MIN_INTERVAL:
+            time.sleep(_GROQ_MIN_INTERVAL - elapsed)
 
         try:
-            # Support both new (client, model_name) tuple and old GenerativeModel
-            if isinstance(model, tuple):
-                client, model_name = model
-                response = client.models.generate_content(
-                    model=model_name, contents=prompt
-                )
-                text = response.text
-            else:
-                response = model.generate_content(prompt)
-                text = response.text
-
-            _gemini_last_call = time.time()
-            return text.strip() if text else None
-        except Exception as e:
-            _gemini_last_call = time.time()
-            err_str = str(e).lower()
-            is_retryable = any(kw in err_str for kw in ["429", "resource", "quota", "rate", "503", "unavailable"])
-
-            if is_retryable and attempt < _GEMINI_MAX_RETRIES:
-                wait = _GEMINI_MIN_INTERVAL * (attempt + 2)  # 10s, 15s backoff
-                print(f"Gemini rate-limited, retrying in {wait:.0f}s (attempt {attempt + 1}/{_GEMINI_MAX_RETRIES})")
+            res = requests.post(url, headers=headers, json=payload, timeout=20)
+            _groq_last_call = time.time()
+            if res.status_code == 200:
+                data = res.json()
+                return data["choices"][0]["message"]["content"].strip()
+            elif res.status_code == 429:
+                wait = _GROQ_MIN_INTERVAL * (attempt + 2)
+                print(f"Groq rate-limited, retrying in {wait}s...")
                 time.sleep(wait)
                 continue
-
-            print(f"Gemini call error: {e}")
+            else:
+                print(f"Groq error {res.status_code}: {res.text}")
+                return None
+        except Exception as e:
+            _groq_last_call = time.time()
+            print(f"Groq request failed: {e}")
             return None
-
 
 
 def _parse_gemini_json(text: str) -> Optional[Dict]:
@@ -206,7 +176,7 @@ Trả lời bằng tiếng Việt theo format JSON chính xác:
 
 Chỉ trả về JSON, không thêm text nào khác."""
 
-    text = _call_gemini(prompt)
+    text = _call_groq(prompt)
     if text is None:
         return None
     return _parse_gemini_json(text)

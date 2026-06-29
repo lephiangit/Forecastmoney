@@ -78,26 +78,27 @@ export const api = {
         sparkline: d.sparkline || [],
       }))
     }
-    return MARKET_ASSETS.map(jitter)
+    // No fallback, return empty array if it fails so UI can handle loading/error properly
+    return []
   },
 
   async getAsset(ticker: string): Promise<MarketAsset | undefined> {
     const res = await tryFetch<MarketAsset>(`/market/live/${ticker}`)
-    if (res) return res
-    return MARKET_ASSETS.find((m) => m.ticker === ticker.toUpperCase())
+    return res || undefined
   },
 
   async getForecasts(): Promise<Forecast[]> {
-    return Promise.all(MARKET_ASSETS.slice(0, 5).map(async (a) => {
-      const f = await api.getForecast(a.ticker)
+    const defaultTickers = ["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]
+    return Promise.all(defaultTickers.map(async (ticker) => {
+      const f = await api.getForecast(ticker)
       return f
     }))
   },
 
   async getForecast(ticker: string): Promise<Forecast> {
-    const real = await tryFetch<Forecast>(`/forecast/${ticker}`)
+    const real = await tryFetch<Forecast>(`/forecast/combined/${ticker}`)
     if (real) return real
-    return buildForecast(ticker.toUpperCase())
+    throw new Error(`Failed to fetch forecast for ${ticker}`)
   },
 
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -106,12 +107,12 @@ export const api = {
   },
 
   async getResearch(): Promise<ResearchReport[]> {
-    const real = await tryFetch<ResearchReport[]>("/research/reports")
-    return real || RESEARCH
+    const real = await tryFetch<any>("/research/reports")
+    return Array.isArray(real) ? real : RESEARCH
   },
 
   async getResearchReport(ticker: string): Promise<ResearchReport | undefined> {
-    const real = await tryFetch<ResearchReport>(`/research/reports?ticker=${ticker}`)
+    const real = await tryFetch<ResearchReport>(`/research/${ticker}`)
     return real || RESEARCH.find((r) => r.ticker === ticker.toUpperCase())
   },
 
@@ -190,6 +191,11 @@ export const api = {
     if (real) return real
     await delay()
     return AUTO_TRADE_STATS
+  },
+
+  async getPortfolio(): Promise<any> {
+    const real = await tryFetch<any>("/admin/portfolio")
+    return real
   },
 
   async getAdminUsers(): Promise<AdminUser[]> {
@@ -288,6 +294,29 @@ export const api = {
       throw new Error(errorData.detail || errorData.message || "Registration failed");
     }
     return res.json()
+  },
+
+  async getNotifications(): Promise<import("./types").Notification[]> {
+    const res = await tryFetch<{ success: boolean; notifications: import("./types").Notification[] }>("/notifications")
+    return res?.notifications || []
+  },
+
+  async markNotificationRead(id: number): Promise<boolean> {
+    const res = await tryFetch<{ success: boolean }>(`/notifications/${id}/read`, { method: "POST" })
+    return res?.success || false
+  },
+
+  async createNotification(title: string, message: string, user_id: number | null = null): Promise<boolean> {
+    const res = await tryFetch<{ success: boolean }>("/admin/notifications", {
+      method: "POST",
+      body: JSON.stringify({ title, message, user_id })
+    })
+    return res?.success || false
+  },
+
+  async deleteNotification(id: number): Promise<boolean> {
+    const res = await tryFetch<{ success: boolean }>(`/notifications/${id}`, { method: "DELETE" })
+    return res?.success || false
   }
 }
 

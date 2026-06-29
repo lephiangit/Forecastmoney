@@ -63,6 +63,7 @@ export interface ResearchReport {
   translated_at?: string
   createdAt: string
   readTime: number
+  headlines?: { title: string; link: string; source: string }[]
 }
 
 export interface Holding {
@@ -163,4 +164,13 @@ export interface LeaderboardEntry {
   total_pnl: number
   win_trades: number
   loss_trades: number
+}
+
+export interface Notification {
+  id: number
+  user_id: number | null
+  title: string
+  message: string
+  is_read: boolean
+  created_at: string
 }

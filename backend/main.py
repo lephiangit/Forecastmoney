@@ -14,8 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import settings
-from backend.routers import market, research, forecast, admin, auth, superadmin
-
+from backend.routers import market, research, forecast, admin, auth, superadmin, notifications
 
 # ── Lifespan: load heavy models once at startup ───────────────────────────────
 
@@ -64,6 +63,7 @@ app.include_router(forecast.router, prefix="/forecast", tags=["Forecast"])
 app.include_router(admin.router,    prefix="/admin",    tags=["Admin"])
 app.include_router(auth.router,     prefix="/auth",     tags=["Auth"])
 app.include_router(superadmin.router, prefix="/superadmin", tags=["Superadmin"])
+app.include_router(notifications.router, tags=["Notifications"])
 
 
 # ── Root ─────────────────────────────────────────────────────────────────────

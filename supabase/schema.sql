@@ -1,4 +1,4 @@
-﻿-- ─────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────
 -- ForecastAI V2 — Supabase Schema (Final Optimized Version)
 -- ─────────────────────────────────────────────────────────
 
@@ -29,6 +29,7 @@ CREATE TABLE research_reports (
     risk_level      VARCHAR(10),
     source          VARCHAR(50),
     news_count      INT DEFAULT 0,
+    headlines       JSONB DEFAULT '[]',
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -89,7 +90,17 @@ CREATE INDEX idx_research_ticker_time ON research_reports(ticker, created_at DES
 CREATE INDEX idx_forecast_cache_lookup ON forecast_cache(ticker, days, created_at DESC);
 CREATE INDEX idx_user_watchlists_user_id ON user_watchlists(user_id);
 
--- 4. CẤP LẠI TOÀN BỘ QUYỀN TRUY CẬP (SAU KHI BẢNG ĐÃ TỒN TẠI)
+-- 4. BẢNG THÔNG BÁO (NOTIFICATIONS)
+CREATE TABLE notifications (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE, -- NULL means global broadcast
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. CẤP LẠI TOÀN BỘ QUYỀN TRUY CẬP (SAU KHI BẢNG ĐÃ TỒN TẠI)
 -- (Khắc phục triệt để lỗi đăng ký 500 do backend không có quyền INSERT)
 GRANT ALL ON SCHEMA public TO postgres;
 GRANT ALL ON SCHEMA public TO public;
