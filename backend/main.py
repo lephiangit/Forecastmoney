@@ -17,6 +17,25 @@ import asyncio
 from backend.config import settings
 from backend.routers import market, research, forecast, admin, auth, superadmin, notifications
 
+
+def _take_portfolio_snapshots():
+    """Sync function: iterate all users in admin_config, save daily snapshot."""
+    from backend.database import _get_client, save_portfolio_snapshot
+    c = _get_client()
+    if not c:
+        return
+    try:
+        res = c.table("admin_config").select("user_id, current_balance, total_pnl").execute()
+        for row in (res.data or []):
+            save_portfolio_snapshot(
+                user_id=row["user_id"],
+                balance=row.get("current_balance", 0),
+                total_pnl=row.get("total_pnl", 0),
+            )
+        print(f"📸 Portfolio snapshots saved for {len(res.data or [])} users.")
+    except Exception as e:
+        print(f"Snapshot error: {e}")
+
 # ── Lifespan: load heavy models once at startup ───────────────────────────────
 
 @asynccontextmanager
@@ -39,9 +58,20 @@ async def lifespan(app: FastAPI):
                 print(f"Auto-trader loop error: {e}")
             await asyncio.sleep(60) # Run every 60 seconds
 
+    async def portfolio_snapshot_loop():
+        """Save daily portfolio snapshots for all users (runs every hour)."""
+        while True:
+            try:
+                await asyncio.to_thread(_take_portfolio_snapshots)
+            except Exception as e:
+                print(f"Portfolio snapshot error: {e}")
+            await asyncio.sleep(3600)  # Run every 1 hour
+
     task1 = asyncio.create_task(auto_trader_loop())
+    task2 = asyncio.create_task(portfolio_snapshot_loop())
     yield
     task1.cancel()
+    task2.cancel()
     print("ForecastAI API shutting down...")
 
 

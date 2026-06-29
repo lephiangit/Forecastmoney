@@ -244,3 +244,63 @@ async def remove_user_watchlist(ticker: str, current_user: dict = Depends(get_cu
     if not success:
         raise HTTPException(500, "Could not remove from watchlist")
     return {"success": True, "ticker": ticker.upper()}
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+@router.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    """Trigger Supabase to send a magic link/password reset email."""
+    try:
+        from backend.database import _get_client
+        supabase = _get_client()
+        if not supabase:
+            raise HTTPException(503, "Database unavailable")
+            
+        # Send password reset email via Supabase Auth
+        # Note: frontend needs to handle the callback at /auth/reset-password
+        res = supabase.auth.reset_password_email(
+            req.email,
+            options={"redirect_to": f"{settings.allowed_origins.split(',')[0]}/auth/reset-password"}
+        )
+        return {"success": True, "message": "Password reset email sent (if account exists)"}
+    except Exception as e:
+        print(f"Forgot password error: {e}")
+        # Return success anyway to prevent email enumeration
+        return {"success": True, "message": "Password reset email sent (if account exists)"}
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    new_password: str
+    supabase_token: str
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    """Update password hash in our DB after verifying Supabase token."""
+    if len(req.new_password) < 4:
+        raise HTTPException(400, "New password must be at least 4 characters")
+        
+    try:
+        from backend.database import _get_client, get_user_by_username
+        supabase = _get_client()
+        if not supabase:
+            raise HTTPException(503, "Database unavailable")
+            
+        # Verify the token is valid for this user
+        user_response = supabase.auth.get_user(req.supabase_token)
+        if not user_response or not user_response.user or user_response.user.email != req.email:
+            raise HTTPException(401, "Invalid or expired reset token")
+            
+        user = get_user_by_username(req.email)
+        if not user:
+            raise HTTPException(404, "User not found")
+            
+        new_hashed = hash_password(req.new_password)
+        supabase.table("users").update({"password_hash": new_hashed}).eq("id", user["id"]).execute()
+        
+        return {"success": True, "message": "Password reset successfully"}
+    except Exception as e:
+        print(f"Reset password error: {e}")
+        raise HTTPException(500, f"Failed to reset password: {str(e)}")

@@ -3,11 +3,12 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { motion } from "framer-motion"
-import { Activity, Mail, Lock, Eye, EyeOff, Loader2 } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+import { Activity, Mail, Lock, Eye, EyeOff, Loader2, X } from "lucide-react"
 import { api } from "@/lib/api"
 import { useAuthStore, useT } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { signInWithGoogle } from "@/lib/supabase"
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -41,6 +42,12 @@ export default function LoginPage() {
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  // Forgot password state
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState("")
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [forgotSuccess, setForgotSuccess] = useState(false)
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
@@ -62,6 +69,20 @@ export default function LoginPage() {
     }
   }
 
+  async function submitForgot(e: React.FormEvent) {
+    e.preventDefault()
+    if (!forgotEmail) return
+    setForgotLoading(true)
+    try {
+      await api.forgotPassword(forgotEmail)
+      setForgotSuccess(true)
+    } catch (err: any) {
+      alert(err.message || "Failed to send reset email")
+    } finally {
+      setForgotLoading(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
       <div className="absolute inset-0 -z-10 opacity-[0.04] [background-image:linear-gradient(var(--border)_1px,transparent_1px),linear-gradient(90deg,var(--border)_1px,transparent_1px)] [background-size:40px_40px]" />
@@ -69,7 +90,7 @@ export default function LoginPage() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className="w-full max-w-md"
+        className="w-full max-w-md relative"
       >
         <Link href="/" className="mb-8 flex items-center justify-center gap-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary">
@@ -86,7 +107,13 @@ export default function LoginPage() {
 
           <button
             type="button"
-            onClick={() => alert("Tính năng đăng nhập bằng Google đang được phát triển. Vui lòng đăng nhập bằng Email!")}
+            onClick={async () => {
+              try {
+                await signInWithGoogle();
+              } catch (err: any) {
+                alert(err.message || "Failed to initiate Google login");
+              }
+            }}
             className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-md border border-border bg-secondary px-4 py-2.5 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-accent"
           >
             <GoogleIcon className="h-4.5 w-4.5" />
@@ -133,7 +160,11 @@ export default function LoginPage() {
             <div className="flex items-center justify-end text-xs">
               <button
                 type="button"
-                onClick={() => alert("Tính năng Quên mật khẩu đang được phát triển.\nVui lòng liên hệ Admin để được hỗ trợ đặt lại mật khẩu.")}
+                onClick={() => {
+                  setForgotEmail(email)
+                  setShowForgot(true)
+                  setForgotSuccess(false)
+                }}
                 className="font-medium text-primary hover:underline"
               >
                 Forgot password?
@@ -160,6 +191,77 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
+
+        {/* Forgot Password Modal */}
+        <AnimatePresence>
+          {showForgot && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-center justify-center rounded-xl bg-background/80 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full rounded-xl border border-border bg-card p-6 shadow-2xl"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-card-foreground">Reset Password</h2>
+                  <button onClick={() => setShowForgot(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {forgotSuccess ? (
+                  <div className="text-center py-4">
+                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-positive/20 text-positive">
+                      <Mail className="h-6 w-6" />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">Check your email</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      We've sent a password reset link to <br/>
+                      <span className="font-semibold">{forgotEmail}</span>
+                    </p>
+                    <button
+                      onClick={() => setShowForgot(false)}
+                      className="mt-6 w-full rounded-md border border-border bg-secondary px-4 py-2 text-sm font-semibold text-secondary-foreground hover:bg-accent"
+                    >
+                      Close
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={submitForgot} className="space-y-4">
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Enter your email address and we'll send you a link to reset your password.
+                    </p>
+                    <Field
+                      label="Email Address"
+                      icon={Mail}
+                      type="email"
+                      value={forgotEmail}
+                      onChange={setForgotEmail}
+                      placeholder="you@example.com"
+                    />
+                    <button
+                      type="submit"
+                      disabled={forgotLoading || !forgotEmail}
+                      className={cn(
+                        "flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90",
+                        (forgotLoading || !forgotEmail) && "opacity-70",
+                      )}
+                    >
+                      {forgotLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Send Reset Link
+                    </button>
+                  </form>
+                )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
       </motion.div>
     </div>
   )

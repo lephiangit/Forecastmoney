@@ -338,3 +338,83 @@ def update_accuracy_evaluation(record_id: int, actual_price: float, error_pct: f
         return False
 
 
+# ── Portfolio Snapshots ────────────────────────────────────────────────────────
+
+def save_portfolio_snapshot(user_id: int, balance: float, total_pnl: float) -> bool:
+    """Save or update daily portfolio snapshot (upsert by user_id + snapshot_date)."""
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        today = datetime.now().date().isoformat()
+        # Try to update existing snapshot for today
+        existing = (c.table("portfolio_snapshots")
+                    .select("id")
+                    .eq("user_id", user_id)
+                    .eq("snapshot_date", today)
+                    .execute())
+        if existing.data:
+            c.table("portfolio_snapshots").update({
+                "balance": balance,
+                "total_pnl": total_pnl,
+            }).eq("id", existing.data[0]["id"]).execute()
+        else:
+            c.table("portfolio_snapshots").insert({
+                "user_id": user_id,
+                "balance": balance,
+                "total_pnl": total_pnl,
+                "snapshot_date": today,
+            }).execute()
+        return True
+    except Exception as e:
+        print(f"DB save_portfolio_snapshot error: {e}")
+        return False
+
+
+def get_portfolio_history(user_id: int, days: int = 90) -> List[Dict]:
+    """Get portfolio balance history for the last N days."""
+    c = _get_client()
+    if c is None:
+        return []
+    try:
+        res = (c.table("portfolio_snapshots")
+               .select("snapshot_date, balance, total_pnl")
+               .eq("user_id", user_id)
+               .order("snapshot_date", desc=True)
+               .limit(days)
+               .execute())
+        # Return in chronological order
+        data = res.data or []
+        data.reverse()
+        return data
+    except Exception as e:
+        print(f"DB get_portfolio_history error: {e}")
+        return []
+
+
+# ── Research Archive ───────────────────────────────────────────────────────────
+
+def get_all_research_history(
+    limit: int = 50,
+    offset: int = 0,
+    ticker: Optional[str] = None,
+    sentiment: Optional[str] = None,
+) -> List[Dict]:
+    """Get paginated research history with optional filters."""
+    c = _get_client()
+    if c is None:
+        return []
+    try:
+        query = (c.table("research_reports")
+                 .select("*")
+                 .order("created_at", desc=True))
+        if ticker:
+            query = query.eq("ticker", ticker.upper())
+        if sentiment:
+            query = query.eq("sentiment", sentiment.upper())
+        query = query.range(offset, offset + limit - 1)
+        res = query.execute()
+        return res.data or []
+    except Exception as e:
+        print(f"DB get_all_research_history error: {e}")
+        return []

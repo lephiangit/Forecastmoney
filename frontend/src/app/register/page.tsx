@@ -8,6 +8,7 @@ import { Activity, Mail, Lock, User, Eye, EyeOff, Loader2, Check } from "lucide-
 import { api } from "@/lib/api"
 import { useAuthStore, useT } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { signInWithGoogle } from "@/lib/supabase"
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -116,7 +117,13 @@ export default function RegisterPage() {
 
           <button
             type="button"
-            onClick={() => alert("Tính năng đăng ký bằng Google đang được phát triển. Vui lòng đăng ký bằng Email!")}
+            onClick={async () => {
+              try {
+                await signInWithGoogle();
+              } catch (err: any) {
+                alert(err.message || "Failed to initiate Google signup");
+              }
+            }}
             className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-md border border-border bg-secondary px-4 py-2.5 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-accent"
           >
             <GoogleIcon className="h-4.5 w-4.5" />

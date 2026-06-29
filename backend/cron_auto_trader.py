@@ -61,12 +61,31 @@ def run_auto_trade():
             # Fetch Forecast
             if ticker not in forecast_cache:
                 try:
-                    # We just need 1 day forecast to decide
-                    fc = run_combined_forecast(ticker, days=1)
-                    if not fc or "tft" not in fc or not fc["tft"]["median"]:
+                    # Try to fetch the latest research report from DB to get sentiment_score
+                    from backend.database import get_recent_research
+                    sentiment_score = None
+                    research_records = get_recent_research(ticker, limit=1)
+                    if research_records:
+                        latest = research_records[0]
+                        # map 'bullish'/'bearish'/'neutral' to numerical score
+                        s_map = {"bullish": 0.8, "bearish": 0.2, "neutral": 0.5}
+                        sentiment_score = s_map.get(latest.get("sentiment", "neutral").lower(), 0.5)
+
+                    # We just need 1 day forecast to decide, injecting the stored sentiment score
+                    fc = run_combined_forecast(
+                        ticker, 
+                        days=1, 
+                        research_analysis={"sentiment_score": sentiment_score} if sentiment_score else None
+                    )
+                    
+                    # SentimentFusion predictions are stored in "sentiment_fusion"
+                    # If SF failed, fallback to TFT
+                    if fc and fc.get("sentiment_fusion") and fc["sentiment_fusion"]["median"]:
+                        forecast_cache[ticker] = fc["sentiment_fusion"]["median"][0]["price"]
+                    elif fc and fc.get("tft") and fc["tft"]["median"]:
+                        forecast_cache[ticker] = fc["tft"]["median"][0]["price"]
+                    else:
                         continue
-                    # get the price for the first day
-                    forecast_cache[ticker] = fc["tft"]["median"][0]["price"]
                 except Exception as e:
                     import traceback
                     traceback.print_exc()

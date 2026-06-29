@@ -77,7 +77,16 @@ def get_portfolio(user=Depends(get_current_user)):
         "is_running": config.get("is_running", False),
         "positions": positions,
         "recent_trades": trades[:20],
+        "sentiment_enhanced": True,  # Signal that bot uses SentimentFusion
     }
+
+
+@router.get("/portfolio/history")
+def get_portfolio_history_api(days: int = 90, user=Depends(get_current_user)):
+    """Get portfolio balance history for chart plotting."""
+    from backend.database import get_portfolio_history
+    history = get_portfolio_history(user["user_id"], days=days)
+    return {"history": history}
 
 
 @router.post("/trade")

@@ -185,3 +185,49 @@ def get_sentiment_history(
         "count": len(records),
         "note": "Lịch sử sentiment AI — tin tức không được lưu trữ"
     }
+
+
+@router.get("/archive")
+def get_research_archive(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    ticker: Optional[str] = None,
+    sentiment: Optional[str] = None,
+):
+    """
+    Get paginated research history archive with optional filters.
+    """
+    from backend.database import get_all_research_history
+    records = get_all_research_history(limit, offset, ticker, sentiment)
+    reports = []
+    for r in records:
+        headlines = []
+        if "headlines" in r and r["headlines"]:
+            import json
+            try:
+                val = r["headlines"]
+                headlines = json.loads(val) if isinstance(val, str) else val
+            except:
+                pass
+        
+        t = r.get("ticker", "UNKNOWN")
+        reports.append({
+            "id": str(r.get("id", "")),
+            "ticker": t,
+            "sentiment": r.get("sentiment", "neutral").lower(),
+            "confidence": int(r.get("confidence", 0.5) * 100),
+            "title": r.get("title", f"Báo cáo AI: {t}"),
+            "summary": r.get("summary", ""),
+            "tags": r.get("key_factors", []),
+            "author": "Groq Agent",
+            "createdAt": r.get("created_at", ""),
+            "readTime": 3,
+            "headlines": headlines
+        })
+    
+    return {
+        "items": reports,
+        "limit": limit,
+        "offset": offset,
+        "count": len(reports)
+    }

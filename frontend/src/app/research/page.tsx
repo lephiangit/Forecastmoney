@@ -40,7 +40,7 @@ export default function ResearchPage() {
       <PageHeader title={t("researchCenter")} subtitle={t("whyAiThinks")} />
 
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {FILTERS.map((f) => (
             <button
               key={f.value}
@@ -55,6 +55,13 @@ export default function ResearchPage() {
               {t(f.key)}
             </button>
           ))}
+          <span className="mx-1 h-5 w-px bg-border"></span>
+          <Link
+            href="/research/history"
+            className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+          >
+            📚 View Archive
+          </Link>
         </div>
         <div className="relative sm:w-64">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

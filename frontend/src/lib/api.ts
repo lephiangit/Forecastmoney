@@ -189,6 +189,20 @@ export const api = {
     return real || RESEARCH.find((r) => r.ticker === ticker.toUpperCase())
   },
 
+  async getResearchHistory(params: { limit?: number; offset?: number; ticker?: string; sentiment?: string } = {}): Promise<{ items: ResearchReport[]; count: number }> {
+    const searchParams = new URLSearchParams()
+    if (params.limit) searchParams.set("limit", params.limit.toString())
+    if (params.offset) searchParams.set("offset", params.offset.toString())
+    if (params.ticker) searchParams.set("ticker", params.ticker)
+    if (params.sentiment) searchParams.set("sentiment", params.sentiment)
+    
+    const real = await tryFetch<any>(`/research/archive?${searchParams.toString()}`)
+    if (real && real.items) {
+      return { items: real.items, count: real.count }
+    }
+    return { items: [], count: 0 }
+  },
+
   async translateReport(id: string): Promise<{ content_vi: string; translated_at: string }> {
     const real = await tryFetch<{ content_vi: string; translated_at: string }>(
       `/research/${id}/translate`,
@@ -206,9 +220,21 @@ export const api = {
     }
   },
 
+  async getPortfolioHistory(days: number = 90): Promise<any[]> {
+    const res = await tryFetch<{ history: any[] }>(`/admin/portfolio/history?days=${days}`)
+    return res?.history || []
+  },
+
   async getPortfolio(): Promise<Portfolio> {
     const real = await tryFetch<any>("/admin/portfolio")
     if (real) {
+      // Get history alongside portfolio
+      const historyRes = await this.getPortfolioHistory(90)
+      const history = historyRes.map((h) => ({
+        time: h.snapshot_date,
+        value: h.balance
+      }))
+
       // mapping backend shape to frontend Portfolio
       return {
         cash: real.current_balance,
@@ -230,7 +256,7 @@ export const api = {
           unrealizedPnlPercent: 0,
           allocation: 0
         })),
-        history: []
+        history: history.length > 0 ? history : buildPortfolio().history
       }
     }
     return buildPortfolio()
@@ -427,6 +453,36 @@ export const api = {
     })
     if (!res) throw new Error("Failed to change password. Please check your connection.")
     return res
+  },
+
+  async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${BASE_URL}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.detail || errorData.message || "Failed to request password reset");
+    }
+    return res.json()
+  },
+
+  async resetPassword(email: string, newPassword: string, supabaseToken: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${BASE_URL}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        email, 
+        new_password: newPassword, 
+        supabase_token: supabaseToken 
+      })
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.detail || errorData.message || "Failed to reset password");
+    }
+    return res.json()
   }
 }
 
