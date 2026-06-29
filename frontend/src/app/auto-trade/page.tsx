@@ -42,8 +42,8 @@ export default function AutoTradePage() {
 
   const [config, setConfig] = useState<AutoTradeConfig>(DEFAULT_CONFIG)
   const [saved, setSaved] = useState(false)
-  const [tradeAmount, setTradeAmount] = useState<number>(500)
-  const [durationHours, setDurationHours] = useState<number>(24)
+  const [tradeAmount, setTradeAmount] = useState<number | string>(500)
+  const [durationHours, setDurationHours] = useState<number | string>(24)
 
   const isBotRunning = portfolioQ.data?.is_running || false
 
@@ -54,7 +54,7 @@ export default function AutoTradePage() {
   }, [botConfigQ.data])
 
   const startMut = useMutation({
-    mutationFn: () => api.startBot(tradeAmount, durationHours),
+    mutationFn: () => api.startBot(Number(tradeAmount) || 0, Number(durationHours) || 0),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["portfolio"] })
       queryClient.invalidateQueries({ queryKey: ["botConfig"] })
@@ -164,7 +164,7 @@ export default function AutoTradePage() {
                   <input
                     type="number"
                     value={tradeAmount}
-                    onChange={(e) => setTradeAmount(Number(e.target.value))}
+                    onChange={(e) => setTradeAmount(e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <p className="text-xs text-muted-foreground">Số lượng coin mua sẽ phụ thuộc vào giá thực tế lúc Trade.</p>
@@ -176,7 +176,7 @@ export default function AutoTradePage() {
                   <input
                     type="number"
                     value={durationHours}
-                    onChange={(e) => setDurationHours(Number(e.target.value))}
+                    onChange={(e) => setDurationHours(e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <p className="text-xs text-muted-foreground">
