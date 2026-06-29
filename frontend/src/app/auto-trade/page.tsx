@@ -201,10 +201,10 @@ export default function AutoTradePage() {
               Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)
             ) : (
               <>
-                <StatCard label={t("winRate")} value={stats.winRate} format={(n) => `${n.toFixed(1)}%`} icon={Target} accent />
-                <StatCard label={t("totalTrades")} value={stats.totalTrades} format={(n) => n.toFixed(0)} icon={Activity} delay={0.05} />
-                <StatCard label="Bot P&L" value={stats.pnl} format={(n) => formatCurrency(n)} changePercent={stats.totalReturn} icon={TrendingUp} delay={0.1} />
-                <StatCard label={t("activePositions")} value={stats.activePositions} format={(n) => n.toFixed(0)} icon={Shield} delay={0.15} />
+                <StatCard label={t("winRate")} value={stats.winRate ?? 0} format={(n) => `${(Number(n) || 0).toFixed(1)}%`} icon={Target} accent />
+                <StatCard label={t("totalTrades")} value={stats.totalTrades ?? 0} format={(n) => (Number(n) || 0).toFixed(0)} icon={Activity} delay={0.05} />
+                <StatCard label="Bot P&L" value={stats.pnl ?? 0} format={(n) => formatCurrency(n)} changePercent={stats.totalReturn ?? 0} icon={TrendingUp} delay={0.1} />
+                <StatCard label={t("activePositions")} value={stats.activePositions ?? 0} format={(n) => (Number(n) || 0).toFixed(0)} icon={Shield} delay={0.15} />
               </>
             )}
           </div>

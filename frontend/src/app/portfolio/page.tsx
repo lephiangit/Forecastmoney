@@ -61,7 +61,7 @@ export default function PortfolioPage() {
                         <span className="h-2.5 w-2.5 rounded-sm" style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }} />
                         {h.ticker}
                       </span>
-                      <span className="font-mono text-muted-foreground">{h.allocation.toFixed(1)}%</span>
+                      <span className="font-mono text-muted-foreground">{(Number(h.allocation) || 0).toFixed(1)}%</span>
                     </div>
                     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-accent">
                       <div

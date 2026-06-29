@@ -27,16 +27,17 @@ export function SentimentBadge({ sentiment, label }: { sentiment: "bullish" | "b
 }
 
 export function ConfidencePill({ value }: { value: number }) {
-  const color = value >= 85 ? "text-positive" : value >= 70 ? "text-primary" : "text-muted-foreground"
+  const v = Number(value) || 0
+  const color = v >= 85 ? "text-positive" : v >= 70 ? "text-primary" : "text-muted-foreground"
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-accent">
         <div
-          className={cn("h-full rounded-full", value >= 85 ? "bg-positive" : value >= 70 ? "bg-primary" : "bg-muted-foreground")}
-          style={{ width: `${value}%` }}
+          className={cn("h-full rounded-full", v >= 85 ? "bg-positive" : v >= 70 ? "bg-primary" : "bg-muted-foreground")}
+          style={{ width: `${v}%` }}
         />
       </div>
-      <span className={cn("font-mono text-xs font-semibold", color)}>{value.toFixed(0)}%</span>
+      <span className={cn("font-mono text-xs font-semibold", color)}>{v.toFixed(0)}%</span>
     </div>
   )
 }

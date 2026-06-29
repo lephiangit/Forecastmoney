@@ -142,7 +142,23 @@ export const api = {
     const fallback = buildForecast(baseTicker) || buildForecast(ticker)
     if (fallback) return fallback
     
-    throw new Error(`Failed to fetch forecast for ${ticker}`)
+    // Return a safe minimal fallback so Promise.all in getForecasts never rejects
+    return {
+      ticker,
+      name: ticker,
+      currentPrice: 0,
+      targetPrice: 0,
+      horizonDays: 30,
+      confidence: 0,
+      direction: "neutral" as const,
+      expectedReturn: 0,
+      model: "N/A",
+      history: [],
+      predicted: [],
+      upperBand: [],
+      lowerBand: [],
+      updatedAt: new Date().toISOString(),
+    }
   },
 
   async getLeaderboard(): Promise<LeaderboardEntry[]> {

@@ -1,36 +1,40 @@
 export function formatCurrency(value: number, opts?: { compact?: boolean; decimals?: number }): string {
+  const v = Number(value) || 0
   if (opts?.compact) {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
       notation: "compact",
       maximumFractionDigits: 2,
-    }).format(value)
+    }).format(v)
   }
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: opts?.decimals ?? 2,
     maximumFractionDigits: opts?.decimals ?? 2,
-  }).format(value)
+  }).format(v)
 }
 
 export function formatNumber(value: number, opts?: { compact?: boolean; decimals?: number }): string {
+  const v = Number(value) || 0
   return new Intl.NumberFormat("en-US", {
     notation: opts?.compact ? "compact" : "standard",
     minimumFractionDigits: 0,
     maximumFractionDigits: opts?.decimals ?? 2,
-  }).format(value)
+  }).format(v)
 }
 
 export function formatPercent(value: number): string {
-  const sign = value > 0 ? "+" : ""
-  return `${sign}${value.toFixed(2)}%`
+  const v = Number(value) || 0
+  const sign = v > 0 ? "+" : ""
+  return `${sign}${v.toFixed(2)}%`
 }
 
 export function formatSigned(value: number): string {
-  const sign = value > 0 ? "+" : ""
-  return `${sign}${formatCurrency(value)}`
+  const v = Number(value) || 0
+  const sign = v > 0 ? "+" : ""
+  return `${sign}${formatCurrency(v)}`
 }
 
 export function timeAgo(iso: string): string {

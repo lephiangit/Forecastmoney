@@ -16,11 +16,13 @@ export function Sparkline({
   className,
 }: SparklineProps) {
   if (!data || !data.length) return null
-  const min = Math.min(...data)
-  const max = Math.max(...data)
+  const safe = data.filter((d) => d != null && !isNaN(d)) as number[]
+  if (!safe.length) return null
+  const min = Math.min(...safe)
+  const max = Math.max(...safe)
   const range = max - min || 1
-  const stepX = width / (data.length - 1)
-  const points = data
+  const stepX = width / (safe.length - 1 || 1)
+  const points = safe
     .map((d, i) => `${(i * stepX).toFixed(2)},${(height - ((d - min) / range) * height).toFixed(2)}`)
     .join(" ")
   const color = positive ? "var(--positive)" : "var(--negative)"

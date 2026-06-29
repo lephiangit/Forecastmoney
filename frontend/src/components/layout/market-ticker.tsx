@@ -44,7 +44,7 @@ export function MarketTicker() {
               <span className={cn("flex items-center gap-0.5 font-mono text-xs font-medium", pos ? "text-positive" : "text-negative")}>
                 {pos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
                 {pos ? "+" : ""}
-                {a.changePercent.toFixed(2)}%
+                {(Number(a.changePercent) || 0).toFixed(2)}%
               </span>
             </Link>
           )
