@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import asyncio
 
 from backend.config import settings
 from backend.routers import market, research, forecast, admin, auth, superadmin, notifications
@@ -27,7 +28,20 @@ async def lifespan(app: FastAPI):
         _load_tft_model()
     except Exception as e:
         print(f"⚠️ TFT preload skipped: {e}")
+        
+    async def auto_trader_loop():
+        from backend.cron_auto_trader import run_auto_trade
+        while True:
+            try:
+                # Run the synchronous function in a threadpool
+                await asyncio.to_thread(run_auto_trade)
+            except Exception as e:
+                print(f"Auto-trader loop error: {e}")
+            await asyncio.sleep(60) # Run every 60 seconds
+
+    task1 = asyncio.create_task(auto_trader_loop())
     yield
+    task1.cancel()
     print("ForecastAI API shutting down...")
 
 
@@ -36,7 +50,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ForecastAI API",
     description="Market research + AI-powered crypto/stock forecasting",
-    version="2.0.0",
+    version="1.2.1",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -72,7 +86,7 @@ app.include_router(notifications.router, tags=["Notifications"])
 async def root():
     return {
         "name": "ForecastAI API",
-        "version": "2.0.0",
+        "version": "1.2.1",
         "status": "running",
         "docs": "/docs",
     }

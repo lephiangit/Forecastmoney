@@ -73,9 +73,9 @@ export const api = {
     if (res?.data) {
       return res.data.map((d: any) => ({
         ...d,
-        changePercent: d.change_pct ?? d.changePercent,
-        high24h: d.high_24h ?? d.high24h,
-        low24h: d.low_24h ?? d.low24h,
+        changePercent: d.change_pct ?? d.changePercent ?? 0,
+        high24h: d.high_24h ?? d.high24h ?? d.price ?? 0,
+        low24h: d.low_24h ?? d.low24h ?? d.price ?? 0,
         sparkline: d.sparkline || [],
       }))
     }
@@ -99,11 +99,14 @@ export const api = {
   async getForecast(ticker: string): Promise<Forecast> {
     try {
       const real = await tryFetch<any>(`/forecast/combined/${ticker}`)
-      if (real && real.forecast && real.forecast.median && real.forecast.median.length > 0) {
+      
+      const forecastData = real?.sentiment_fusion?.available ? real.sentiment_fusion : real?.tft
+      
+      if (real && forecastData && forecastData.median && forecastData.median.length > 0) {
         const currentPrice = real.current_price || 0
-        const predicted = real.forecast.median.map((m: any) => ({ time: m.date, value: m.price }))
-        const upperBand = (real.forecast.upper_q90 || []).map((m: any) => ({ time: m.date, value: m.price }))
-        const lowerBand = (real.forecast.lower_q10 || []).map((m: any) => ({ time: m.date, value: m.price }))
+        const predicted = forecastData.median.map((m: any) => ({ time: m.date, value: m.price }))
+        const upperBand = (forecastData.upper_q90 || []).map((m: any) => ({ time: m.date, value: m.price }))
+        const lowerBand = (forecastData.lower_q10 || []).map((m: any) => ({ time: m.date, value: m.price }))
         
         const targetPrice = predicted[predicted.length - 1].value
         const expectedReturn = currentPrice > 0 ? ((targetPrice - currentPrice) / currentPrice) * 100 : 0
@@ -122,7 +125,9 @@ export const api = {
           direction,
           expectedReturn,
           model: real.model || "TFT",
-          history: fallback?.history || [],
+          history: real.historical?.length > 0 
+            ? real.historical.map((h: any) => ({ time: h.date, value: h.close }))
+            : fallback?.history || [],
           predicted,
           upperBand,
           lowerBand,
