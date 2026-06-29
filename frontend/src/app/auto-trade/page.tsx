@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Bot, Play, Square, Target, Percent, Shield, TrendingUp, Activity, Save, Check } from "lucide-react"
+import { Bot, Play, Square, Target, Percent, Shield, TrendingUp, Activity, Save, Check, Clock, DollarSign } from "lucide-react"
 import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import type { AutoTradeConfig } from "@/lib/types"
@@ -22,27 +22,63 @@ const STRATEGIES: { value: AutoTradeConfig["strategy"]; key: TranslationKey; des
 
 const TRADEABLE = ["BTC", "ETH", "NVDA", "AAPL", "TSLA", "SP500", "GOLD"]
 
+const DEFAULT_CONFIG: AutoTradeConfig = {
+  enabled: false,
+  strategy: "balanced",
+  maxPositionSize: 15,
+  minConfidence: 75,
+  assets: ["BTC", "ETH", "NVDA"],
+  stopLoss: 5,
+  takeProfit: 15,
+}
+
 export default function AutoTradePage() {
+  const queryClient = useQueryClient()
   const t = useT()
-  const configQ = useQuery({ queryKey: ["autoTradeConfig"], queryFn: api.getAutoTradeConfig })
   const statsQ = useQuery({ queryKey: ["autoTradeStats"], queryFn: api.getAutoTradeStats })
   const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio })
   const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions })
+  const botConfigQ = useQuery({ queryKey: ["botConfig"], queryFn: api.getBotConfig })
 
-  const [config, setConfig] = useState<AutoTradeConfig | null>(null)
+  const [config, setConfig] = useState<AutoTradeConfig>(DEFAULT_CONFIG)
   const [saved, setSaved] = useState(false)
+  const [tradeAmount, setTradeAmount] = useState<number>(500)
+  const [durationHours, setDurationHours] = useState<number>(24)
+
+  const isBotRunning = portfolioQ.data?.is_running || false
 
   useEffect(() => {
-    if (configQ.data && !config) setConfig(configQ.data)
-  }, [configQ.data, config])
+    if (botConfigQ.data) {
+      setTradeAmount(botConfigQ.data.amount || 500)
+    }
+  }, [botConfigQ.data])
+
+  const startMut = useMutation({
+    mutationFn: () => api.startBot(tradeAmount, durationHours),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["portfolio"] })
+      queryClient.invalidateQueries({ queryKey: ["botConfig"] })
+    }
+  })
+
+  const stopMut = useMutation({
+    mutationFn: () => api.stopBot(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["portfolio"] })
+      queryClient.invalidateQueries({ queryKey: ["botConfig"] })
+    }
+  })
+
+  useEffect(() => {
+    // config state is already initialized
+  }, [])
 
   function update<K extends keyof AutoTradeConfig>(key: K, value: AutoTradeConfig[K]) {
-    setConfig((c) => (c ? { ...c, [key]: value } : c))
+    setConfig((c) => ({ ...c, [key]: value }))
     setSaved(false)
   }
 
   function toggleAsset(ticker: string) {
-    if (!config) return
     const assets = config.assets.includes(ticker)
       ? config.assets.filter((a) => a !== ticker)
       : [...config.assets, ticker]
@@ -55,9 +91,7 @@ export default function AutoTradePage() {
     <div>
       <PageHeader title={t("autoTrading")} subtitle={t("whatAiTrades")} />
 
-      {configQ.isError ? (
-        <ErrorCard onRetry={() => configQ.refetch()} />
-      ) : !config ? (
+      {!config ? (
         <Skeleton className="h-96" />
       ) : (
         <>
@@ -67,18 +101,18 @@ export default function AutoTradePage() {
             animate={{ opacity: 1, y: 0 }}
             className={cn(
               "flex flex-col gap-4 rounded-lg border bg-card p-5 sm:flex-row sm:items-center sm:justify-between",
-              config.enabled ? "border-positive/40" : "border-border",
+              isBotRunning ? "border-positive/40" : "border-border",
             )}
           >
             <div className="flex items-center gap-4">
               <div
                 className={cn(
                   "relative flex h-12 w-12 items-center justify-center rounded-lg",
-                  config.enabled ? "bg-positive/15 text-positive" : "bg-accent text-muted-foreground",
+                  isBotRunning ? "bg-positive/15 text-positive" : "bg-accent text-muted-foreground",
                 )}
               >
                 <Bot className="h-6 w-6" />
-                {config.enabled && (
+                {isBotRunning && (
                   <span className="absolute -right-0.5 -top-0.5 flex h-3 w-3">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-positive opacity-75" />
                     <span className="relative inline-flex h-3 w-3 rounded-full bg-positive" />
@@ -87,25 +121,26 @@ export default function AutoTradePage() {
               </div>
               <div>
                 <h2 className="font-semibold text-card-foreground">
-                  Trading Bot {config.enabled ? "Running" : "Stopped"}
+                  Trading Bot {isBotRunning ? "Running" : "Stopped"}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {config.enabled
+                  {isBotRunning
                     ? `Executing the ${t(config.strategy)} strategy across ${config.assets.length} assets.`
                     : "Bot is idle. Configure and start to begin automated trading."}
                 </p>
               </div>
             </div>
             <button
-              onClick={() => update("enabled", !config.enabled)}
+              onClick={() => isBotRunning ? stopMut.mutate() : startMut.mutate()}
+              disabled={startMut.isPending || stopMut.isPending}
               className={cn(
-                "flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90",
-                config.enabled
+                "flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-50",
+                isBotRunning
                   ? "bg-negative text-primary-foreground"
                   : "bg-positive text-primary-foreground",
               )}
             >
-              {config.enabled ? (
+              {isBotRunning ? (
                 <>
                   <Square className="h-4 w-4" /> Stop Bot
                 </>
@@ -116,6 +151,43 @@ export default function AutoTradePage() {
               )}
             </button>
           </motion.div>
+
+          {/* Trade Settings */}
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="rounded-lg border border-border bg-card p-5">
+              <h3 className="font-semibold text-card-foreground">Cấu hình Ngân sách & Thời gian</h3>
+              <div className="mt-4 space-y-5">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-card-foreground flex items-center gap-2">
+                    <DollarSign className="w-4 h-4" /> Số tiền mỗi lệnh giao dịch ($)
+                  </label>
+                  <input
+                    type="number"
+                    value={tradeAmount}
+                    onChange={(e) => setTradeAmount(Number(e.target.value))}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <p className="text-xs text-muted-foreground">Số lượng coin mua sẽ phụ thuộc vào giá thực tế lúc Trade.</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-card-foreground flex items-center gap-2">
+                    <Clock className="w-4 h-4" /> Thời lượng Trade (Giờ)
+                  </label>
+                  <input
+                    type="number"
+                    value={durationHours}
+                    onChange={(e) => setDurationHours(Number(e.target.value))}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {botConfigQ.data?.end_time && isBotRunning 
+                      ? `Bot sẽ tự động dừng vào: ${new Date(botConfigQ.data.end_time).toLocaleString()}`
+                      : "Bot sẽ tự động dừng sau khoảng thời gian này."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {/* Stats */}
           <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">

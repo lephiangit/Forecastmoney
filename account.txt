@@ -19,7 +19,10 @@ Dưới đây là thông tin 2 tài khoản (1 Admin, 1 User) để bạn test h
 ```sql
 INSERT INTO users (username, password_hash, role, status) 
 VALUES 
-('admin@forecastai.com', '46c6a3dfaf786e87c426a2acc9fe9134e9184590d7a8791e7dca6bece41ab2b3', 'admin', 'active'),
-('user@forecastai.com', '46c6a3dfaf786e87c426a2acc9fe9134e9184590d7a8791e7dca6bece41ab2b3', 'user', 'active')
-ON CONFLICT (username) DO NOTHING;
+('admin@forecastai.com', '9e2c6568f62fa2b6775a839ff7d9800dbad9c05ec5a0818955617400a17aa855', 'admin', 'active'),
+('user@forecastai.com', '9e2c6568f62fa2b6775a839ff7d9800dbad9c05ec5a0818955617400a17aa855', 'user', 'active')
+ON CONFLICT (username) 
+DO UPDATE SET 
+    password_hash = EXCLUDED.password_hash,
+    role = EXCLUDED.role;
 ```

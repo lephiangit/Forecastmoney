@@ -100,6 +100,8 @@ export interface Portfolio {
   dayPnlPercent: number
   holdings: Holding[]
   history: ForecastPoint[]
+  is_running?: boolean
+  started_at?: string | null
 }
 
 export interface AutoTradeConfig {

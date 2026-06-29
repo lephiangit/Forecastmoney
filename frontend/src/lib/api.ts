@@ -180,11 +180,20 @@ export const api = {
     return TRANSACTIONS
   },
 
-  async getAutoTradeConfig(): Promise<AutoTradeConfig> {
-    const real = await tryFetch<AutoTradeConfig>("/api/auto-trade/config")
-    if (real) return real
-    await delay()
-    return AUTO_TRADE_CONFIG
+  async getBotConfig(): Promise<{ amount: number; end_time: string | null }> {
+    const real = await tryFetch<any>("/admin/trading/config")
+    return real || { amount: 500, end_time: null }
+  },
+
+  async startBot(amount: number, durationHours: number) {
+    return tryFetch("/admin/trading/start", {
+      method: "POST",
+      body: JSON.stringify({ amount, duration_hours: durationHours })
+    })
+  },
+
+  async stopBot() {
+    return tryFetch("/admin/trading/stop", { method: "POST" })
   },
 
   async getAutoTradeStats(): Promise<AutoTradeStats> {

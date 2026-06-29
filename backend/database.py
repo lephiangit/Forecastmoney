@@ -227,6 +227,22 @@ def save_forecast_cache(ticker: str, days: int, response_json: Dict) -> bool:
         print(f"DB save_forecast_cache error: {e}")
         return False
 
+def get_bot_config(user_id: int) -> Optional[Dict]:
+    c = _get_client()
+    if c is None: return None
+    try:
+        res = c.table("forecast_cache").select("response_json").eq("ticker", "USER_BOT_CONFIG").eq("days", user_id).order("created_at", desc=True).limit(1).execute()
+        return res.data[0]["response_json"] if res.data else None
+    except: return None
+
+def save_bot_config(user_id: int, config: Dict) -> bool:
+    c = _get_client()
+    if c is None: return False
+    try:
+        c.table("forecast_cache").insert({"ticker": "USER_BOT_CONFIG", "days": user_id, "response_json": config}).execute()
+        return True
+    except: return False
+
 
 # ── User Watchlists ────────────────────────────────────────────────────────────
 

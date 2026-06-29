@@ -28,6 +28,10 @@ class TradeRequest(BaseModel):
     action: str  # "BUY" | "SELL"
     quantity: float
 
+class StartTradingRequest(BaseModel):
+    amount: float
+    duration_hours: int
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -125,21 +129,30 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
 
 @router.post("/trading/start")
 def start_auto_trading(
-    initial_balance: float = 10000.0,
+    req: StartTradingRequest,
     user=Depends(get_current_user),
 ):
     """Start auto-trading for the current user."""
+    from backend.database import save_bot_config, get_admin_config
+    from datetime import datetime, timedelta
+    
     user_id = user["user_id"]
+    
+    # Ensure config exists
+    get_admin_config(user_id)
+    
+    end_time = (datetime.now() + timedelta(hours=req.duration_hours)).isoformat()
+    
+    save_bot_config(user_id, {
+        "amount": req.amount,
+        "end_time": end_time
+    })
+    
     update_admin_config(user_id, {
-        "initial_balance": initial_balance,
-        "current_balance": initial_balance,
-        "total_pnl": 0.0,
-        "win_trades": 0,
-        "loss_trades": 0,
         "is_running": True,
         "started_at": datetime.now().isoformat(),
     })
-    return {"message": f"Auto-trading started with ${initial_balance:,.2f}", "is_running": True}
+    return {"message": "Auto-trading started", "is_running": True}
 
 
 @router.post("/trading/stop")
@@ -154,6 +167,16 @@ def stop_auto_trading(user=Depends(get_current_user)):
         "final_balance": config.get("current_balance"),
         "total_pnl": config.get("total_pnl"),
     }
+
+@router.get("/trading/config")
+def get_auto_trading_config(user=Depends(get_current_user)):
+    """Get the current bot config for the user."""
+    from backend.database import get_bot_config
+    user_id = user["user_id"]
+    cfg = get_bot_config(user_id)
+    if not cfg:
+        return {"amount": 0, "end_time": None}
+    return cfg
 
 
 @router.get("/pnl")

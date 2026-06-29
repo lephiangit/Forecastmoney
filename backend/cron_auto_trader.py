@@ -1,5 +1,5 @@
-import time
-from backend.database import _get_client, get_admin_config, update_admin_config, save_trade, get_watchlist
+from datetime import datetime
+from backend.database import _get_client, get_admin_config, update_admin_config, save_trade, get_watchlist, get_bot_config
 from backend.models.forecaster import get_live_quote, get_forecast
 
 def run_auto_trade():
@@ -27,6 +27,17 @@ def run_auto_trade():
     for config in running_users:
         user_id = config["user_id"]
         balance = config["current_balance"]
+        
+        bot_cfg = get_bot_config(user_id) or {}
+        end_time = bot_cfg.get("end_time")
+        
+        # Check if duration expired
+        if end_time and datetime.now().isoformat() > end_time:
+            print(f"  🛑 Bot for User {user_id} expired. Stopping.")
+            update_admin_config(user_id, {"is_running": False})
+            continue
+
+        trade_amount = float(bot_cfg.get("amount", 500))
         
         # We need to find what this user wants to trade.
         # Let's get their watchlist.
@@ -66,7 +77,9 @@ def run_auto_trade():
             # We buy if predicted > current * 1.01 (1% gain expected)
             # We sell if predicted < current * 0.99 (1% drop expected)
             
-            qty = 0.01  # Trade a small fixed quantity for paper trading
+            qty = round(trade_amount / current_price, 4) if current_price > 0 else 0
+            if qty <= 0: continue
+            
             total_value = current_price * qty
             
             trade_executed = False
