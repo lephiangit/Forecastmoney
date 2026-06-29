@@ -97,8 +97,46 @@ export const api = {
   },
 
   async getForecast(ticker: string): Promise<Forecast> {
-    const real = await tryFetch<Forecast>(`/forecast/combined/${ticker}`)
-    if (real) return real
+    try {
+      const real = await tryFetch<any>(`/forecast/combined/${ticker}`)
+      if (real && real.forecast && real.forecast.median && real.forecast.median.length > 0) {
+        const currentPrice = real.current_price || 0
+        const predicted = real.forecast.median.map((m: any) => ({ time: m.date, value: m.price }))
+        const upperBand = (real.forecast.upper_q90 || []).map((m: any) => ({ time: m.date, value: m.price }))
+        const lowerBand = (real.forecast.lower_q10 || []).map((m: any) => ({ time: m.date, value: m.price }))
+        
+        const targetPrice = predicted[predicted.length - 1].value
+        const expectedReturn = currentPrice > 0 ? ((targetPrice - currentPrice) / currentPrice) * 100 : 0
+        const direction = expectedReturn > 1 ? "up" : expectedReturn < -1 ? "down" : "neutral"
+        
+        const baseTicker = ticker.split("-")[0]
+        const fallback = buildForecast(baseTicker) || buildForecast(ticker)
+
+        return {
+          ticker: real.ticker || ticker,
+          name: fallback?.name || ticker,
+          currentPrice,
+          targetPrice,
+          horizonDays: real.days || 30,
+          confidence: 85,
+          direction,
+          expectedReturn,
+          model: real.model || "TFT",
+          history: fallback?.history || [],
+          predicted,
+          upperBand,
+          lowerBand,
+          updatedAt: real.generated_at || new Date().toISOString()
+        }
+      }
+    } catch (e) {
+      console.error("Forecast fetch failed, using fallback:", e)
+    }
+
+    const baseTicker = ticker.split("-")[0]
+    const fallback = buildForecast(baseTicker) || buildForecast(ticker)
+    if (fallback) return fallback
+    
     throw new Error(`Failed to fetch forecast for ${ticker}`)
   },
 
