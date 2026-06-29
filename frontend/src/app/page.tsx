@@ -15,6 +15,7 @@ import { Sparkline } from "@/components/ui/sparkline"
 import { formatCurrency, formatPercent, timeAgo } from "@/lib/format"
 import { ActionBadge } from "@/components/ui/tags"
 import { cn } from "@/lib/utils"
+import type { Holding } from "@/lib/types"
 
 export default function DashboardPage() {
   const t = useT()
@@ -74,7 +75,7 @@ export default function DashboardPage() {
               <Skeleton className="h-40" />
             ) : (
               <div className="space-y-1">
-                {p.holdings.map((h) => {
+                {p.holdings.map((h: Holding) => {
                   const pos = h.unrealizedPnl >= 0
                   return (
                     <Link

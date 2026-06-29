@@ -193,10 +193,7 @@ export const api = {
     return AUTO_TRADE_STATS
   },
 
-  async getPortfolio(): Promise<any> {
-    const real = await tryFetch<any>("/admin/portfolio")
-    return real
-  },
+
 
   async getAdminUsers(): Promise<AdminUser[]> {
     const real = await tryFetch<AdminUser[]>("/admin/users")
