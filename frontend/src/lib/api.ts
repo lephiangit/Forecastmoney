@@ -54,6 +54,7 @@ async function tryFetch<T>(path: string, options?: RequestInit): Promise<T | nul
       if (token) headers["Authorization"] = `Bearer ${token}`
     }
     const res = await fetch(`${BASE_URL}${path}`, {
+      cache: "no-store",
       ...options,
       headers,
     })
