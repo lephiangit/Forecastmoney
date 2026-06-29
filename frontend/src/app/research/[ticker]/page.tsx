@@ -158,7 +158,7 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
             <div className="rounded-lg border border-border bg-card p-5">
               <h3 className="text-sm font-semibold text-card-foreground">Tags</h3>
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {(report.tags || []).map((tag) => (
+                {(Array.isArray(report.tags) ? report.tags : typeof report.tags === 'string' ? report.tags.split(',') : []).map((tag: string) => (
                   <span key={tag} className="rounded bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">
                     {tag}
                   </span>
