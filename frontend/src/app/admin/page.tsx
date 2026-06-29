@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Users, UserCheck, DollarSign, Server, Activity, Cpu, ListChecks } from "lucide-react"
+import { Bell, Users, UserCheck, DollarSign, Server, Activity, Cpu, ListChecks, Send } from "lucide-react"
 import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
@@ -13,8 +13,6 @@ import { Skeleton, ErrorCard } from "@/components/ui/states"
 import { StatusDot, ConfidencePill } from "@/components/ui/tags"
 import { formatCurrency, timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
-
-import { Bell, Users, UserCheck, DollarSign, Server, Activity, Cpu, ListChecks, Send } from "lucide-react"
 
 type Tab = "users" | "system" | "accuracy" | "queue" | "notifications"
 
