@@ -404,16 +404,18 @@ export function buildPortfolio(): Portfolio {
     { ticker: "ETH", qty: 6.5, avg: 3100 },
   ]
   const holdings = positions.map((p) => {
-    const asset = MARKET_ASSETS.find((a) => a.ticker === p.ticker)!
-    const marketValue = p.qty * asset.price
+    const asset = MARKET_ASSETS.find((a) => a.ticker === p.ticker)
+    const price = asset ? asset.price : p.avg
+    const name = asset ? asset.name : p.ticker
+    const marketValue = p.qty * price
     const costBasis = p.qty * p.avg
     const unrealizedPnl = marketValue - costBasis
     return {
       ticker: p.ticker,
-      name: asset.name,
+      name: name,
       quantity: p.qty,
       avgPrice: p.avg,
-      currentPrice: asset.price,
+      currentPrice: price,
       marketValue,
       costBasis,
       unrealizedPnl,
