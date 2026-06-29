@@ -426,16 +426,21 @@ class BalanceRequest(BaseModel):
 
 @router.put("/users/{user_id}/balance")
 def update_user_balance(user_id: int, req: BalanceRequest, admin=Depends(get_current_admin)):
-    """Update user's current_balance."""
+    """Update user's current_balance and initial_balance."""
     from backend.database import _get_client, get_admin_config
     c = _get_client()
     if c is None:
         raise HTTPException(503, "DB unavailable")
     
     # Ensure config exists before updating
-    get_admin_config(user_id)
+    config = get_admin_config(user_id)
     
-    c.table("admin_config").update({"current_balance": req.amount}).eq("user_id", user_id).execute()
+    # Update both so PnL isn't artificially skewed
+    updates = {
+        "current_balance": req.amount,
+        "initial_balance": req.amount
+    }
+    c.table("admin_config").update(updates).eq("user_id", user_id).execute()
     return {"success": True, "new_balance": req.amount}
 
 @router.put("/users/{user_id}/status")
