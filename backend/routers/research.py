@@ -27,6 +27,14 @@ def _is_fresh(ticker: str) -> bool:
     return (time.time() - entry["ts"]) < _CACHE_TTL
 
 
+def _parse_tags(val) -> list:
+    if isinstance(val, str):
+        return [t.strip() for t in val.split(",") if t.strip()]
+    if isinstance(val, list):
+        return val
+    return []
+
+
 @router.get("/reports")
 def get_all_reports():
     """
@@ -55,7 +63,7 @@ def get_all_reports():
                 "confidence": int(r.get("confidence", 0.5) * 100),
                 "title": r.get("title", f"Báo cáo AI: {t}"),
                 "summary": r.get("summary", ""),
-                "tags": r.get("key_factors", []),
+                "tags": _parse_tags(r.get("key_factors", [])),
                 "author": "Groq Agent",
                 "createdAt": r.get("created_at", ""),
                 "readTime": 3,
@@ -107,7 +115,7 @@ def get_research(ticker: str):
         "confidence": record.get("confidence", 0.5),
         "sentiment_score": record.get("sentiment_score", 0.0),
         "summary": summary,
-        "key_factors": record.get("key_factors", []),
+        "key_factors": _parse_tags(record.get("key_factors", [])),
         "recommendation": record.get("recommendation", ""),
         "risk_level": record.get("risk_level", "MEDIUM"),
         "source": "mock_ai",
@@ -219,7 +227,7 @@ def get_research_archive(
             "confidence": int(r.get("confidence", 0.5) * 100),
             "title": r.get("title", f"Báo cáo AI: {t}"),
             "summary": r.get("summary", ""),
-            "tags": r.get("key_factors", []),
+            "tags": _parse_tags(r.get("key_factors", [])),
             "author": "Groq Agent",
             "createdAt": r.get("created_at", ""),
             "readTime": 3,
