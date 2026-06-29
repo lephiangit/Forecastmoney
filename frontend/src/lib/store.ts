@@ -38,7 +38,7 @@ interface AuthUser {
 
 interface AuthState {
   user: AuthUser | null
-  login: (email: string, role?: Role) => void
+  login: (name: string, role?: Role, id?: string) => void
   logout: () => void
 }
 
@@ -46,16 +46,19 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      login: (email, role = "user") =>
+      login: (name, role = "user", id) =>
         set({
           user: {
-            id: "u_1",
-            name: email.split("@")[0] || "Trader",
-            email,
+            id: id || name,
+            name: name,
+            email: name,
             role,
           },
         }),
-      logout: () => set({ user: null }),
+      logout: () => {
+        if (typeof window !== "undefined") localStorage.removeItem("forecast_ai_token")
+        set({ user: null })
+      },
     }),
     { name: "forecastai-auth" },
   ),

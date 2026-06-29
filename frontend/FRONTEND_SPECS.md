@@ -1,444 +1,473 @@
-# FORECAST DETAIL PAGE (UPDATED UX SPECIFICATION)
+# FORECASTAI FRONTEND SPECIFICATION V3.0
 
-## Route
+## PROJECT OVERVIEW
 
-/forecast/[ticker]
+ForecastAI là nền tảng AI-Powered Market Intelligence & Paper Trading Platform.
 
-Ví dụ:
+Hệ thống cho phép người dùng:
 
-/forecast/BTC
+- Theo dõi thị trường tài chính theo thời gian thực.
+- Xem dự báo giá được tạo bởi mô hình AI TFT.
+- Đọc báo cáo phân tích do Gemini AI tổng hợp.
+- Quản lý danh mục đầu tư mô phỏng.
+- Giao dịch thủ công bằng tiền ảo.
+- Bật Auto-Trading để AI tự giao dịch.
+- Theo dõi hiệu suất mô hình AI.
+- Nhận tín hiệu đầu tư được sinh bởi hệ thống AI.
 
-/forecast/AAPL
-
-/forecast/NVDA
-
----
-
-# 1. HEADER SECTION
-
-Hiển thị thông tin tài sản hiện tại.
-
-Layout:
-
-Ticker Symbol
-
-Asset Name
-
-Current Price
-
-24H Change
-
-Market Cap
-
-Volume
-
-Ví dụ:
-
-BTC
-
-Bitcoin
-
-$107,542
-
-+2.43%
-
-Market Cap: $2.1T
-
-Volume: $48.3B
+Frontend phải phản ánh đầy đủ sức mạnh của hệ thống backend hiện có thay vì chỉ tập trung vào biểu đồ dự báo.
 
 ---
 
-# 2. FORECAST HORIZON SELECTOR
+# DESIGN GOALS
 
-## Previous Design (Deprecated)
+UI phải mang cảm giác:
 
-❌ Buttons:
+- Bloomberg Terminal
+- Binance
+- TradingView
+- BlackRock Aladdin
 
-3 Days
+Các ưu tiên:
 
-7 Days
-
-14 Days
-
-30 Days
-
-Lý do:
-
-- Không mở rộng được
-- Không hỗ trợ 60 ngày
-- Giao diện rối khi thêm nhiều lựa chọn
+1. Financial Professional
+2. AI First
+3. Data Rich
+4. Fast Navigation
+5. Mobile Friendly
 
 ---
 
-## New Design
+# TECHNOLOGY STACK
 
-✅ Slider Component
+Framework
 
-Range:
+- Next.js App Router
+- TypeScript
+- React
 
-1 → 60 Days
+Styling
 
-Default:
+- Tailwind CSS
+- Framer Motion
 
-14 Days
+State Management
 
-Step:
+- Zustand
+- React Query
 
-1 Day
+Charts
 
-UI Example:
+Primary Chart
 
-Forecast Horizon
+- TradingView Lightweight Charts
 
-[========●-----------]
+Secondary Charts
 
-14 Days
+- Recharts
 
-Behavior:
+Icons
 
-- Kéo thanh trượt để thay đổi số ngày dự báo
-- Hiển thị giá trị hiện tại ngay phía trên slider
-- Tự động gọi API mới khi thay đổi
-
-Advantages:
-
-- Không nhập sai dữ liệu
-- Không thể nhập chữ
-- UX trực quan hơn
-- Dễ mở rộng lên 90 hoặc 180 ngày trong tương lai
+- Lucide React
 
 ---
 
-# 3. KPI FORECAST CARDS
+# GLOBAL COLOR SYSTEM
 
-Hiển thị ngay dưới Header.
+Background
 
-Grid 4 Columns
+Primary
 
-Card 1
+#0b0e11
 
-Expected Return
+Secondary
 
-+7.2%
+#12161c
 
-Card 2
+Cards
 
-Target Price
+#1e2329
 
-$118,450
+Borders
 
-Card 3
+#2b3139
 
-Confidence
-
-81%
-
-Card 4
-
-Risk Level
-
-Medium
-
-Color Rules:
-
-Confidence > 80%
-
-Green
-
-Confidence 60-80%
-
-Yellow
-
-Confidence < 60%
-
-Red
-
----
-
-# 4. CHART 1 — MAIN PRICE & FORECAST CHART
-
-Priority:
-
-Highest
-
-Position:
-
-FIRST chart on page
-
-Purpose:
-
-Hiển thị xu hướng giá lịch sử và dự báo trong cùng một biểu đồ liên tục.
-
-Chart Type:
-
-Line Chart
-
-NOT Candlestick
-
-Reason:
-
-- Dễ đọc hơn cho người dùng phổ thông
-- Forecast nối liền tự nhiên với lịch sử
-- Trực quan hơn khi AI dự báo tương lai
-
----
-
-Historical Data
-
-Line:
-
-White
-
-Stroke Width:
-
-2px
-
-Data:
-
-Historical Close Price
-
----
-
-Forecast Data
-
-Line:
-
-Yellow (#fcd535)
-
-Stroke Width:
-
-3px
-
-Data:
-
-TFT Median Forecast
-
----
-
-Sentiment Forecast
-
-Optional
-
-Line:
-
-Blue (#3861fb)
-
-Dashed
-
-Data:
-
-Sentiment Fusion Forecast
-
----
-
-Confidence Band
-
-Area Chart
-
-Upper Bound:
-
-upper_q90
-
-Lower Bound:
-
-lower_q10
-
-Color:
+Primary Accent
 
 #fcd535
 
-Opacity:
-
-0.1
-
----
-
-Forecast Separator
-
-Vertical Dashed Line
-
-Label:
-
-Forecast
-
-or
-
-AI Forecast Begins
-
----
-
-Tooltip
-
-Hover hiển thị:
-
-Date
-
-Historical Price
-
-Forecast Price
-
-Expected Change
-
-Confidence Range
-
----
-
-Zoom & Pan
-
-Supported
-
-Mouse Wheel
-
-Drag
-
-Reset Zoom Button
-
----
-
-# 5. CHART 2 — FORECAST CANDLESTICK CHART
-
-Position:
-
-Immediately below Main Chart
-
-Purpose:
-
-Hiển thị chi tiết từng phiên dự báo tăng giảm.
-
-Chart Type:
-
-Forecast Candlestick
-
----
-
-Historical Candles
-
-Green:
-
-Close >= Open
-
-Color:
+Positive
 
 #0ecb81
 
-Red:
-
-Close < Open
-
-Color:
+Negative
 
 #f6465d
 
----
+Information
 
-Forecast Candles
+#3861fb
 
-Generated From:
+Text Primary
 
-Predicted Open
+#ffffff
 
-Predicted High
+Text Secondary
 
-Predicted Low
+#eaecef
 
-Predicted Close
+Text Muted
 
-Green:
-
-Forecast Close > Forecast Open
-
-Red:
-
-Forecast Close < Forecast Open
+#707a8a
 
 ---
 
-Forecast Style
+# LANGUAGE SYSTEM
 
-Opacity:
+Supported Languages
 
-0.6
+- English
+- Vietnamese
 
-Border:
+Global Language Toggle
 
-Dashed
+Navbar Right Side
 
-Purpose:
+Behavior
 
-Người dùng biết đây là dữ liệu AI, không phải dữ liệu thực tế.
+Every label must support i18n.
 
----
+Examples
 
-Tooltip
+Dashboard ↔ Bảng điều khiển
 
-Date
+Research ↔ Nghiên cứu
 
-Predicted Open
+Forecast ↔ Dự báo
 
-Predicted High
+Portfolio ↔ Danh mục
 
-Predicted Low
+Auto Trade ↔ Giao dịch tự động
 
-Predicted Close
-
-Forecast Change %
-
----
-
-# 6. AI RESEARCH SECTION
-
-Position:
-
-Below Charts
-
-Components:
-
-1. Executive Summary
-
-2. Bullish Factors
-
-3. Bearish Factors
-
-4. News Sentiment
-
-5. Recommendation
+Admin ↔ Quản trị
 
 ---
 
-# 7. AI RECOMMENDATION CARD
+# AI TRANSLATION SYSTEM
 
-Recommendation:
+Research Reports support dual language.
 
-BUY
+Research Viewer
 
-HOLD
+English | Tiếng Việt
 
-SELL
+Behavior
 
-Target Price
+If Vietnamese version exists:
 
-Confidence
+Show content_vi
 
-Time Horizon
+If not:
 
-Generated Time
+Call translation endpoint
+
+Cache result
+
+Store translated report
+
+Research Table Suggested Fields
+
+content_en
+
+content_vi
+
+translated_at
 
 ---
 
-# 8. RESPONSIVE BEHAVIOR
+# USER ROLES
 
-Desktop:
+USER
 
-Charts Full Width
+Permissions
 
-Stack Vertically
+- Dashboard
+- Markets
+- Research
+- Forecast
+- Portfolio
+- Paper Trading
+- Auto Trade
+- Watchlist
 
-Mobile:
+ADMIN
 
-Charts Height Reduced
+Permissions
 
-Research Cards Collapse
+Everything above plus:
 
-Slider Full Width
+- User Management
+- System Monitoring
+- Model Accuracy
+- Research Queue
+- Admin Configuration
 
-All KPI Cards Become 2x2 Grid
+---
+
+# GLOBAL LAYOUT
+
+Navbar
+
+↓
+
+Market Ticker
+
+↓
+
+Page Content
+
+↓
+
+Floating AI Copilot
+
+↓
+
+Footer
+
+---
+
+# NAVBAR
+
+Left Section
+
+ForecastAI Logo
+
+Center Section
+
+Dashboard
+
+Markets
+
+Research
+
+Forecast
+
+Portfolio
+
+Auto Trade
+
+Admin (Admin Only)
+
+Right Section
+
+Notification Bell
+
+Language Switch
+
+User Menu
+
+Important
+
+Navigation items and Account items must be visually separated by large spacing.
+
+Do not cluster Login/Register beside navigation links.
+
+---
+
+# GLOBAL MARKET TICKER
+
+Position
+
+Sticky below Navbar
+
+Assets
+
+BTC
+
+ETH
+
+SP500
+
+NASDAQ
+
+DOW
+
+GOLD
+
+OIL
+
+Display Format
+
+[Ticker]
+
+[Price]
+
+[Arrow]
+
+[% Change]
+
+Green if positive
+
+Red if negative
+
+Auto Refresh
+
+30 Seconds
+
+Infinite Scroll
+
+Enabled
+
+---
+
+# FLOATING AI COPILOT
+
+Visible on all pages.
+
+Position
+
+Bottom Right
+
+Capabilities
+
+Forecast BTC
+
+Analyze AAPL
+
+Compare NVDA vs TSLA
+
+Show best signal today
+
+Behavior
+
+Enter
+
+↓
+
+Navigate to related page
+
+↓
+
+Execute AI query
+
+---
+
+# ROUTING STRUCTURE
+
+/
+
+Dashboard
+
+/markets
+
+Market Explorer
+
+/research
+
+Research Center
+
+/research/[ticker]
+
+Research Detail
+
+/forecast
+
+Forecast Explorer
+
+/forecast/[ticker]
+
+Forecast Detail
+
+/portfolio
+
+Portfolio Management
+
+/auto-trade
+
+Auto Trading
+
+/settings
+
+Profile Settings
+
+/admin
+
+Admin Dashboard
+
+/admin/users
+
+User Management
+
+/admin/accuracy
+
+Model Accuracy
+
+/admin/research
+
+Research Queue
+
+/login
+
+/register
+
+---
+
+# DASHBOARD PHILOSOPHY
+
+Dashboard answers:
+
+“How is my account doing today?”
+
+Markets answers:
+
+“What is happening in the market?”
+
+Forecast answers:
+
+“What does AI think will happen?”
+
+Research answers:
+
+“Why does AI think that?”
+
+Portfolio answers:
+
+“What do I currently own?”
+
+Auto Trade answers:
+
+“What is AI trading for me?”
+
+Admin answers:
+
+“How is the system performing?”
+
+---
+
+# GLOBAL UX REQUIREMENTS
+
+All numeric values use count-up animation.
+
+All cards use hover animation.
+
+All charts animate on first render.
+
+All pages support skeleton loading.
+
+All API failures must show dedicated error cards.
+
+All tables must support mobile horizontal scrolling.
+
+All pages must be responsive.
+
+Minimum Desktop Width
+
+1440px optimized
+
+Tablet Support
+
+Required
+
+Mobile Support
+
+Required

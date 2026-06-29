@@ -158,6 +158,7 @@ async def register(req: AuthRequest):
     return {
         "success": True,
         "token": token,
+        "user_id": user["id"],
         "username": user["username"],
         "role": user.get("role", "user"),
         "message": "User registered successfully"
@@ -182,10 +183,39 @@ async def login(req: AuthRequest):
     return {
         "success": True,
         "token": token,
+        "user_id": user["id"],
         "username": user["username"],
         "role": user.get("role", "user"),
         "message": "Logged in successfully"
     }
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@router.put("/change-password")
+async def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    """Change password for the currently authenticated user."""
+    if len(req.new_password) < 4:
+        raise HTTPException(400, "New password must be at least 4 characters")
+
+    user = get_user_by_username(current_user["username"])
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    old_hashed = hash_password(req.old_password)
+    if user["password_hash"] != old_hashed:
+        raise HTTPException(400, "Current password is incorrect")
+
+    new_hashed = hash_password(req.new_password)
+    from backend.database import _get_client
+    c = _get_client()
+    if c is None:
+        raise HTTPException(503, "Database unavailable")
+
+    c.table("users").update({"password_hash": new_hashed}).eq("id", current_user["user_id"]).execute()
+    return {"success": True, "message": "Password changed successfully"}
 
 
 @router.get("/watchlist")

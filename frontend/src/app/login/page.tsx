@@ -48,7 +48,7 @@ export default function LoginPage() {
       const res = await api.login(email, password)
       if (res.token) {
         localStorage.setItem("forecast_ai_token", res.token)
-        login(res.username, res.role || "user")
+        login(res.username, res.role || "user", res.user_id?.toString())
         
         // Handle returnUrl if exists
         const params = new URLSearchParams(window.location.search)
@@ -131,7 +131,11 @@ export default function LoginPage() {
             </div>
 
             <div className="flex items-center justify-end text-xs">
-              <button type="button" className="font-medium text-primary hover:underline">
+              <button
+                type="button"
+                onClick={() => alert("Tính năng Quên mật khẩu đang được phát triển.\nVui lòng liên hệ Admin để được hỗ trợ đặt lại mật khẩu.")}
+                className="font-medium text-primary hover:underline"
+              >
                 Forgot password?
               </button>
             </div>

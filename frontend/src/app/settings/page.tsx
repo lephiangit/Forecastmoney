@@ -2,19 +2,79 @@
 
 import { useState } from "react"
 import { motion } from "framer-motion"
-import { User, Bell, Globe, Shield, Save, Check, LogOut } from "lucide-react"
+import { User, Bell, Globe, Shield, Save, Check, LogOut, Lock, Loader2, X } from "lucide-react"
 import { useAuthStore, useLangStore, useT } from "@/lib/store"
+import { api } from "@/lib/api"
 import { PageHeader } from "@/components/ui/page-header"
 import { cn } from "@/lib/utils"
 
 export default function SettingsPage() {
   const t = useT()
-  const { user, logout } = useAuthStore()
+  const { user, login, logout } = useAuthStore()
   const { lang, setLang } = useLangStore()
   const [name, setName] = useState(user?.name ?? "")
   const [email, setEmail] = useState(user?.email ?? "")
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [notifs, setNotifs] = useState({ signals: true, trades: true, research: false, weekly: true })
+
+  // Change password state
+  const [showPwModal, setShowPwModal] = useState(false)
+  const [oldPw, setOldPw] = useState("")
+  const [newPw, setNewPw] = useState("")
+  const [confirmPw, setConfirmPw] = useState("")
+  const [pwLoading, setPwLoading] = useState(false)
+  const [pwError, setPwError] = useState("")
+  const [pwSuccess, setPwSuccess] = useState(false)
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      // Update auth store with new name/email
+      if (user) {
+        login(name || user.name, user.role, user.id)
+      }
+      // Save notification preferences to localStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem("forecastai-notif-prefs", JSON.stringify(notifs))
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleChangePassword() {
+    setPwError("")
+    setPwSuccess(false)
+
+    if (newPw.length < 4) {
+      setPwError("Mật khẩu mới phải có ít nhất 4 ký tự")
+      return
+    }
+    if (newPw !== confirmPw) {
+      setPwError("Mật khẩu xác nhận không khớp")
+      return
+    }
+
+    setPwLoading(true)
+    try {
+      await api.changePassword(oldPw, newPw)
+      setPwSuccess(true)
+      setOldPw("")
+      setNewPw("")
+      setConfirmPw("")
+      setTimeout(() => {
+        setShowPwModal(false)
+        setPwSuccess(false)
+      }, 2000)
+    } catch (err: any) {
+      setPwError(err.message || "Đổi mật khẩu thất bại")
+    } finally {
+      setPwLoading(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -63,11 +123,25 @@ export default function SettingsPage() {
             <ToggleRow label="New research reports" value={notifs.research} onChange={(v) => setNotifs((n) => ({ ...n, research: v }))} />
             <ToggleRow label="Weekly performance summary" value={notifs.weekly} onChange={(v) => setNotifs((n) => ({ ...n, weekly: v }))} />
           </div>
+          <p className="mt-3 text-[11px] text-muted-foreground italic">
+            Notification preferences are saved locally on this device.
+          </p>
         </Section>
 
         {/* Security */}
         <Section icon={Shield} title="Security">
-          <button className="rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent">
+          <button
+            onClick={() => {
+              setShowPwModal(true)
+              setPwError("")
+              setPwSuccess(false)
+              setOldPw("")
+              setNewPw("")
+              setConfirmPw("")
+            }}
+            className="rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent"
+          >
+            <Lock className="mr-1.5 inline h-3.5 w-3.5" />
             Change password
           </button>
           <button
@@ -89,13 +163,78 @@ export default function SettingsPage() {
             </motion.span>
           )}
           <button
-            onClick={() => setSaved(true)}
-            className="flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            onClick={handleSave}
+            disabled={saving}
+            className={cn(
+              "flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90",
+              saving && "opacity-70",
+            )}
           >
-            <Save className="h-4 w-4" /> {t("saveConfig")}
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {t("saveConfig")}
           </button>
         </div>
       </div>
+
+      {/* Change Password Modal */}
+      {showPwModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-card-foreground">Change Password</h3>
+              <button
+                onClick={() => setShowPwModal(false)}
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <FieldInput label="Current password" value={oldPw} onChange={setOldPw} type="password" />
+              <FieldInput label="New password" value={newPw} onChange={setNewPw} type="password" />
+              <FieldInput label="Confirm new password" value={confirmPw} onChange={setConfirmPw} type="password" />
+            </div>
+
+            {pwError && (
+              <p className="mt-3 text-sm text-negative">{pwError}</p>
+            )}
+            {pwSuccess && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-3 flex items-center gap-1.5 text-sm text-positive"
+              >
+                <Check className="h-4 w-4" /> Đổi mật khẩu thành công!
+              </motion.p>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setShowPwModal(false)}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangePassword}
+                disabled={pwLoading || pwSuccess}
+                className={cn(
+                  "flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90",
+                  (pwLoading || pwSuccess) && "opacity-70",
+                )}
+              >
+                {pwLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                {pwSuccess ? "Done" : "Change Password"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   )
 }

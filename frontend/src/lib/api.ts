@@ -89,8 +89,21 @@ export const api = {
   },
 
   async getForecasts(): Promise<Forecast[]> {
-    const defaultTickers = ["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]
-    return Promise.all(defaultTickers.map(async (ticker) => {
+    // Try to get tickers from user's watchlist first
+    let tickers: string[] = []
+    try {
+      const watchlist = await api.getWatchlist()
+      if (watchlist && watchlist.length > 0) {
+        tickers = watchlist.slice(0, 8) // Limit to 8 tickers max
+      }
+    } catch {
+      // Ignore watchlist errors
+    }
+    // Fallback to defaults if watchlist is empty
+    if (tickers.length === 0) {
+      tickers = ["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]
+    }
+    return Promise.all(tickers.map(async (ticker) => {
       const f = await api.getForecast(ticker)
       return f
     }))
@@ -178,7 +191,8 @@ export const api = {
 
   async translateReport(id: string): Promise<{ content_vi: string; translated_at: string }> {
     const real = await tryFetch<{ content_vi: string; translated_at: string }>(
-      `/api/research/${id}/translate`,
+      `/research/${id}/translate`,
+      { method: "POST" },
     )
     if (real) return real
     await delay(600)
@@ -328,14 +342,14 @@ export const api = {
   },
 
   async getSystemMetrics(): Promise<SystemMetric[]> {
-    const real = await tryFetch<SystemMetric[]>("/api/admin/system")
+    const real = await tryFetch<SystemMetric[]>("/admin/system")
     if (real) return real
     await delay()
     return SYSTEM_METRICS
   },
 
   async getResearchQueue(): Promise<ResearchQueueItem[]> {
-    const real = await tryFetch<ResearchQueueItem[]>("/api/admin/research-queue")
+    const real = await tryFetch<ResearchQueueItem[]>("/admin/research-queue")
     if (real) return real
     await delay()
     return RESEARCH_QUEUE
@@ -404,6 +418,15 @@ export const api = {
   async deleteNotification(id: number): Promise<boolean> {
     const res = await tryFetch<{ success: boolean }>(`/notifications/${id}`, { method: "DELETE" })
     return res?.success || false
+  },
+
+  async changePassword(oldPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    const res = await tryFetch<{ success: boolean; message: string }>("/auth/change-password", {
+      method: "PUT",
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+    })
+    if (!res) throw new Error("Failed to change password. Please check your connection.")
+    return res
   }
 }
 

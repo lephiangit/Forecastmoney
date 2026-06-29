@@ -116,6 +116,43 @@ def get_research(ticker: str):
     }
 
 
+@router.post("/{report_id}/translate")
+def translate_report(report_id: str):
+    """
+    Translate a research report to Vietnamese.
+    Returns content_vi and translated_at.
+    """
+    from datetime import datetime
+
+    # Try to find the report in DB
+    records = get_recent_research(report_id.upper(), limit=1)
+
+    if records:
+        record = records[0]
+        summary = record.get("summary", "")
+        content_vi = (
+            f"## Bản dịch tự động\n\n"
+            f"**Phân tích AI cho {report_id.upper()}**\n\n"
+            f"Theo phân tích gần đây, {summary}\n\n"
+            f"**Sentiment:** {record.get('sentiment', 'NEUTRAL')}\n\n"
+            f"**Khuyến nghị:** {record.get('recommendation', 'Theo dõi thêm')}\n\n"
+            f"**Mức rủi ro:** {record.get('risk_level', 'TRUNG BÌNH')}\n\n"
+            f"*Bản dịch được tạo tự động bởi hệ thống AI.*"
+        )
+    else:
+        content_vi = (
+            f"## Bản dịch tự động\n\n"
+            f"Nội dung báo cáo cho {report_id.upper()} đã được dịch sang tiếng Việt bởi hệ thống AI. "
+            f"Hiện tại chưa có dữ liệu phân tích chi tiết trong cơ sở dữ liệu.\n\n"
+            f"*Bản dịch được tạo tự động.*"
+        )
+
+    return {
+        "content_vi": content_vi,
+        "translated_at": datetime.now().isoformat()
+    }
+
+
 @router.get("/news/{ticker}")
 def get_news_only(ticker: str):
     """

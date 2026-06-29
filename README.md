@@ -1,4 +1,4 @@
-# ForecastAI V2 🤖📈
+# ForecastAI V1.2.1 🤖📈
 
 > **AI-powered market research & price forecasting platform**
 > Real-time data · TFT + SentimentFusion models · Gemini Research Agent · Paper trading
@@ -12,14 +12,14 @@
 
 ## Tổng quan
 
-ForecastAI V2 là nền tảng phân tích thị trường tài chính kết hợp:
+ForecastAI là nền tảng phân tích thị trường tài chính và giao dịch tự động giả lập (Paper Trading) kết hợp:
 
-- 📰 **Research Agent** (Gemini Flash) — phân tích tin tức, đưa ra sentiment score và khuyến nghị
-- 🧠 **TFT** (Temporal Fusion Transformer) — dự báo giá từ 60 ngày OHLCV + 20 technical indicators
-- 🔀 **SentimentFusion** — kết hợp TFT output với signals từ research để tinh chỉnh dự báo
-- 📊 **Paper Trading** — chế độ admin để theo dõi hiệu quả dự báo theo thời gian thực
+- 📰 **Research Agent** (Gemini Flash) — phân tích tin tức, đưa ra sentiment score và khuyến nghị.
+- 🧠 **TFT** (Temporal Fusion Transformer) — dự báo giá từ 60 ngày OHLCV + 20 technical indicators.
+- 🔀 **SentimentFusion** — kết hợp TFT output với signals từ research để tinh chỉnh dự báo.
+- 📊 **Paper Trading & Auto-Trade Bot** — Đầu tư ảo thời gian thực, có bot tự động chạy ngầm liên tục 24/7 thực hiện giao dịch dựa trên dự báo AI.
 
-**Triết lý thiết kế:** Dữ liệu giá và forecast **KHÔNG bao giờ lưu vào database** — tất cả đều fetch và tính toán live theo mỗi request, tránh phình to dữ liệu và hỗ trợ bất kỳ mã giao dịch nào.
+**Triết lý thiết kế:** Dữ liệu giá và forecast **KHÔNG bao giờ lưu vào database** — tất cả đều fetch và tính toán live theo mỗi request, tránh phình to dữ liệu và hỗ trợ bất kỳ mã giao dịch nào. 
 
 ---
 
@@ -56,10 +56,10 @@ cd backend
 # Cài dependencies
 pip install -r requirements.txt
 
-# Cấu hình môi trường (Cần GEMINI_API_KEY)
+# Cấu hình môi trường (Cần GEMINI_API_KEY và thông tin Supabase DB)
 cp .env.example .env
 
-# Chạy API server
+# Chạy API server (Tự động kích hoạt luồng bot auto-trade ngầm)
 uvicorn backend.main:app --reload --port 8000
 ```
 

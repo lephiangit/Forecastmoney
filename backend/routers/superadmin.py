@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+\"\"\"\nrouters/superadmin.py – DEPRECATED\n\nThis module is superseded by admin.py which provides the same user management\nfunctionality (balance updates, user deletion) under the /admin prefix.\nFrontend exclusively calls /admin/users/* endpoints.\n\nKeep this file for backward compatibility but do NOT add new endpoints here.\nConsider removing in a future cleanup.\n\"\"\"\nfrom fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List
 
