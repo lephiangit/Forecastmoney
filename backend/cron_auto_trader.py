@@ -1,6 +1,6 @@
 from datetime import datetime
 from backend.database import _get_client, get_admin_config, update_admin_config, save_trade, get_watchlist, get_bot_config
-from backend.models.forecaster import get_live_quote, get_forecast
+from backend.models.forecaster import get_live_quote, run_combined_forecast
 
 def run_auto_trade():
     """Execute auto trading for all users who have is_running = True."""
@@ -62,11 +62,14 @@ def run_auto_trade():
             if ticker not in forecast_cache:
                 try:
                     # We just need 1 day forecast to decide
-                    fc = get_forecast(ticker, days=1)
-                    if not fc or "forecast" not in fc or len(fc["forecast"]) == 0:
+                    fc = run_combined_forecast(ticker, days=1)
+                    if not fc or "tft" not in fc or not fc["tft"]["median"]:
                         continue
-                    forecast_cache[ticker] = fc["forecast"][0]["median"]
+                    # get the price for the first day
+                    forecast_cache[ticker] = fc["tft"]["median"][0]["price"]
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     print(f"     Forecast error for {ticker}: {e}")
                     continue
                     

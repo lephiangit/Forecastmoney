@@ -205,13 +205,13 @@ export const api = {
     const real = await tryFetch<any>("/admin/portfolio")
     if (real && real.recent_trades) {
       return real.recent_trades.map((t: any) => ({
-        id: t.id.toString(),
+        id: t.id?.toString() || Math.random().toString(),
         ticker: t.ticker,
         action: t.action,
         quantity: t.quantity,
         price: t.price,
         total: t.total_value,
-        source: "manual",
+        source: t.model_signal === "AUTO" ? "auto" : "manual",
         createdAt: t.trade_time
       }))
     }
@@ -235,10 +235,31 @@ export const api = {
   },
 
   async getAutoTradeStats(): Promise<AutoTradeStats> {
-    const real = await tryFetch<AutoTradeStats>("/api/auto-trade/stats")
-    if (real) return real
-    await delay()
-    return AUTO_TRADE_STATS
+    try {
+      const real = await tryFetch<any>("/admin/portfolio")
+      if (real) {
+        const activePositions = real.positions ? Object.keys(real.positions).length : 0
+        const initial = real.initial_balance || 10000
+        const current = real.current_balance || 10000
+        const botPnl = current - initial
+        const botPnlPercent = initial > 0 ? (botPnl / initial) * 100 : 0
+        
+        let totalTrades = (real.win_trades || 0) + (real.loss_trades || 0)
+        if (real.recent_trades) {
+           const autoTrades = real.recent_trades.filter((t: any) => t.model_signal === "AUTO").length
+           if (autoTrades > totalTrades) totalTrades = autoTrades
+        }
+
+        return {
+          winRate: real.win_rate || 0,
+          totalTrades,
+          activePositions,
+          pnl: botPnl,
+          totalReturn: botPnlPercent,
+        }
+      }
+    } catch(e) {}
+    return { winRate: 0, totalTrades: 0, activePositions: 0, pnl: 0, totalReturn: 0 }
   },
 
 
