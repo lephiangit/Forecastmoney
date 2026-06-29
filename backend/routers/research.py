@@ -7,6 +7,7 @@ Supports any ticker.
 
 from fastapi import APIRouter, HTTPException, Query
 import time
+from typing import Optional
 
 from backend.agents.research_agent import analyze_market, fetch_news
 from backend.database import get_recent_research
