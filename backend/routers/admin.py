@@ -31,6 +31,7 @@ class TradeRequest(BaseModel):
 class StartTradingRequest(BaseModel):
     amount: float
     duration_hours: int
+    assets: List[str] = []
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
 @router.post("/trading/start")
 def start_auto_trading(
     req: StartTradingRequest,
+    background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
 ):
     """Start auto-trading for the current user."""
@@ -145,13 +147,19 @@ def start_auto_trading(
     
     save_bot_config(user_id, {
         "amount": req.amount,
-        "end_time": end_time
+        "end_time": end_time,
+        "assets": req.assets
     })
     
     update_admin_config(user_id, {
         "is_running": True,
         "started_at": datetime.now().isoformat(),
     })
+    
+    # Trigger an immediate run in the background
+    from backend.cron_auto_trader import run_auto_trade
+    background_tasks.add_task(run_auto_trade)
+    
     return {"message": "Auto-trading started", "is_running": True}
 
 

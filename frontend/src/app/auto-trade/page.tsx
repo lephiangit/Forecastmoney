@@ -35,9 +35,9 @@ const DEFAULT_CONFIG: AutoTradeConfig = {
 export default function AutoTradePage() {
   const queryClient = useQueryClient()
   const t = useT()
-  const statsQ = useQuery({ queryKey: ["autoTradeStats"], queryFn: api.getAutoTradeStats })
-  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio })
-  const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions })
+  const statsQ = useQuery({ queryKey: ["autoTradeStats"], queryFn: api.getAutoTradeStats, refetchInterval: 5000 })
+  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio, refetchInterval: 5000 })
+  const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, refetchInterval: 5000 })
   const botConfigQ = useQuery({ queryKey: ["botConfig"], queryFn: api.getBotConfig })
 
   const [config, setConfig] = useState<AutoTradeConfig>(DEFAULT_CONFIG)
@@ -54,7 +54,7 @@ export default function AutoTradePage() {
   }, [botConfigQ.data])
 
   const startMut = useMutation({
-    mutationFn: () => api.startBot(Number(tradeAmount) || 0, Number(durationHours) || 0),
+    mutationFn: () => api.startBot(Number(tradeAmount) || 0, Number(durationHours) || 0, config.assets),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["portfolio"] })
       queryClient.invalidateQueries({ queryKey: ["botConfig"] })

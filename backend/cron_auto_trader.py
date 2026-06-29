@@ -40,12 +40,11 @@ def run_auto_trade():
         trade_amount = float(bot_cfg.get("amount", 500))
         
         # We need to find what this user wants to trade.
-        # Let's get their watchlist.
-        watchlist = get_watchlist(user_id)
+        watchlist = bot_cfg.get("assets") or get_watchlist(user_id)
         if not watchlist:
             continue
             
-        print(f"  👤 Processing User {user_id} with watchlist: {watchlist}")
+        print(f"  👤 Processing User {user_id} with assets: {watchlist}")
         
         for ticker in watchlist:
             ticker = ticker.upper()
@@ -84,7 +83,7 @@ def run_auto_trade():
             
             trade_executed = False
             
-            if predicted_price > current_price * 1.01:
+            if predicted_price > current_price:
                 # BUY Signal
                 if balance >= total_value:
                     balance -= total_value
@@ -92,7 +91,7 @@ def run_auto_trade():
                     trade_executed = True
                     print(f"     ✅ User {user_id} AUTO BUY {qty} {ticker} @ {current_price}")
                     
-            elif predicted_price < current_price * 0.99:
+            elif predicted_price < current_price:
                 # SELL Signal
                 # Ideally we check if they own it, but for simple paper trading we just allow selling (shorting or reducing position)
                 balance += total_value

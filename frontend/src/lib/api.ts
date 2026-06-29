@@ -185,10 +185,10 @@ export const api = {
     return real || { amount: 500, end_time: null }
   },
 
-  async startBot(amount: number, durationHours: number) {
+  async startBot(amount: number, durationHours: number, assets: string[]) {
     return tryFetch("/admin/trading/start", {
       method: "POST",
-      body: JSON.stringify({ amount, duration_hours: durationHours })
+      body: JSON.stringify({ amount, duration_hours: durationHours, assets })
     })
   },
 
