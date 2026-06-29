@@ -117,9 +117,9 @@ export const api = {
       
       if (real && forecastData && forecastData.median && forecastData.median.length > 0) {
         const currentPrice = real.current_price || 0
-        const predicted = forecastData.median.map((m: any) => ({ time: m.date, value: m.price }))
-        const upperBand = (forecastData.upper_q90 || []).map((m: any) => ({ time: m.date, value: m.price }))
-        const lowerBand = (forecastData.lower_q10 || []).map((m: any) => ({ time: m.date, value: m.price }))
+        const predicted = forecastData.median.map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
+        const upperBand = (forecastData.upper_q90 || []).map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
+        const lowerBand = (forecastData.lower_q10 || []).map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
         
         const targetPrice = predicted[predicted.length - 1].value
         const expectedReturn = currentPrice > 0 ? ((targetPrice - currentPrice) / currentPrice) * 100 : 0
@@ -230,9 +230,9 @@ export const api = {
     if (real) {
       // Get history alongside portfolio
       const historyRes = await this.getPortfolioHistory(90)
-      const history = historyRes.map((h) => ({
+      const history = historyRes.map((h: any) => ({
         time: h.snapshot_date,
-        value: h.balance
+        value: Number(h.balance) || 0
       }))
 
       // mapping backend shape to frontend Portfolio
@@ -244,7 +244,7 @@ export const api = {
         totalPnlPercent: real.initial_balance > 0 ? (real.total_pnl / real.initial_balance) * 100 : 0,
         dayPnl: 0,
         dayPnlPercent: 0,
-        holdings: Object.entries(real.positions).map(([k, v]: any) => ({
+        holdings: Object.entries(real.positions || {}).map(([k, v]: any) => ({
           ticker: k,
           name: k,
           quantity: v.qty,
