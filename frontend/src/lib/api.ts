@@ -398,6 +398,7 @@ export const api = {
   },
 
   async login(username: string, password: string) {
+    if (!BASE_URL) throw new Error("API URL not configured")
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -411,6 +412,7 @@ export const api = {
   },
 
   async register(username: string, password: string) {
+    if (!BASE_URL) throw new Error("API URL not configured")
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -456,6 +458,7 @@ export const api = {
   },
 
   async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
+    if (!BASE_URL) throw new Error("API URL not configured")
     const res = await fetch(`${BASE_URL}/auth/forgot-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -469,6 +472,7 @@ export const api = {
   },
 
   async resetPassword(email: string, newPassword: string, supabaseToken: string): Promise<{ success: boolean; message: string }> {
+    if (!BASE_URL) throw new Error("API URL not configured")
     const res = await fetch(`${BASE_URL}/auth/reset-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

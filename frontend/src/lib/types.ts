@@ -57,7 +57,7 @@ export interface ResearchReport {
   sentiment: "bullish" | "bearish" | "neutral"
   confidence: number
   author: string
-  tags: string[]
+  tags: string[] | string
   content_en: string
   content_vi?: string
   translated_at?: string

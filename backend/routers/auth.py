@@ -217,33 +217,9 @@ async def change_password(req: ChangePasswordRequest, current_user: dict = Depen
     c.table("users").update({"password_hash": new_hashed}).eq("id", current_user["user_id"]).execute()
     return {"success": True, "message": "Password changed successfully"}
 
+# NOTE: Watchlist endpoints are in admin.py under /admin/watchlist.
+# Frontend exclusively calls /admin/watchlist endpoints.
 
-@router.get("/watchlist")
-async def get_user_watchlist(current_user: dict = Depends(get_current_user)):
-    from backend.database import get_watchlist
-    tickers = get_watchlist(current_user["user_id"])
-    return {"success": True, "watchlist": tickers}
-
-
-@router.post("/watchlist")
-async def add_user_watchlist(req: dict, current_user: dict = Depends(get_current_user)):
-    ticker = req.get("ticker")
-    if not ticker:
-        raise HTTPException(400, "Ticker is required")
-    from backend.database import add_to_watchlist
-    success = add_to_watchlist(current_user["user_id"], ticker)
-    if not success:
-        raise HTTPException(500, "Could not add to watchlist (maybe already exists)")
-    return {"success": True, "ticker": ticker.upper()}
-
-
-@router.delete("/watchlist/{ticker}")
-async def remove_user_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
-    from backend.database import remove_from_watchlist
-    success = remove_from_watchlist(current_user["user_id"], ticker)
-    if not success:
-        raise HTTPException(500, "Could not remove from watchlist")
-    return {"success": True, "ticker": ticker.upper()}
 
 
 class ForgotPasswordRequest(BaseModel):
