@@ -33,6 +33,13 @@ def _is_fresh(ticker: str) -> bool:
 
 def _parse_tags(val) -> list:
     if isinstance(val, str):
+        import json
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+        except:
+            pass
         return [t.strip() for t in val.split(",") if t.strip()]
     if isinstance(val, list):
         return val
@@ -235,9 +242,10 @@ def get_research(ticker: str):
             pass
 
     return {
+        "id": str(record.get("id", ticker)),
         "ticker": ticker,
         "sentiment": record.get("sentiment", "NEUTRAL"),
-        "confidence": record.get("confidence", 0.5),
+        "confidence": int(record.get("confidence", 0.5) * 100),
         "sentiment_score": record.get("sentiment_score", 0.0),
         "summary": summary,
         "key_factors": _parse_tags(record.get("key_factors", [])),
@@ -245,6 +253,8 @@ def get_research(ticker: str):
         "risk_level": record.get("risk_level", "MEDIUM"),
         "source": "mock_ai",
         "news_count": record.get("news_count", 0),
-        "analyzed_at": record.get("created_at", ""),
+        "createdAt": record.get("created_at", ""),
+        "readTime": 3,
+        "author": "Groq Agent",
         "headlines": headlines
     }

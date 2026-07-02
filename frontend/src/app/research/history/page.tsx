@@ -136,7 +136,7 @@ export default function ResearchHistoryPage() {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="w-24">
-                        <ConfidencePill value={report.confidence / 100} />
+                        <ConfidencePill value={report.confidence} />
                       </div>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell text-muted-foreground truncate max-w-xs">
