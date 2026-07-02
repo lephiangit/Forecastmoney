@@ -11,30 +11,40 @@ export default function AuthCallbackPage() {
   const { login } = useAuthStore()
 
   useEffect(() => {
+    let timeoutId: NodeJS.Timeout
+    let subscription: any
+
+    function processSession(session: any) {
+      localStorage.setItem("forecast_ai_token", session.access_token)
+      const user = session.user
+      const name = user.user_metadata?.full_name || user.email || "Trader"
+      login(name, "user", user.id)
+      router.push("/")
+    }
+
     async function handleCallback() {
       try {
+        // Try to get session immediately
         const { data: { session }, error } = await supabase.auth.getSession()
         
-        if (error) {
-          throw error
+        if (session) {
+          processSession(session)
+          return
         }
 
-        if (session) {
-          // Store the Supabase JWT token. Our backend `get_current_user` 
-          // knows how to verify both custom JWTs and Supabase JWTs.
-          localStorage.setItem("forecast_ai_token", session.access_token)
-          
-          const user = session.user
-          const name = user.user_metadata?.full_name || user.email || "Trader"
-          
-          login(name, "user", user.id)
-          
-          // Redirect to dashboard
-          router.push("/")
-        } else {
-          // If no session, they shouldn't be here
-          router.push("/login")
-        }
+        // If no session yet, wait for the SIGNED_IN event (Supabase processes URL async)
+        const { data } = supabase.auth.onAuthStateChange((event, currentSession) => {
+          if (event === 'SIGNED_IN' && currentSession) {
+            processSession(currentSession)
+          }
+        })
+        subscription = data.subscription
+
+        // Fallback: if after 3 seconds still no session, redirect to login
+        timeoutId = setTimeout(() => {
+          router.push("/login?error=auth_timeout")
+        }, 3000)
+
       } catch (err) {
         console.error("Auth callback error:", err)
         router.push("/login?error=auth_failed")
@@ -42,6 +52,11 @@ export default function AuthCallbackPage() {
     }
 
     handleCallback()
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      if (subscription) subscription.unsubscribe()
+    }
   }, [router, login])
 
   return (
