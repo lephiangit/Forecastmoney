@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Activity, Loader2 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { useAuthStore } from "@/lib/store"
@@ -9,6 +9,8 @@ import { useAuthStore } from "@/lib/store"
 export default function AuthCallbackPage() {
   const router = useRouter()
   const { login } = useAuthStore()
+  const [debugLog, setDebugLog] = useState("Starting auth...")
+  const [debugLog2, setDebugLog2] = useState("")
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout
@@ -24,30 +26,34 @@ export default function AuthCallbackPage() {
 
     async function handleCallback() {
       try {
+        setDebugLog2("URL: " + window.location.href)
         // Try to get session immediately
         const { data: { session }, error } = await supabase.auth.getSession()
         
         if (session) {
+          setDebugLog("Session found immediately! Redirecting...")
           processSession(session)
           return
         }
 
-        // If no session yet, wait for the SIGNED_IN event (Supabase processes URL async)
+        setDebugLog("No session immediately, waiting for SIGNED_IN event...")
+        // If no session yet, wait for the SIGNED_IN event
         const { data } = supabase.auth.onAuthStateChange((event, currentSession) => {
+          setDebugLog(`Event received: ${event}`)
           if (event === 'SIGNED_IN' && currentSession) {
             processSession(currentSession)
           }
         })
         subscription = data.subscription
 
-        // Fallback: if after 3 seconds still no session, redirect to login
+        // Fallback: if after 5 seconds still no session
         timeoutId = setTimeout(() => {
-          router.push("/login?error=auth_timeout")
-        }, 3000)
+          setDebugLog("Timeout! No session after 5 seconds.")
+          setTimeout(() => router.push("/login?error=auth_timeout"), 3000)
+        }, 5000)
 
-      } catch (err) {
-        console.error("Auth callback error:", err)
-        router.push("/login?error=auth_failed")
+      } catch (err: any) {
+        setDebugLog(`Error: ${err?.message || "Unknown error"}`)
       }
     }
 
@@ -60,18 +66,20 @@ export default function AuthCallbackPage() {
   }, [router, login])
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background">
-      <div className="absolute inset-0 -z-10 opacity-[0.04] [background-image:linear-gradient(var(--border)_1px,transparent_1px),linear-gradient(90deg,var(--border)_1px,transparent_1px)] [background-size:40px_40px]" />
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary animate-pulse mb-4">
+        <Activity className="h-6 w-6 text-primary-foreground" strokeWidth={2.5} />
+      </div>
+      <h2 className="text-xl font-bold mb-2">Đang xác thực tài khoản...</h2>
+      <p className="text-muted-foreground mb-4">Vui lòng đợi trong giây lát.</p>
       
-      <div className="flex flex-col items-center gap-4">
-        <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary animate-pulse">
-          <Activity className="h-6 w-6 text-primary-foreground" strokeWidth={2.5} />
-        </div>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <p>Authenticating...</p>
-        </div>
+      {/* Debug Info */}
+      <div className="mt-8 p-4 bg-muted text-left text-xs font-mono rounded overflow-hidden max-w-full break-words">
+        <p className="font-bold text-red-500 mb-2">DEBUG INFO (Chụp ảnh màn hình này gửi cho DEV):</p>
+        <p>{debugLog}</p>
+        <p className="mt-2 text-blue-400">{debugLog2}</p>
       </div>
     </div>
   )
 }
+
