@@ -34,8 +34,15 @@ def _is_fresh(ticker: str) -> bool:
 def _parse_tags(val) -> list:
     if isinstance(val, str):
         import json
+        import ast
         try:
             parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+        except:
+            pass
+        try:
+            parsed = ast.literal_eval(val)
             if isinstance(parsed, list):
                 return parsed
         except:

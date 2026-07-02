@@ -68,8 +68,8 @@ def get_portfolio(user=Depends(get_current_user)):
     win_rate = win_trades / total_trades * 100 if total_trades > 0 else 0
 
     return {
-        "initial_balance": config.get("initial_balance", 10000.0),
-        "current_balance": config.get("current_balance", 10000.0),
+        "initial_balance": config.get("initial_balance", 0.0),
+        "current_balance": config.get("current_balance", 0.0),
         "total_pnl": config.get("total_pnl", 0.0),
         "win_rate": round(win_rate, 1),
         "win_trades": win_trades,
