@@ -229,7 +229,7 @@ export const api = {
     const real = await tryFetch<any>("/admin/portfolio")
     if (real) {
       // Get history alongside portfolio
-      const historyRes = await this.getPortfolioHistory(90)
+      const historyRes = await api.getPortfolioHistory(90)
       const history = historyRes.map((h: any) => ({
         time: h.snapshot_date,
         value: Number(h.balance) || 0
