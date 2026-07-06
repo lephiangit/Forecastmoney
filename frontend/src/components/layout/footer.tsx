@@ -21,6 +21,7 @@ export function Footer() {
           <Link href="/forecast" className="hover:text-foreground">Forecast</Link>
           <Link href="/research" className="hover:text-foreground">Research</Link>
           <Link href="/portfolio" className="hover:text-foreground">Portfolio</Link>
+          <Link href="/auto-trade" className="hover:text-foreground">Auto Trade</Link>
         </nav>
         <p className="text-xs text-muted-foreground">
           © {new Date().getFullYear()} ForecastAI. Paper trading only. Not financial advice.

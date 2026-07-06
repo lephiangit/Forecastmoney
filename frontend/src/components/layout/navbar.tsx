@@ -296,7 +296,7 @@ export function Navbar() {
       </div>
 
       {mobileOpen && (
-        <nav className="border-t border-border bg-background px-4 py-2 lg:hidden">
+        <nav className="border-t border-border bg-background px-4 py-2 lg:hidden max-h-[calc(100vh-3.5rem)] overflow-y-auto">
           {items.map((item) => (
             <Link
               key={item.href}
