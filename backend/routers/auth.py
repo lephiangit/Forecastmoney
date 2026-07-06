@@ -86,6 +86,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
             pass
         return payload
         
+    error_msg = "Unknown error"
     # 2. Try Supabase token (Google Auth)
     try:
         from backend.database import _get_client, get_user_by_username, create_user
@@ -116,10 +117,14 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
                     "role": existing_user.get("role", "user"),
                     "exp": time.time() + 3600
                 }
+        else:
+            error_msg = "User not found in Supabase token"
     except Exception as e:
-        print(f"Supabase auth check error: {e}")
+        error_msg = str(e)
+        import sys
+        print(f"Supabase auth check error: {error_msg}", file=sys.stderr)
         
-    raise HTTPException(status_code=401, detail="Invalid or expired token")
+    raise HTTPException(status_code=401, detail=f"Invalid or expired token. Details: {error_msg}")
 
 
 def get_current_admin(user: dict = Depends(get_current_user)) -> dict:
