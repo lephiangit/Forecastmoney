@@ -140,10 +140,12 @@ export default function RegisterPage() {
             <Field label={t("name")} icon={User} type="text" value={name} onChange={setName} placeholder="Jane Trader" />
             <Field label={t("email")} icon={Mail} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">{t("password")}</label>
+              <label htmlFor="password" className="mb-1.5 block text-xs font-medium text-muted-foreground">{t("password")}</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
+                  id="password"
+                  name="password"
                   type={showPw ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -201,12 +203,15 @@ function Field({
   onChange: (v: string) => void
   placeholder?: string
 }) {
+  const id = label.toLowerCase().replace(/\s+/g, '-')
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</label>
+      <label htmlFor={id} className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</label>
       <div className="relative">
         <Icon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
+          id={id}
+          name={id}
           type={type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
