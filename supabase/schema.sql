@@ -58,6 +58,17 @@ CREATE TABLE admin_config (
     updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE portfolio_snapshots (
+    id             BIGSERIAL PRIMARY KEY,
+    user_id        BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    balance        DECIMAL(18,4) NOT NULL DEFAULT 0.0,
+    total_pnl      DECIMAL(18,4) NOT NULL DEFAULT 0.0,
+    snapshot_date  DATE NOT NULL,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, snapshot_date)
+);
+
+
 CREATE TABLE model_accuracy (
     id             BIGSERIAL PRIMARY KEY,
     ticker         VARCHAR(20) NOT NULL,

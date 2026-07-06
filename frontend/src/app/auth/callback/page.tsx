@@ -17,6 +17,7 @@ export default function AuthCallbackPage() {
     let subscription: any
 
     function processSession(session: any) {
+      if (timeoutId) clearTimeout(timeoutId)
       localStorage.setItem("forecast_ai_token", session.access_token)
       const user = session.user
       const name = user.user_metadata?.full_name || user.email || "Trader"
