@@ -14,93 +14,97 @@ export default function AuthCallbackPage() {
 
   useEffect(() => {
     let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout>
+
+    function processSession(session: any) {
+      if (cancelled) return
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+      setStatus("Đăng nhập thành công! Đang chuyển hướng...")
+
+      // Store the access token for backend API calls
+      localStorage.setItem("forecast_ai_token", session.access_token)
+
+      const user = session.user
+      const name = user.user_metadata?.full_name || user.email || "Trader"
+      login(name, "user", user.id)
+
+      router.push("/")
+    }
 
     async function handleCallback() {
       try {
-        const url = new URL(window.location.href)
-        const code = url.searchParams.get("code")
-        const errorParam = url.searchParams.get("error")
-        const errorDesc = url.searchParams.get("error_description")
+        const hash = window.location.hash
+        const search = window.location.search
+        setDetail(`hash=${hash ? "yes" : "no"}, search=${search ? "yes" : "no"}`)
 
-        setDetail(`URL params: code=${code ? "yes" : "no"}, error=${errorParam || "none"}`)
+        // With implicit flow + detectSessionInUrl: true,
+        // Supabase auto-parses the hash fragment (#access_token=xxx&...)
+        // and makes the session available via getSession().
 
-        // If Supabase/Google returned an error
-        if (errorParam) {
-          setStatus(`Lỗi: ${errorDesc || errorParam}`)
-          setTimeout(() => router.push("/login?error=oauth_error"), 3000)
+        // Step 1: Try getSession immediately (Supabase may have already parsed the URL)
+        const { data: { session }, error } = await supabase.auth.getSession()
+
+        if (error) {
+          setStatus(`Lỗi: ${error.message}`)
+          setDetail(JSON.stringify(error))
+          setTimeout(() => router.push("/login?error=session_error"), 3000)
           return
         }
 
-        // PKCE flow: exchange the code for a session
-        if (code) {
-          setStatus("Đang trao đổi mã xác thực...")
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code)
-          
-          if (error) {
-            setStatus(`Lỗi trao đổi mã: ${error.message}`)
-            setDetail(JSON.stringify(error))
-            setTimeout(() => router.push("/login?error=code_exchange"), 3000)
-            return
-          }
-
-          if (data.session) {
-            processSession(data.session)
-            return
-          }
-        }
-
-        // Fallback: try getSession (for implicit flow or already-authenticated)
-        setStatus("Đang kiểm tra phiên đăng nhập...")
-        const { data: { session } } = await supabase.auth.getSession()
-        
         if (session) {
           processSession(session)
           return
         }
 
-        // Last resort: listen for auth state change
+        // Step 2: If no session yet, listen for SIGNED_IN event
+        // (Supabase might still be processing the hash)
         setStatus("Đang chờ xác thực từ Google...")
         const { data: listener } = supabase.auth.onAuthStateChange((event, currentSession) => {
           if (cancelled) return
           setDetail(`Event: ${event}`)
-          if (event === "SIGNED_IN" && currentSession) {
+          if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && currentSession) {
             processSession(currentSession)
           }
         })
 
-        // Timeout after 8 seconds
-        setTimeout(() => {
+        // Step 3: Fallback - try PKCE code exchange if there's a ?code= param
+        const code = new URLSearchParams(window.location.search).get("code")
+        if (code) {
+          setStatus("Đang trao đổi mã xác thực...")
+          const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+          if (!exchangeError && data.session) {
+            processSession(data.session)
+            return
+          }
+          if (exchangeError) {
+            setDetail(`Code exchange error: ${exchangeError.message}`)
+          }
+        }
+
+        // Timeout after 10 seconds
+        timeoutId = setTimeout(() => {
           if (!cancelled) {
             listener.subscription.unsubscribe()
             setStatus("Hết thời gian chờ. Đang chuyển về trang đăng nhập...")
+            setDetail("Không nhận được phiên đăng nhập từ Google. Vui lòng thử lại.")
             setTimeout(() => router.push("/login?error=auth_timeout"), 2000)
           }
-        }, 8000)
+        }, 10000)
 
       } catch (err: any) {
         setStatus(`Lỗi: ${err?.message || "Unknown"}`)
+        setDetail(String(err))
         setTimeout(() => router.push("/login?error=callback_error"), 3000)
       }
     }
 
-    function processSession(session: any) {
-      if (cancelled) return
-      cancelled = true
-      setStatus("Đăng nhập thành công! Đang chuyển hướng...")
-      
-      // Store the access token for backend API calls
-      localStorage.setItem("forecast_ai_token", session.access_token)
-      
-      const user = session.user
-      const name = user.user_metadata?.full_name || user.email || "Trader"
-      login(name, "user", user.id)
-      
-      router.push("/")
-    }
-
     handleCallback()
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
   }, [router, login])
 
   return (
@@ -110,7 +114,7 @@ export default function AuthCallbackPage() {
       </div>
       <h2 className="text-xl font-bold mb-2">{status}</h2>
       <p className="text-muted-foreground mb-4">Vui lòng đợi trong giây lát.</p>
-      
+
       {detail && (
         <div className="mt-4 p-3 bg-muted text-left text-xs font-mono rounded max-w-md break-words">
           <p className="text-muted-foreground">{detail}</p>
