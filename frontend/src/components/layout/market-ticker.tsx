@@ -16,18 +16,21 @@ export function MarketTicker() {
     refetchInterval: 30_000,
   })
 
-  const assets = (data ?? [])
-    .filter((a) => TICKER_ORDER.includes(a.ticker))
-    .sort((a, b) => TICKER_ORDER.indexOf(a.ticker) - TICKER_ORDER.indexOf(b.ticker))
+  const assets = (data ?? []).filter((a) => a.ticker && typeof a.price === "number")
 
   if (!assets.length) {
-    return <div className="sticky top-14 z-40 h-9 border-b border-border bg-bg-secondary" />
+    return <div className="sticky top-14 z-40 h-9 border-b border-t-2 border-t-primary border-border bg-bg-secondary" />
   }
 
-  const loop = [...assets, ...assets]
+  let baseList = [...assets]
+  while (baseList.length > 0 && baseList.length < 20) {
+    baseList = [...baseList, ...assets]
+  }
+
+  const loop = [...baseList, ...baseList]
 
   return (
-    <div className="sticky top-14 z-40 overflow-hidden border-b border-border bg-bg-secondary">
+    <div className="sticky top-14 z-40 overflow-hidden border-b border-t-2 border-t-primary border-border bg-bg-secondary">
       <div className="ticker-track flex w-max items-center whitespace-nowrap py-2">
         {loop.map((a, i) => {
           const pos = a.changePercent >= 0

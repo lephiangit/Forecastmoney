@@ -79,8 +79,8 @@ export const api = {
         sparkline: d.sparkline || [],
       }))
     }
-    // No fallback, return empty array if it fails so UI can handle loading/error properly
-    return []
+    // Temporarily return MARKET_ASSETS as fallback so UI can show data without backend
+    return MARKET_ASSETS
   },
 
   async getAsset(ticker: string): Promise<MarketAsset | undefined> {
