@@ -96,7 +96,7 @@ export default function AdminPage() {
         <StatCard label={t("totalUsers")} value={totalUsers} format={(n) => (Number(n) || 0).toFixed(0)} icon={Users} accent />
         <StatCard label={t("activeUsers")} value={activeUsers} format={(n) => (Number(n) || 0).toFixed(0)} icon={UserCheck} delay={0.05} />
         <StatCard label={t("totalAum")} value={totalAum} format={(n) => formatCurrency(n, { compact: true })} icon={DollarSign} delay={0.1} />
-        <StatCard label={t("apiRequests")} value={1284932} format={(n) => (Number(n) || 0).toLocaleString("en-US")} icon={Activity} delay={0.15} />
+
       </div>
 
       {/* Tabs */}
