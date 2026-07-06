@@ -58,6 +58,25 @@ async function tryFetch<T>(path: string, options?: RequestInit): Promise<T | nul
       ...options,
       headers,
     })
+    if (res.status === 401 && typeof window !== "undefined") {
+      // Token missing or expired – clear stale auth state and redirect to login
+      localStorage.removeItem("forecast_ai_token")
+      // Clear zustand persisted auth
+      const stored = localStorage.getItem("forecastai-auth")
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored)
+          parsed.state = { ...parsed.state, user: null }
+          localStorage.setItem("forecastai-auth", JSON.stringify(parsed))
+        } catch {}
+      }
+      // Only redirect if we're not already on login/register/callback pages
+      const p = window.location.pathname
+      if (!p.startsWith("/login") && !p.startsWith("/register") && !p.startsWith("/auth/")) {
+        window.location.href = "/login?reason=session_expired"
+      }
+      return null
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return (await res.json()) as T
   } catch {

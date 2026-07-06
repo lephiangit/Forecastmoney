@@ -70,6 +70,7 @@ def verify_token(token: str) -> Optional[dict]:
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
+        print(f"[AUTH] Missing or invalid Authorization header: {authorization!r}")
         raise HTTPException(status_code=401, detail="Authentication token required")
     token = authorization.split(" ")[1]
     
