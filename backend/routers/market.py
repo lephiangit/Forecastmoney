@@ -18,7 +18,7 @@ router = APIRouter()
 # Default watchlist — shown on dashboard by default
 DEFAULT_TICKERS = [
     "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "ADA-USD", "XRP-USD",
-    "DOGE-USD", "AVAX-USD",
+    "DOGE-USD", "AVAX-USD", "AAPL", "NVDA", "TSLA", "FPT.VN", "HPG.VN", "VCB.VN"
 ]
 
 

@@ -56,6 +56,19 @@ function sparkline(base: number, seed: number): number[] {
 
 export const MARKET_ASSETS: MarketAsset[] = [
   {
+    ticker: "FPT.VN",
+    name: "FPT Corporation",
+    category: "stock",
+    price: 135.50,
+    change: 1.20,
+    changePercent: 0.89,
+    high24h: 136.00,
+    low24h: 134.10,
+    volume: 5200000,
+    marketCap: 170000000000,
+    sparkline: sparkline(135, 120),
+  },
+  {
     ticker: "BTC",
     name: "Bitcoin",
     category: "crypto",
