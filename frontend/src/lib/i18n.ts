@@ -15,6 +15,8 @@ export const translations = {
     register: "Register",
     logout: "Log Out",
     notifications: "Notifications",
+    markRead: "Mark as read",
+    noNotifications: "No notifications",
     // dashboard
     accountOverview: "Account Overview",
     howIsMyAccount: "How is my account doing today?",
@@ -146,6 +148,8 @@ export const translations = {
     register: "Đăng ký",
     logout: "Đăng xuất",
     notifications: "Thông báo",
+    markRead: "Đánh dấu đã đọc",
+    noNotifications: "Không có thông báo",
     accountOverview: "Tổng quan tài khoản",
     howIsMyAccount: "Tài khoản của bạn hôm nay thế nào?",
     totalValue: "Tổng giá trị",

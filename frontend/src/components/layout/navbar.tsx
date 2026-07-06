@@ -23,6 +23,7 @@ const NAV: { href: string; key: TranslationKey; adminOnly?: boolean }[] = [
 import { Trash2 } from "lucide-react"
 
 function NotificationsMenu() {
+  const t = useT()
   const { user } = useAuthStore()
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
@@ -101,13 +102,13 @@ function NotificationsMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-lg border border-border bg-popover shadow-xl">
+          <div className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-0 z-50 mt-2 sm:w-80 overflow-hidden rounded-lg border border-border bg-popover shadow-xl">
             <div className="border-b border-border px-4 py-3 font-semibold text-popover-foreground">
-              Notifications
+              {t("notifications")}
             </div>
             <div className="max-h-[300px] overflow-y-auto">
               {notifications.length === 0 ? (
-                <div className="p-4 text-center text-sm text-muted-foreground">No notifications</div>
+                <div className="p-4 text-center text-sm text-muted-foreground">{t("noNotifications")}</div>
               ) : (
                 notifications.map(n => {
                   const read = isNotifRead(n)
@@ -124,7 +125,7 @@ function NotificationsMenu() {
                               onClick={() => markRead(n)}
                               className="text-xs text-primary hover:underline"
                             >
-                              Mark read
+                              {t("markRead")}
                             </button>
                           )}
                           <button
