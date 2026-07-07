@@ -90,7 +90,9 @@ def create_user(username: str, password_hash: str) -> Optional[Dict]:
     try:
         res = c.table("users").insert({
             "username": username,
-            "password_hash": password_hash
+            "password_hash": password_hash,
+            "role": "user",
+            "status": "active"
         }).execute()
         return res.data[0] if res.data else None
     except Exception as e:

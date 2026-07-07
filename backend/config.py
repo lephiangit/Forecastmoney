@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     admin_password: str = "admin123"
-    admin_secret_key: str = "change-this-in-production"  # ⚠️ MUST change in production
+    admin_secret_key: str = "capmot100123@"  # ⚠️ MUST change in production
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://your-app.netlify.app"
     crypto_feeds: list[str] = [
         "https://cointelegraph.com/rss",
