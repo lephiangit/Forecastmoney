@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/ui/page-header"
 import { StatCard } from "@/components/ui/stat-card"
 import { PortfolioChart } from "@/components/dashboard/portfolio-chart"
 import { Skeleton, ErrorCard } from "@/components/ui/states"
-import { AuthGuard } from "@/components/auth-guard"
+
 import { Sparkline } from "@/components/ui/sparkline"
 import { formatCurrency, formatPercent, timeAgo } from "@/lib/format"
 import { ActionBadge } from "@/components/ui/tags"
