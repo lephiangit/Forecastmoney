@@ -68,7 +68,6 @@ CREATE TABLE portfolio_snapshots (
     UNIQUE(user_id, snapshot_date)
 );
 
-
 CREATE TABLE model_accuracy (
     id             BIGSERIAL PRIMARY KEY,
     ticker         VARCHAR(20) NOT NULL,
@@ -118,3 +117,15 @@ GRANT ALL ON SCHEMA public TO public;
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+-- 6. TẠO TÀI KHOẢN MẶC ĐỊNH
+-- Mật khẩu mặc định: Capmot100123
+-- Hash này được tạo dựa trên ADMIN_SECRET_KEY='capmot100123@'
+INSERT INTO users (username, password_hash, role, status) 
+VALUES 
+('admin@forecastai.com', '9e2c6568f62fa2b6775a839ff7d9800dbad9c05ec5a0818955617400a17aa855', 'admin', 'active'),
+('user@forecastai.com', '9e2c6568f62fa2b6775a839ff7d9800dbad9c05ec5a0818955617400a17aa855', 'user', 'active')
+ON CONFLICT (username) 
+DO UPDATE SET 
+    password_hash = EXCLUDED.password_hash,
+    role = EXCLUDED.role;
