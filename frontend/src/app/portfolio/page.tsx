@@ -4,7 +4,8 @@ import { useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Wallet, TrendingUp, PieChart, DollarSign } from "lucide-react"
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts"
+import { Wallet, TrendingUp, PieChart as PieChartIcon, DollarSign } from "lucide-react"
 import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
@@ -41,7 +42,7 @@ export default function PortfolioPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label={t("totalValue")} value={p.totalValue} format={(n) => formatCurrency(n)} changePercent={p.dayPnlPercent} icon={Wallet} accent />
             <StatCard label={t("totalPnl")} value={p.totalPnl} format={(n) => formatCurrency(n)} changePercent={p.totalPnlPercent} icon={TrendingUp} delay={0.05} />
-            <StatCard label={t("allocation")} value={p.investedValue} format={(n) => formatCurrency(n)} icon={PieChart} delay={0.1} />
+            <StatCard label={t("allocation")} value={p.investedValue} format={(n) => formatCurrency(n)} icon={PieChartIcon} delay={0.1} />
             <StatCard label={t("availableCash")} value={p.cash} format={(n) => formatCurrency(n)} icon={DollarSign} delay={0.15} />
           </div>
 
@@ -53,24 +54,51 @@ export default function PortfolioPage() {
 
             <div className="rounded-lg border border-border bg-card p-4 sm:p-5">
               <h2 className="mb-4 font-semibold text-card-foreground">{t("allocation")}</h2>
-              <div className="space-y-3">
-                {p.holdings.map((h, i) => (
-                  <div key={h.ticker}>
-                    <div className="flex items-center justify-between text-sm">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
+                <div className="h-48 w-48 relative">
+                  {p.holdings.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={p.holdings}
+                          dataKey="allocation"
+                          nameKey="ticker"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={2}
+                          stroke="none"
+                        >
+                          {p.holdings.map((h, i) => (
+                            <Cell key={h.ticker} fill={ALLOC_COLORS[i % ALLOC_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip 
+                          formatter={(value: number) => `${value.toFixed(1)}%`}
+                          contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
+                          itemStyle={{ color: 'hsl(var(--foreground))' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-full border-4 border-dashed border-border text-xs text-muted-foreground">
+                      No Assets
+                    </div>
+                  )}
+                </div>
+                
+                <div className="space-y-3 flex-1 w-full">
+                  {p.holdings.map((h, i) => (
+                    <div key={h.ticker} className="flex items-center justify-between text-sm">
                       <span className="flex items-center gap-2 font-medium text-card-foreground">
-                        <span className="h-2.5 w-2.5 rounded-sm" style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }} />
+                        <span className="h-3 w-3 rounded-sm" style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }} />
                         {h.ticker}
                       </span>
                       <span className="font-mono text-muted-foreground">{(Number(h.allocation) || 0).toFixed(1)}%</span>
                     </div>
-                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-accent">
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${h.allocation}%`, background: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           </div>

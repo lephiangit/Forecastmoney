@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import { Search, TrendingUp, TrendingDown, Star } from "lucide-react"
 import { api } from "@/lib/api"
-import { useT } from "@/lib/store"
+import { useT, useAuthStore } from "@/lib/store"
 import type { TranslationKey } from "@/lib/i18n"
 import { PageHeader } from "@/components/ui/page-header"
 import { Skeleton, ErrorCard } from "@/components/ui/states"
@@ -29,7 +29,8 @@ export default function MarketsPage() {
   const [search, setSearch] = useState("")
   const { data, isError, refetch } = useQuery({ queryKey: ["markets"], queryFn: api.getMarkets, refetchInterval: 30000 })
 
-  const { data: watchlist = [], refetch: refetchWatchlist } = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist })
+  const { user } = useAuthStore()
+  const { data: watchlist = [], refetch: refetchWatchlist } = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist, enabled: !!user })
 
   const filtered = (data ?? [])
     .filter((a) => filter === "all" || a.category === filter || (filter === "watchlist" && watchlist.includes(a.ticker)))

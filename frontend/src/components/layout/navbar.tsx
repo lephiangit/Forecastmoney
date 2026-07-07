@@ -15,8 +15,8 @@ const NAV: { href: string; key: TranslationKey; adminOnly?: boolean }[] = [
   { href: "/markets", key: "markets" },
   { href: "/research", key: "research" },
   { href: "/forecast", key: "forecast" },
-  { href: "/portfolio", key: "portfolio" },
-  { href: "/auto-trade", key: "autoTrade" },
+  { href: "/portfolio", key: "portfolio", userOnly: true },
+  { href: "/auto-trade", key: "autoTrade", userOnly: true },
   { href: "/admin", key: "admin", adminOnly: true },
 ]
 
@@ -254,7 +254,11 @@ export function Navbar() {
   const t = useT()
   const { user } = useAuthStore()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const items = NAV.filter((n) => !n.adminOnly || user?.role === "admin")
+  const items = NAV.filter((n) => {
+    if (n.adminOnly && user?.role !== "admin") return false
+    if (n.userOnly && !user) return false
+    return true
+  })
 
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href))
 
