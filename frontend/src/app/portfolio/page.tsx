@@ -75,7 +75,7 @@ export default function PortfolioPage() {
                           ))}
                         </Pie>
                         <RechartsTooltip 
-                          formatter={(value: number) => `${value.toFixed(1)}%`}
+                          formatter={(value: any) => `${Number(value).toFixed(1)}%`}
                           contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
                           itemStyle={{ color: 'hsl(var(--foreground))' }}
                         />

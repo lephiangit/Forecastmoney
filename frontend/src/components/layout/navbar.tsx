@@ -10,7 +10,7 @@ import type { TranslationKey } from "@/lib/i18n"
 import { api } from "@/lib/api"
 import type { Notification } from "@/lib/types"
 
-const NAV: { href: string; key: TranslationKey; adminOnly?: boolean }[] = [
+const NAV: { href: string; key: TranslationKey; adminOnly?: boolean; userOnly?: boolean }[] = [
   { href: "/", key: "dashboard" },
   { href: "/markets", key: "markets" },
   { href: "/research", key: "research" },
