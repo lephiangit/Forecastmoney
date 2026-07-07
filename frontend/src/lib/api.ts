@@ -248,34 +248,65 @@ export const api = {
     const real = await tryFetch<any>("/admin/portfolio")
     if (real) {
       // Get history alongside portfolio
-      const historyRes = await api.getPortfolioHistory(90)
-      const history = historyRes.map((h: any) => ({
-        time: h.snapshot_date,
-        value: Number(h.balance) || 0
-      }))
+      // We use the chart endpoint to get the trade-by-trade chart which is better than daily snapshots
+      const historyRes = await tryFetch<any>("/admin/portfolio/chart")
+      let history: any[] = []
+      
+      if (historyRes && Array.isArray(historyRes)) {
+        history = historyRes.map((h: any) => ({
+          time: h.time,
+          value: Number(h.balance) || 0
+        }))
+      }
+
+      // If no history exists, use a flat line based on current balance
+      if (history.length === 0) {
+        history = [
+          { time: new Date(Date.now() - 86400000).toISOString(), value: real.current_balance || 0 },
+          { time: new Date().toISOString(), value: real.current_balance || 0 }
+        ]
+      }
+
+      const holdings = Object.entries(real.positions || {}).map(([k, v]: any) => {
+        const qty = Number(v.qty) || 0
+        const costBasis = Number(v.total_cost) || 0
+        const avgPrice = Number(v.avg_cost) || 0
+        const currentPrice = avgPrice // Fallback, could be updated with real live quotes if available
+        const marketValue = qty * currentPrice
+        
+        return {
+          ticker: k,
+          name: k,
+          quantity: qty,
+          avgPrice: avgPrice,
+          currentPrice: currentPrice,
+          marketValue: marketValue,
+          costBasis: costBasis,
+          unrealizedPnl: marketValue - costBasis,
+          unrealizedPnlPercent: costBasis > 0 ? ((marketValue - costBasis) / costBasis) * 100 : 0,
+          allocation: 0 // Will compute below
+        }
+      })
+
+      const investedValue = holdings.reduce((sum, h) => sum + h.marketValue, 0)
+      
+      if (investedValue > 0) {
+        holdings.forEach(h => {
+          h.allocation = (h.marketValue / investedValue) * 100
+        })
+      }
 
       // mapping backend shape to frontend Portfolio
       return {
         cash: real.current_balance,
-        totalValue: real.current_balance, // simplistic map
-        investedValue: 0,
+        totalValue: (real.current_balance || 0) + investedValue,
+        investedValue: investedValue,
         totalPnl: real.total_pnl,
         totalPnlPercent: real.initial_balance > 0 ? (real.total_pnl / real.initial_balance) * 100 : 0,
         dayPnl: 0,
         dayPnlPercent: 0,
-        holdings: Object.entries(real.positions || {}).map(([k, v]: any) => ({
-          ticker: k,
-          name: k,
-          quantity: v.qty,
-          avgPrice: v.avg_cost,
-          currentPrice: v.avg_cost,
-          marketValue: v.total_cost,
-          costBasis: v.total_cost,
-          unrealizedPnl: 0,
-          unrealizedPnlPercent: 0,
-          allocation: 0
-        })),
-        history: history.length > 0 ? history : buildPortfolio().history
+        holdings: holdings,
+        history: history
       }
     }
     return buildPortfolio()
