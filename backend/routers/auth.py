@@ -22,6 +22,9 @@ class AuthRequest(BaseModel):
     username: str
     password: str
 
+class GoogleAuthRequest(BaseModel):
+    access_token: str
+
 
 def hash_password(password: str) -> str:
     # PBKDF2 HMAC SHA-256 — salt derived from SECRET_KEY for per-deployment uniqueness
@@ -69,12 +72,11 @@ def verify_token(token: str) -> Optional[dict]:
 
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    """Verify custom JWT only. All login methods (email/password, Google) produce custom JWTs."""
     if not authorization or not authorization.startswith("Bearer "):
-        print(f"[AUTH] Missing or invalid Authorization header: {authorization!r}")
         raise HTTPException(status_code=401, detail="Authentication token required")
     token = authorization.split(" ")[1]
     
-    # 1. Try custom token
     payload = verify_token(token)
     if payload:
         # Fire and forget update last_active
@@ -87,45 +89,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
             pass
         return payload
         
-    error_msg = "Unknown error"
-    # 2. Try Supabase token (Google Auth)
-    try:
-        from backend.database import _get_client, get_user_by_username, create_user
-        supabase = _get_client()
-        if not supabase:
-            raise Exception("Supabase client not available")
-            
-        # Verify token by fetching user
-        user_response = supabase.auth.get_user(token)
-        if user_response and user_response.user:
-            email = user_response.user.email
-            if not email:
-                email = "google_user_" + user_response.user.id[:8]
-                
-            # Check if user exists in our DB
-            existing_user = get_user_by_username(email)
-            if not existing_user:
-                # Auto create
-                # We use a dummy hash since they login via Google
-                dummy_hash = "GOOGLE_OAUTH_USER"
-                create_user(email, dummy_hash)
-                existing_user = get_user_by_username(email)
-                
-            if existing_user:
-                return {
-                    "user_id": existing_user["id"],
-                    "username": existing_user["username"],
-                    "role": existing_user.get("role", "user"),
-                    "exp": time.time() + 3600
-                }
-        else:
-            error_msg = "User not found in Supabase token"
-    except Exception as e:
-        error_msg = str(e)
-        import sys
-        print(f"Supabase auth check error: {error_msg}", file=sys.stderr)
-        
-    raise HTTPException(status_code=401, detail=f"Invalid or expired token. Details: {error_msg}")
+    raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 def get_current_admin(user: dict = Depends(get_current_user)) -> dict:
@@ -194,6 +158,51 @@ async def login(req: AuthRequest):
         "role": user.get("role", "user"),
         "message": "Logged in successfully"
     }
+
+
+@router.post("/google")
+async def google_auth(req: GoogleAuthRequest):
+    """Exchange a Supabase access_token (from Google OAuth) for a custom JWT."""
+    try:
+        from backend.database import _get_client, get_user_by_username, create_user
+        supabase = _get_client()
+        if not supabase:
+            raise HTTPException(503, "Database unavailable")
+
+        # Verify the Supabase token once
+        user_response = supabase.auth.get_user(req.access_token)
+        if not user_response or not user_response.user:
+            raise HTTPException(401, "Invalid Google token")
+
+        email = user_response.user.email
+        if not email:
+            email = "google_user_" + user_response.user.id[:8]
+
+        # Find or create user in local DB
+        existing_user = get_user_by_username(email)
+        if not existing_user:
+            dummy_hash = "GOOGLE_OAUTH_USER"
+            create_user(email, dummy_hash)
+            existing_user = get_user_by_username(email)
+
+        if not existing_user:
+            raise HTTPException(500, "Could not create user")
+
+        # Issue custom JWT — same as email/password login
+        token = create_token(existing_user["id"], existing_user["username"], existing_user.get("role", "user"))
+        return {
+            "success": True,
+            "token": token,
+            "user_id": existing_user["id"],
+            "username": existing_user["username"],
+            "role": existing_user.get("role", "user"),
+            "message": "Google login successful"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Google auth error: {e}")
+        raise HTTPException(401, f"Google authentication failed: {str(e)}")
 
 
 class ChangePasswordRequest(BaseModel):

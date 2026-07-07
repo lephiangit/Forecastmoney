@@ -444,6 +444,20 @@ export const api = {
     return res.json()
   },
 
+  async loginWithGoogle(accessToken: string) {
+    if (!BASE_URL) throw new Error("API URL not configured")
+    const res = await fetch(`${BASE_URL}/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: accessToken })
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.detail || errorData.message || "Google login failed");
+    }
+    return res.json()
+  },
+
   async getNotifications(): Promise<import("./types").Notification[]> {
     const res = await tryFetch<{ success: boolean; notifications: import("./types").Notification[] }>("/notifications")
     return res?.notifications || []
