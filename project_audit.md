@@ -112,7 +112,7 @@ graph TB
 
 ---
 
-## 🔴 LỖI NGHIÊM TRỌNG (CRITICAL) — Cần fix ngay
+## 🔴 LỖI NGHIÊM TRỌNG (CRITICAL) — ĐÃ ĐƯỢC XỬ LÝ (FIXED)
 
 ### 1. `translateReport()` gọi endpoint không tồn tại
 - **File frontend**: [api.ts:180-181](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/lib/api.ts#L180-L181)
@@ -137,33 +137,23 @@ graph TB
 
 ---
 
-## 🟡 CẢNH BÁO (WARNING) — Nên sửa
+## 🟡 CẢNH BÁO (WARNING) — Tình trạng xử lý
 
-### 4. Settings page: "Save" và "Change password" chưa hoạt động
-- **File**: [settings/page.tsx](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/app/settings/page.tsx)
-- **Vấn đề**:
-  - Nút **"Save"** (dòng 92) chỉ gọi `setSaved(true)` — không gửi request nào lên backend.
-  - Nút **"Change password"** (dòng 70) không có `onClick` — hoàn toàn không làm gì.
-  - Các toggle **Notification preferences** chỉ lưu trong React state cục bộ, không persist.
-- **Ảnh hưởng**: Người dùng bấm Save tưởng đã lưu nhưng thực tế mất hết khi reload trang.
+### 4. Settings page: "Save" và "Change password" chưa hoạt động (ĐÃ FIX)
+- **Cập nhật**: Tính năng "Save" đã gọi API cập nhật hồ sơ và lưu cache, "Change password" đã kết nối API đổi mật khẩu thành công.
 
 ### 5. Google OAuth: chỉ hiện alert placeholder
 - **File**: [login/page.tsx:89](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/app/login/page.tsx#L89)
-- **Vấn đề**: Nút "Continue with Google" chỉ `alert("Tính năng đang được phát triển...")`. Trong khi `README_INTERNAL.md` ghi là "Google OAuth: Đăng nhập trực tiếp qua nút Google" — tạo sự mâu thuẫn giữa tài liệu và code thực tế.
+- **Vấn đề**: Nút "Continue with Google" đang ở trạng thái placeholder. Đã cập nhật tài liệu để khớp với code hiện tại.
 
-### 6. Auth store `login()` không lưu user_id thật từ backend
-- **File**: [store.ts:49-57](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/lib/store.ts#L49-L57)
-- **Vấn đề**: Hàm `login()` luôn hardcode `id: "u_1"` thay vì nhận ID thật từ response backend. Điều này có nghĩa mọi user chia sẻ cùng 1 ID ở phía frontend state.
-- **Ảnh hưởng**: Backend vẫn phân biệt user đúng qua JWT token, nhưng bất kỳ logic nào dựa vào `user.id` ở frontend sẽ sai.
+### 6. Auth store `login()` không lưu user_id thật từ backend (ĐÃ FIX)
+- **Cập nhật**: Hàm login đã nhận đúng parameter `id` và lưu đúng user_id vào store.
 
-### 7. `addWatchlist()` — body vs query param mismatch
-- **File frontend**: [api.ts:351](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/lib/api.ts#L351)
-- **File backend**: [admin.py:339](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/backend/routers/admin.py#L339)
-- **Vấn đề**: Frontend gọi `POST /admin/watchlist?ticker=XYZ` (query param), nhưng backend có thể expect body hoặc khác cấu trúc. Cần verify chính xác.
+### 7. `addWatchlist()` — body vs query param mismatch (ĐÃ CHECK OK)
+- **Cập nhật**: Đã xác nhận Frontend truyền query parameter và Backend cũng expect query parameter. Không có lỗi ở đây.
 
-### 8. `Forgot Password` button không hoạt động
-- **File**: [login/page.tsx:134](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/app/login/page.tsx#L134)
-- **Vấn đề**: Nút `Forgot password?` không có logic nào, chỉ là `<button type="button">`.
+### 8. `Forgot Password` button không hoạt động (ĐÃ FIX)
+- **Cập nhật**: Button đã gọi `api.forgotPassword` và có quy trình gửi email reset.
 
 ---
 
@@ -190,16 +180,11 @@ Các hàm sau **âm thầm** fallback sang dữ liệu ảo:
 - **Vấn đề**: Endpoint `POST /admin/notifications` (dòng 82 trong [notifications.py](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/backend/routers/notifications.py#L82)) được mount trực tiếp ở root `/admin/notifications`. Nếu ai đó thêm prefix `/notifications` vào main.py thì route này sẽ thành `/notifications/admin/notifications` — sai.
 - **Trạng thái**: Hiện tại hoạt động đúng, nhưng cấu trúc dễ gây nhầm lẫn.
 
-### 11. Backend `superadmin.py` vs `admin.py` — overlap quyền user management
-- Cả hai file đều có endpoints để quản lý users:
-  - `admin.py`: `PUT /admin/users/{user_id}/balance`, `.../status`, `.../role`, `DELETE /admin/users/{user_id}`
-  - `superadmin.py`: `POST /superadmin/users/{user_id}/balance`, `DELETE /superadmin/users/{user_id}`
-- **Vấn đề**: Frontend gọi `/admin/users/...` (router `admin.py`). File `superadmin.py` mount ở prefix `/superadmin` nên **không bao giờ được frontend gọi đến**.
-- **Đề xuất**: Xóa hoặc hợp nhất `superadmin.py` vào `admin.py` để tránh nhầm lẫn.
+### 11. Backend `superadmin.py` vs `admin.py` — overlap quyền user management (ĐÃ FIX)
+- **Cập nhật**: Đã gỡ bỏ file `superadmin.py` bị thừa và dọn dẹp các import liên quan trong `main.py`. Mọi quyền quản trị hiện tập trung duy nhất ở `admin.py`.
 
-### 12. Trang `/forecast` luôn fetch 5 ticker cố định
-- **File**: [api.ts:92](file:///c:/Users/ann28/Documents/Nam3-Ky1/DoAn/ForecastAI/frontend/src/lib/api.ts#L92)
-- **Vấn đề**: `getForecasts()` hardcode `["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]`. Nên lấy từ watchlist của user hoặc từ `MARKET_ASSETS`.
+### 12. Trang `/forecast` luôn fetch 5 ticker cố định (ĐÃ FIX)
+- **Cập nhật**: Đã tích hợp lấy `ticker` từ Watchlist thực tế của người dùng, giới hạn max 12 mã để tránh quá tải.
 
 ---
 
@@ -223,14 +208,15 @@ Các hàm sau **âm thầm** fallback sang dữ liệu ảo:
 
 ---
 
-## Tóm tắt ưu tiên sửa
+## Tóm tắt ưu tiên sửa (Cập nhật)
 
-| # | Mức độ | Mô tả | Effort |
+| # | Mức độ | Mô tả | Trạng thái |
 |---|--------|-------|--------|
-| 1 | 🔴 Critical | Fix 3 endpoint sai prefix `/api/` | 5 phút |
-| 4 | 🟡 Warning | Settings page Save/Change password | 30 phút |
-| 6 | 🟡 Warning | Auth store hardcode `id: "u_1"` | 10 phút |
-| 5 | 🟡 Warning | Google OAuth placeholder vs docs | 5 phút (sửa docs) |
-| 8 | 🟡 Warning | Forgot Password noop button | 20 phút |
-| 11 | 🔵 Info | Merge superadmin.py vào admin.py | 15 phút |
-| 12 | 🔵 Info | Forecast page lấy ticker từ watchlist | 10 phút |
+| 1 | 🔴 Critical | Fix 3 endpoint sai prefix `/api/` | ✅ Đã Fix |
+| 4 | 🟡 Warning | Settings page Save/Change password | ✅ Đã Fix |
+| 6 | 🟡 Warning | Auth store hardcode `id: "u_1"` | ✅ Đã Fix |
+| 8 | 🟡 Warning | Forgot Password noop button | ✅ Đã Fix |
+| 12 | 🔵 Info | Forecast page lấy ticker từ watchlist | ✅ Đã Fix |
+| 5 | 🟡 Warning | Google OAuth placeholder vs docs | ✅ Đã Fix Docs |
+| 7 | 🔵 Info | `addWatchlist()` query vs body mismatch | ✅ Đã Check |
+| 11 | 🔵 Info | Merge superadmin.py vào admin.py | ✅ Đã Xóa bỏ |

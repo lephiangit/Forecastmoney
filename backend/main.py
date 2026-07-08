@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 import asyncio
 
 from backend.config import settings
-from backend.routers import market, research, forecast, admin, auth, superadmin, notifications, chat
+from backend.routers import market, research, forecast, admin, auth, notifications, chat
 
 
 def _take_portfolio_snapshots():
@@ -137,7 +137,7 @@ app.include_router(research.router, prefix="/research", tags=["Research"])
 app.include_router(forecast.router, prefix="/forecast", tags=["Forecast"])
 app.include_router(admin.router,    prefix="/admin",    tags=["Admin"])
 app.include_router(auth.router,     prefix="/auth",     tags=["Auth"])
-app.include_router(superadmin.router, prefix="/superadmin", tags=["Superadmin"])
+
 app.include_router(notifications.router, tags=["Notifications"])
 app.include_router(chat.router,     prefix="/chat",     tags=["Chat"])
 
