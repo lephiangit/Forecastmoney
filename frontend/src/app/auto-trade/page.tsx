@@ -39,6 +39,7 @@ export default function AutoTradePage() {
   const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio, refetchInterval: 5000 })
   const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, refetchInterval: 5000 })
   const botConfigQ = useQuery({ queryKey: ["botConfig"], queryFn: api.getBotConfig })
+  const watchlistQ = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist })
 
   const [config, setConfig] = useState<AutoTradeConfig>(DEFAULT_CONFIG)
   const [saved, setSaved] = useState(false)
@@ -257,24 +258,36 @@ export default function AutoTradePage() {
           <div className="mt-6 rounded-lg border border-border bg-card p-5">
             <h3 className="font-semibold text-card-foreground">{t("tradedAssets")}</h3>
             <div className="mt-4 flex flex-wrap gap-2">
-              {TRADEABLE.map((ticker) => {
-                const active = config.assets.includes(ticker)
-                return (
-                  <button
-                    key={ticker}
-                    onClick={() => toggleAsset(ticker)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-sm font-semibold transition-colors",
-                      active
-                        ? "border-primary/60 bg-primary/10 text-primary"
-                        : "border-border bg-secondary text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {active && <Check className="h-3.5 w-3.5" />}
-                    {ticker}
-                  </button>
-                )
-              })}
+              {(() => {
+                const watchlist = watchlistQ.data || []
+                const displayAssets = Array.from(new Set([...watchlist, ...TRADEABLE]))
+                  .sort((a, b) => {
+                    const aWatch = watchlist.includes(a)
+                    const bWatch = watchlist.includes(b)
+                    if (aWatch && !bWatch) return -1
+                    if (!aWatch && bWatch) return 1
+                    return 0
+                  })
+
+                return displayAssets.map((ticker) => {
+                  const active = config.assets.includes(ticker)
+                  return (
+                    <button
+                      key={ticker}
+                      onClick={() => toggleAsset(ticker)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-sm font-semibold transition-colors",
+                        active
+                          ? "border-primary/60 bg-primary/10 text-primary"
+                          : "border-border bg-secondary text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {active && <Check className="h-3.5 w-3.5" />}
+                      {ticker}
+                    </button>
+                  )
+                })
+              })()}
             </div>
           </div>
 
