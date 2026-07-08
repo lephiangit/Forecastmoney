@@ -22,6 +22,31 @@ export const useLangStore = create<LangState>()(
   ),
 )
 
+export type GlobalCurrency = "USD" | "VND"
+
+interface CurrencyState {
+  currency: GlobalCurrency
+  exchangeRate: number
+  lastFetched: number
+  setCurrency: (currency: GlobalCurrency) => void
+  setExchangeRate: (rate: number) => void
+  toggleCurrency: () => void
+}
+
+export const useCurrencyStore = create<CurrencyState>()(
+  persist(
+    (set) => ({
+      currency: "USD",
+      exchangeRate: 25400,
+      lastFetched: 0,
+      setCurrency: (currency) => set({ currency }),
+      setExchangeRate: (rate) => set({ exchangeRate: rate, lastFetched: Date.now() }),
+      toggleCurrency: () => set((s) => ({ currency: s.currency === "USD" ? "VND" : "USD" })),
+    }),
+    { name: "forecastai-currency" },
+  ),
+)
+
 export function useT() {
   const lang = useLangStore((s) => s.lang)
   return (key: TranslationKey) => translations[lang][key] ?? key

@@ -5,7 +5,7 @@ import Link from "next/link"
 import { TrendingUp, TrendingDown } from "lucide-react"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { formatNumber } from "@/lib/format"
+import { formatCurrency } from "@/lib/format"
 
 const TICKER_ORDER = ["BTC", "ETH", "SP500", "NASDAQ", "DOW", "GOLD", "OIL"]
 
@@ -42,7 +42,7 @@ export function MarketTicker() {
             >
               <span className="font-semibold text-foreground">{a.ticker}</span>
               <span className="font-mono text-muted-foreground">
-                {formatNumber(a.price, { decimals: a.price > 1000 ? 0 : 2 })}
+                {formatCurrency(a.price, { currency: a.ticker, decimals: a.price > 1000 ? 0 : 2 })}
               </span>
               <span className={cn("flex items-center gap-0.5 font-mono text-xs font-medium", pos ? "text-positive" : "text-negative")}>
                 {pos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}

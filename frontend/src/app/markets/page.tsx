@@ -124,15 +124,15 @@ export default function MarketsPage() {
                         </div>
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(a.price)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(a.price, { currency: a.ticker })}</td>
                     <td className="px-4 py-3 text-right">
                       <span className={cn("inline-flex items-center justify-end gap-1 font-mono font-medium", pos ? "text-positive" : "text-negative")}>
                         {pos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
                         {formatPercent(a.changePercent)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(a.high24h)}</td>
-                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(a.low24h)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(a.high24h, { currency: a.ticker })}</td>
+                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(a.low24h, { currency: a.ticker })}</td>
                     <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatNumber(a.volume, { compact: true })}</td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end">

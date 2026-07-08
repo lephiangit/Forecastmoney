@@ -1,18 +1,46 @@
-export function formatCurrency(value: number, opts?: { compact?: boolean; decimals?: number }): string {
-  const v = Number(value) || 0
+import { useCurrencyStore } from "./store"
+
+export function formatCurrency(value: number, opts?: { compact?: boolean; decimals?: number; currency?: string }): string {
+  let v = Number(value) || 0
+  
+  const state = useCurrencyStore.getState()
+  const globalCurrency = state.currency
+  const exchangeRate = state.exchangeRate || 25400
+
+  // Ticker base currency (VD: FPT.VN -> VND, BTC-USD -> USD)
+  const isBaseVND = opts?.currency === "VND" || opts?.currency?.endsWith(".VN")
+
+  // Logic chuyển đổi
+  if (globalCurrency === "VND") {
+    // Nếu hệ thống đang hiển thị VND, mà tài sản là USD -> nhân tỷ giá
+    if (!isBaseVND) {
+      v = v * exchangeRate
+    }
+  } else {
+    // Nếu hệ thống đang hiển thị USD, mà tài sản là VND -> chia tỷ giá
+    if (isBaseVND) {
+      v = v / exchangeRate
+    }
+  }
+
+  // Quyết định format đầu ra
+  const isOutputVND = globalCurrency === "VND"
+  const locale = isOutputVND ? "vi-VN" : "en-US"
+  const currency = isOutputVND ? "VND" : "USD"
+
   if (opts?.compact) {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat(locale, {
       style: "currency",
-      currency: "USD",
+      currency: currency,
       notation: "compact",
       maximumFractionDigits: 2,
     }).format(v)
   }
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
-    currency: "USD",
-    minimumFractionDigits: opts?.decimals ?? 2,
-    maximumFractionDigits: opts?.decimals ?? 2,
+    currency: currency,
+    minimumFractionDigits: isOutputVND ? 0 : (opts?.decimals ?? 2),
+    maximumFractionDigits: isOutputVND ? 0 : (opts?.decimals ?? 2),
   }).format(v)
 }
 

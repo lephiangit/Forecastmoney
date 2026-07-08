@@ -107,7 +107,7 @@ export default function DashboardPage() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="font-mono text-sm text-card-foreground">{formatCurrency(h.marketValue)}</p>
+                          <p className="font-mono text-sm text-card-foreground">{formatCurrency(h.marketValue, { currency: h.ticker })}</p>
                           <p className={cn("font-mono text-xs", pos ? "text-positive" : "text-negative")}>{formatPercent(h.unrealizedPnlPercent)}</p>
                         </div>
                       </Link>
@@ -168,7 +168,7 @@ export default function DashboardPage() {
                       )}
                     </div>
                     <div className="text-right">
-                      <p className="font-mono text-xs text-card-foreground">{formatCurrency(tx.total)}</p>
+                      <p className="font-mono text-xs text-card-foreground">{formatCurrency(tx.total, { currency: tx.ticker })}</p>
                       <p className="text-[10px] text-muted-foreground">{timeAgo(tx.createdAt)}</p>
                     </div>
                   </div>
@@ -204,7 +204,7 @@ export default function DashboardPage() {
                       <span className="font-mono text-sm font-bold text-card-foreground">{a.ticker}</span>
                       <span className={cn("font-mono text-xs", pos ? "text-positive" : "text-negative")}>{formatPercent(a.changePercent)}</span>
                     </div>
-                    <p className="mt-1 font-mono text-sm text-card-foreground">{formatCurrency(a.price)}</p>
+                    <p className="mt-1 font-mono text-sm text-card-foreground">{formatCurrency(a.price, { currency: a.ticker })}</p>
                     <div className="mt-2">
                       <Sparkline data={a.sparkline} positive={pos} width={140} height={32} />
                     </div>

@@ -1,6 +1,8 @@
-# ForecastAI V1.2.4 🤖📈
+# ForecastAI V1.2.5 🤖📈
 
-**Mới trong bản cập nhật 1.2.4:**
+**Mới trong bản cập nhật 1.2.5:**
+- Thêm tính năng **Quy đổi tiền tệ toàn cầu (USD/VND)** dựa trên tỷ giá trực tiếp từ Open Exchange Rates API.
+- Cập nhật Ticker Tape Navbar để tự động thay đổi định dạng theo thiết lập tiền tệ của người dùng.
 - Đồng bộ hóa hoàn toàn danh sách Watchlist (Gắn sao thẻ) lên cơ sở dữ liệu Supabase, tự động gộp với thẻ mặc định.
 - Sửa lỗi responsive biểu đồ `Recharts` (width/height -1).
 - Trả về nội dung Markdown chi tiết cho trung tâm Nghiên cứu AI.

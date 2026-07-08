@@ -316,7 +316,7 @@ export default function AutoTradePage() {
                           <span className="block text-xs text-muted-foreground">SL: {h.quantity}</span>
                         </div>
                         <div className="text-right">
-                          <span className="block font-mono text-sm text-card-foreground">{formatCurrency(h.avgPrice)}</span>
+                          <span className="block font-mono text-sm text-card-foreground">{formatCurrency(h.avgPrice, { currency: h.ticker })}</span>
                           <span className="block text-xs text-muted-foreground">Giá vốn</span>
                         </div>
                       </div>
@@ -339,7 +339,7 @@ export default function AutoTradePage() {
                           <span className="text-xs text-muted-foreground mt-1">{new Date(trade.createdAt).toLocaleString()}</span>
                         </div>
                         <div className="text-right flex flex-col justify-center">
-                          <span className="font-mono text-sm text-card-foreground">{formatCurrency(trade.price)}</span>
+                          <span className="font-mono text-sm text-card-foreground">{formatCurrency(trade.price, { currency: trade.ticker })}</span>
                           <span className="text-xs text-muted-foreground">x{trade.quantity}</span>
                         </div>
                       </div>

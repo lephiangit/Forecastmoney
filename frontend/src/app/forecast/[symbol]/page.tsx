@@ -53,14 +53,14 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
               <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2">
                 <span className="text-xs text-muted-foreground">{t("price")}</span>
                 <span className="font-mono text-lg font-semibold text-card-foreground">
-                  {formatCurrency(f.currentPrice)}
+                  {formatCurrency(f.currentPrice, { currency: f.ticker })}
                 </span>
               </div>
             }
           />
 
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricTile label={t("targetPrice")} value={formatCurrency(f.targetPrice)} />
+            <MetricTile label={t("targetPrice")} value={formatCurrency(f.targetPrice, { currency: f.ticker })} />
             <MetricTile
               label={t("expectedReturn")}
               value={formatPercent(f.expectedReturn)}

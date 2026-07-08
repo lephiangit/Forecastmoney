@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { motion } from "framer-motion"
 import { User, Bell, Globe, Shield, Save, Check, LogOut, Lock, Loader2, X } from "lucide-react"
-import { useAuthStore, useLangStore, useT } from "@/lib/store"
+import { useAuthStore, useLangStore, useCurrencyStore, useT } from "@/lib/store"
 import { api } from "@/lib/api"
 import { PageHeader } from "@/components/ui/page-header"
 import { cn } from "@/lib/utils"
@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const t = useT()
   const { user, login, logout } = useAuthStore()
   const { lang, setLang } = useLangStore()
+  const { currency, setCurrency } = useCurrencyStore()
   const [name, setName] = useState(user?.name ?? "")
   const [email, setEmail] = useState(user?.email ?? "")
   const [saved, setSaved] = useState(false)
@@ -119,6 +120,29 @@ export default function SettingsPage() {
                 )}
               >
                 {l === "en" ? "English" : "Tiếng Việt"}
+              </button>
+            ))}
+          </div>
+        </Section>
+
+        {/* Currency */}
+        <Section icon={Globe} title="Currency / Tiền tệ">
+          <div className="flex gap-2">
+            {(["USD", "VND"] as const).map((c) => (
+              <button
+                key={c}
+                onClick={() => {
+                  setCurrency(c)
+                  window.location.reload()
+                }}
+                className={cn(
+                  "rounded-md border px-4 py-2 text-sm font-semibold transition-colors",
+                  currency === c
+                    ? "border-primary/60 bg-primary/10 text-primary"
+                    : "border-border bg-secondary text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {c === "USD" ? "USD ($)" : "VND (₫)"}
               </button>
             ))}
           </div>

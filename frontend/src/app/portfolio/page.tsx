@@ -156,12 +156,12 @@ export default function PortfolioPage() {
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-right font-mono text-muted-foreground">{h.quantity}</td>
-                          <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(h.avgPrice)}</td>
-                          <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(h.currentPrice)}</td>
-                          <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(h.marketValue)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(h.avgPrice, { currency: h.ticker })}</td>
+                          <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(h.currentPrice, { currency: h.ticker })}</td>
+                          <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(h.marketValue, { currency: h.ticker })}</td>
                           <td className="px-4 py-3 text-right">
                             <span className={cn("font-mono font-medium", pos ? "text-positive" : "text-negative")}>
-                              {formatCurrency(h.unrealizedPnl)}
+                              {formatCurrency(h.unrealizedPnl, { currency: h.ticker })}
                             </span>
                             <p className={cn("font-mono text-xs", pos ? "text-positive" : "text-negative")}>
                               {formatPercent(h.unrealizedPnlPercent)}
@@ -205,8 +205,8 @@ export default function PortfolioPage() {
                         </td>
                         <td className="px-4 py-3 font-mono font-semibold text-card-foreground">{tx.ticker}</td>
                         <td className="px-4 py-3 text-right font-mono text-muted-foreground">{tx.quantity}</td>
-                        <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(tx.price)}</td>
-                        <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(tx.total)}</td>
+                        <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(tx.price, { currency: tx.ticker })}</td>
+                        <td className="px-4 py-3 text-right font-mono text-card-foreground">{formatCurrency(tx.total, { currency: tx.ticker })}</td>
                         <td className="px-4 py-3 text-right text-xs text-muted-foreground">{timeAgo(tx.createdAt)}</td>
                       </motion.tr>
                     ))}
