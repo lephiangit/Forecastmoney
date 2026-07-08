@@ -18,31 +18,27 @@ def run_research():
     res = c.table("user_watchlists").select("ticker").execute()
     tickers = set([r["ticker"] for r in (res.data or [])])
     
+    # Also include auto-trade bot config assets
+    try:
+        bot_res = c.table("bot_configs").select("config").execute()
+        for r in (bot_res.data or []):
+            cfg = r.get("config", {})
+            if isinstance(cfg, dict) and "assets" in cfg:
+                tickers.update(cfg["assets"])
+    except Exception:
+        pass
+    
     if not tickers:
         tickers = {"BTC-USD", "ETH-USD", "NVDA", "TSLA"} # Fallback defaults
         
+    # Import the Groq-powered research agent
+    from backend.agents.research_agent import analyze_market
+    
     for ticker in tickers:
         try:
-            print(f"Researching {ticker}...")
-            # Get latest 20 articles
-            news_items = get_recent_news(ticker)
-            if not news_items:
-                continue
-                
-            # Combine titles for sentiment analysis
-            text_context = " ".join([n["title"] for n in news_items[:20]])
-            sentiment_res = get_sentiment(text_context)
-            
-            # Save to database
-            c.table("research_reports").insert({
-                "ticker": ticker,
-                "sentiment": sentiment_res["sentiment"],
-                "confidence": sentiment_res["confidence"],
-                "sentiment_score": sentiment_res["sentiment_score"],
-                "summary": f"Analyzed {len(news_items)} recent articles.",
-                "news_count": len(news_items),
-                "created_at": datetime.now().isoformat()
-            }).execute()
+            print(f"Researching {ticker} with Groq...")
+            # analyze_market automatically fetches news, analyzes with Groq, and saves to DB
+            analyze_market(ticker)
         except Exception as e:
             print(f"Failed to research {ticker}: {e}")
             
