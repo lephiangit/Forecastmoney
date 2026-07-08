@@ -114,6 +114,7 @@ app.include_router(chat.router,     prefix="/chat",     tags=["Chat"])
 # ── Root ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", tags=["Health"])
+@app.head("/", tags=["Health"])
 async def root():
     return {
         "name": "ForecastAI API",
@@ -124,6 +125,7 @@ async def root():
 
 
 @app.get("/health", tags=["Health"])
+@app.head("/health", tags=["Health"])
 async def health():
     from backend.database import is_available
     return {
