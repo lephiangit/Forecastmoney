@@ -245,6 +245,26 @@ def save_bot_config(user_id: int, config: Dict) -> bool:
         return True
     except: return False
 
+def get_user_profile(user_id: int) -> Dict:
+    c = _get_client()
+    if c is None: return {}
+    try:
+        res = c.table("forecast_cache").select("response_json").eq("ticker", "USER_PROFILE").eq("days", user_id).order("created_at", desc=True).limit(1).execute()
+        return res.data[0]["response_json"] if res.data else {}
+    except: return {}
+
+def save_user_profile(user_id: int, profile: Dict) -> bool:
+    c = _get_client()
+    if c is None: return False
+    try:
+        c.table("forecast_cache").delete().eq("ticker", "USER_PROFILE").eq("days", user_id).execute()
+        c.table("forecast_cache").insert({"ticker": "USER_PROFILE", "days": user_id, "response_json": profile}).execute()
+        return True
+    except Exception as e:
+        print(f"DB save_user_profile error: {e}")
+        return False
+
+
 
 # ── User Watchlists ────────────────────────────────────────────────────────────
 

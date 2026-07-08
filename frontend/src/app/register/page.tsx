@@ -56,7 +56,7 @@ export default function RegisterPage() {
       const res = await api.register(email, password)
       if (res.token) {
         localStorage.setItem("forecast_ai_token", res.token)
-        login(res.username, res.role || "user")
+        login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
         router.push("/")
       }
     } catch (err: any) {

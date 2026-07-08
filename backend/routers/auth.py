@@ -125,12 +125,18 @@ async def register(req: AuthRequest):
         
     # Generate token immediately
     token = create_token(user["id"], user["username"], user.get("role", "user"))
+    
+    from backend.database import get_user_profile
+    profile = get_user_profile(user["id"])
+    
     return {
         "success": True,
         "token": token,
         "user_id": user["id"],
         "username": user["username"],
+        "name": profile.get("name", user["username"]),
         "role": user.get("role", "user"),
+        "is_oauth": user["password_hash"] == "GOOGLE_OAUTH_USER",
         "message": "User registered successfully"
     }
 
@@ -150,12 +156,18 @@ async def login(req: AuthRequest):
         raise HTTPException(400, "Invalid username or password")
         
     token = create_token(user["id"], user["username"], user.get("role", "user"))
+    
+    from backend.database import get_user_profile
+    profile = get_user_profile(user["id"])
+    
     return {
         "success": True,
         "token": token,
         "user_id": user["id"],
         "username": user["username"],
+        "name": profile.get("name", user["username"]),
         "role": user.get("role", "user"),
+        "is_oauth": user["password_hash"] == "GOOGLE_OAUTH_USER",
         "message": "Logged in successfully"
     }
 
@@ -190,12 +202,18 @@ async def google_auth(req: GoogleAuthRequest):
 
         # Issue custom JWT — same as email/password login
         token = create_token(existing_user["id"], existing_user["username"], existing_user.get("role", "user"))
+        
+        from backend.database import get_user_profile
+        profile = get_user_profile(existing_user["id"])
+        
         return {
             "success": True,
             "token": token,
             "user_id": existing_user["id"],
             "username": existing_user["username"],
+            "name": profile.get("name", existing_user["username"]),
             "role": existing_user.get("role", "user"),
+            "is_oauth": existing_user["password_hash"] == "GOOGLE_OAUTH_USER",
             "message": "Google login successful"
         }
     except HTTPException:
@@ -231,6 +249,26 @@ async def change_password(req: ChangePasswordRequest, current_user: dict = Depen
 
     c.table("users").update({"password_hash": new_hashed}).eq("id", current_user["user_id"]).execute()
     return {"success": True, "message": "Password changed successfully"}
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str
+
+@router.get("/profile")
+async def get_profile(current_user: dict = Depends(get_current_user)):
+    from backend.database import get_user_profile
+    p = get_user_profile(current_user["user_id"])
+    return {"success": True, "name": p.get("name", current_user["username"])}
+
+@router.put("/profile")
+async def update_profile(req: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
+    from backend.database import get_user_profile, save_user_profile
+    p = get_user_profile(current_user["user_id"])
+    p["name"] = req.name
+    success = save_user_profile(current_user["user_id"], p)
+    if not success:
+        raise HTTPException(500, "Failed to save profile")
+    return {"success": True, "message": "Profile updated"}
 
 # NOTE: Watchlist endpoints are in admin.py under /admin/watchlist.
 # Frontend exclusively calls /admin/watchlist endpoints.

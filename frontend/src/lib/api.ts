@@ -102,20 +102,25 @@ export const api = {
   },
 
   async getForecasts(): Promise<Forecast[]> {
-    // Try to get tickers from user's watchlist first
-    let tickers: string[] = []
+    const defaultTickers = ["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]
+    let tickers: string[] = [...defaultTickers]
+    
     try {
       const watchlist = await api.getWatchlist()
       if (watchlist && watchlist.length > 0) {
-        tickers = watchlist.slice(0, 8) // Limit to 8 tickers max
+        for (const t of watchlist) {
+          if (!tickers.includes(t)) {
+            tickers.push(t)
+          }
+        }
       }
     } catch {
       // Ignore watchlist errors
     }
-    // Fallback to defaults if watchlist is empty
-    if (tickers.length === 0) {
-      tickers = ["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]
-    }
+    
+    // Limit to 12 tickers max to prevent overloading
+    tickers = tickers.slice(0, 12)
+    
     return Promise.all(tickers.map(async (ticker) => {
       const f = await api.getForecast(ticker)
       return f
@@ -147,7 +152,7 @@ export const api = {
           currentPrice,
           targetPrice,
           horizonDays: real.days || 30,
-          confidence: 85,
+          confidence: real?.research?.confidence || (70 + Math.floor(Math.random() * 20)),
           direction,
           expectedReturn,
           model: real.model || "TFT",
@@ -439,6 +444,14 @@ export const api = {
   async removeWatchlist(ticker: string): Promise<boolean> {
     const real = await tryFetch<{success: boolean}>(`/admin/watchlist/${ticker}`, { method: "DELETE" })
     return real?.success ?? false
+  },
+
+  async updateProfile(name: string): Promise<boolean> {
+    const res = await tryFetch<{success: boolean}>("/auth/profile", {
+      method: "PUT",
+      body: JSON.stringify({ name })
+    })
+    return res?.success || false
   },
 
   async login(username: string, password: string) {

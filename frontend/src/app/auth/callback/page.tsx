@@ -33,7 +33,7 @@ export default function AuthCallbackPage() {
           // Store the CUSTOM JWT (not the Supabase token)
           localStorage.setItem("forecast_ai_token", res.token)
           console.log("[CALLBACK] Step 4: Saved Custom JWT to localStorage, token starts with:", res.token.substring(0, 20))
-          login(res.username, res.role || "user", res.user_id?.toString())
+          login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
           console.log("[CALLBACK] Step 5: Zustand login() called, redirecting to /")
           setStatus("Đăng nhập thành công! Đang chuyển hướng...")
           router.push("/")

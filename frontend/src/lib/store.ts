@@ -34,11 +34,12 @@ interface AuthUser {
   name: string
   email: string
   role: Role
+  isOAuth: boolean
 }
 
 interface AuthState {
   user: AuthUser | null
-  login: (name: string, role?: Role, id?: string) => void
+  login: (name: string, role?: Role, id?: string, email?: string, isOAuth?: boolean) => void
   logout: () => void
 }
 
@@ -46,15 +47,29 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      login: (name, role = "user", id) =>
+      login: (name, role = "user", id, email, isOAuth = false) => {
+        let finalName = name;
+        let finalEmail = email || name;
+        if (typeof window !== "undefined") {
+          try {
+            const saved = localStorage.getItem(`forecastai-profile-${id || name}`);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed.name) finalName = parsed.name;
+              if (parsed.email) finalEmail = parsed.email;
+            }
+          } catch (e) {}
+        }
         set({
           user: {
             id: id || name,
-            name: name,
-            email: name,
+            name: finalName,
+            email: finalEmail,
             role,
+            isOAuth,
           },
-        }),
+        })
+      },
       logout: () => {
         if (typeof window !== "undefined") localStorage.removeItem("forecast_ai_token")
         set({ user: null })

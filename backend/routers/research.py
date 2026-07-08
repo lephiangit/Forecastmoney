@@ -248,6 +248,38 @@ def get_research(ticker: str):
         except:
             pass
 
+    # Build markdown content
+    content_en = (
+        f"## Comprehensive AI Analysis for {ticker}\n\n"
+        f"{summary}\n\n"
+        f"### Market Sentiment\n"
+        f"The current market sentiment is **{record.get('sentiment', 'NEUTRAL')}** with a confidence score of {int(record.get('confidence', 0.5) * 100)}%.\n\n"
+        f"### Recommendation\n"
+        f"{record.get('recommendation', 'Hold and monitor.')}\n\n"
+        f"### Risk Assessment\n"
+        f"Risk Level: **{record.get('risk_level', 'MEDIUM')}**\n\n"
+    )
+    key_factors = _parse_tags(record.get("key_factors", []))
+    if key_factors:
+        content_en += "### Key Factors\n"
+        for kf in key_factors:
+            content_en += f"- {kf}\n"
+
+    content_vi = (
+        f"## Phân tích AI chi tiết cho {ticker}\n\n"
+        f"{summary}\n\n"
+        f"### Tâm lý thị trường\n"
+        f"Tâm lý thị trường hiện tại là **{record.get('sentiment', 'NEUTRAL')}** với độ tin cậy {int(record.get('confidence', 0.5) * 100)}%.\n\n"
+        f"### Khuyến nghị\n"
+        f"{record.get('recommendation', 'Theo dõi thêm.')}\n\n"
+        f"### Đánh giá Rủi ro\n"
+        f"Mức rủi ro: **{record.get('risk_level', 'TRUNG BÌNH')}**\n\n"
+    )
+    if key_factors:
+        content_vi += "### Các yếu tố chính\n"
+        for kf in key_factors:
+            content_vi += f"- {kf}\n"
+
     return {
         "id": str(record.get("id", ticker)),
         "ticker": ticker,
@@ -263,5 +295,7 @@ def get_research(ticker: str):
         "createdAt": record.get("created_at", ""),
         "readTime": 3,
         "author": "Groq Agent",
-        "headlines": headlines
+        "headlines": headlines,
+        "content_en": content_en,
+        "content_vi": content_vi
     }

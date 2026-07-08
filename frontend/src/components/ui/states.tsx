@@ -37,11 +37,12 @@ export function ErrorCard({ onRetry, className }: { onRetry?: () => void; classN
   )
 }
 
-export function EmptyState({ title, icon: Icon }: { title: string; icon?: typeof AlertTriangle }) {
+export function EmptyState({ title, icon: Icon, action }: { title: string; icon?: typeof AlertTriangle; action?: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-card/50 p-10 text-center text-muted-foreground">
       {Icon && <Icon className="h-7 w-7" />}
       <p className="text-sm">{title}</p>
+      {action && <div className="mt-2">{action}</div>}
     </div>
   )
 }

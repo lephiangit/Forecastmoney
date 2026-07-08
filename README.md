@@ -1,4 +1,10 @@
-# ForecastAI V1.2.1 🤖📈
+# ForecastAI V1.2.4 🤖📈
+
+**Mới trong bản cập nhật 1.2.4:**
+- Đồng bộ hóa hoàn toàn danh sách Watchlist (Gắn sao thẻ) lên cơ sở dữ liệu Supabase, tự động gộp với thẻ mặc định.
+- Sửa lỗi responsive biểu đồ `Recharts` (width/height -1).
+- Trả về nội dung Markdown chi tiết cho trung tâm Nghiên cứu AI.
+
 
 > **AI-powered market research & price forecasting platform**
 > Real-time data · TFT + SentimentFusion models · Gemini Research Agent · Paper trading

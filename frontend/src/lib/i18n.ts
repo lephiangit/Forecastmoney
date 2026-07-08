@@ -134,6 +134,13 @@ export const translations = {
     name: "Full Name",
     noAccount: "Don't have an account?",
     haveAccount: "Already have an account?",
+    security: "Security",
+    changePassword: "Change Password",
+    notifAiSignals: "AI signal alerts",
+    notifAutoTrade: "Auto-trade executions",
+    notifResearch: "New research reports",
+    notifWeekly: "Weekly performance summary",
+    notifSavedLocally: "Notification preferences are saved locally on this device.",
   },
   vi: {
     dashboard: "Bảng điều khiển",
@@ -258,6 +265,13 @@ export const translations = {
     name: "Họ và tên",
     noAccount: "Chưa có tài khoản?",
     haveAccount: "Đã có tài khoản?",
+    security: "Bảo mật",
+    changePassword: "Đổi mật khẩu",
+    notifAiSignals: "Cảnh báo tín hiệu AI",
+    notifAutoTrade: "Thực thi giao dịch tự động",
+    notifResearch: "Báo cáo nghiên cứu mới",
+    notifWeekly: "Tóm tắt hiệu suất hàng tuần",
+    notifSavedLocally: "Tùy chọn thông báo được lưu cục bộ trên thiết bị này.",
   },
 } as const
 

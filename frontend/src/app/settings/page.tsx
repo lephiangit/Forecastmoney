@@ -32,7 +32,16 @@ export default function SettingsPage() {
     try {
       // Update auth store with new name/email
       if (user) {
-        login(name || user.name, user.role, user.id)
+        if (typeof window !== "undefined") {
+          localStorage.setItem(`forecastai-profile-${user.id}`, JSON.stringify({ name, email }));
+        }
+        login(name || user.name, user.role, user.id, email || user.email)
+        // Also save to database
+        try {
+          await api.updateProfile(name || user.name)
+        } catch (e) {
+          console.error("Failed to save profile to DB", e)
+        }
       }
       // Save notification preferences to localStorage
       if (typeof window !== "undefined") {
@@ -116,40 +125,44 @@ export default function SettingsPage() {
         </Section>
 
         {/* Notifications */}
-        <Section icon={Bell} title="Notifications">
+        <Section icon={Bell} title={t("notifications")}>
           <div className="space-y-1">
-            <ToggleRow label="AI signal alerts" value={notifs.signals} onChange={(v) => setNotifs((n) => ({ ...n, signals: v }))} />
-            <ToggleRow label="Auto-trade executions" value={notifs.trades} onChange={(v) => setNotifs((n) => ({ ...n, trades: v }))} />
-            <ToggleRow label="New research reports" value={notifs.research} onChange={(v) => setNotifs((n) => ({ ...n, research: v }))} />
-            <ToggleRow label="Weekly performance summary" value={notifs.weekly} onChange={(v) => setNotifs((n) => ({ ...n, weekly: v }))} />
+            <ToggleRow label={t("notifAiSignals")} value={notifs.signals} onChange={(v) => setNotifs((n) => ({ ...n, signals: v }))} />
+            <ToggleRow label={t("notifAutoTrade")} value={notifs.trades} onChange={(v) => setNotifs((n) => ({ ...n, trades: v }))} />
+            <ToggleRow label={t("notifResearch")} value={notifs.research} onChange={(v) => setNotifs((n) => ({ ...n, research: v }))} />
+            <ToggleRow label={t("notifWeekly")} value={notifs.weekly} onChange={(v) => setNotifs((n) => ({ ...n, weekly: v }))} />
           </div>
           <p className="mt-3 text-[11px] text-muted-foreground italic">
-            Notification preferences are saved locally on this device.
+            {t("notifSavedLocally")}
           </p>
         </Section>
 
         {/* Security */}
-        <Section icon={Shield} title="Security">
-          <button
-            onClick={() => {
-              setShowPwModal(true)
-              setPwError("")
-              setPwSuccess(false)
-              setOldPw("")
-              setNewPw("")
-              setConfirmPw("")
-            }}
-            className="rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent"
-          >
-            <Lock className="mr-1.5 inline h-3.5 w-3.5" />
-            Change password
-          </button>
-          <button
-            onClick={logout}
-            className="ml-2 inline-flex items-center gap-2 rounded-md border border-negative/30 bg-negative/10 px-4 py-2 text-sm font-medium text-negative transition-colors hover:bg-negative/20"
-          >
-            <LogOut className="h-4 w-4" /> {t("logout")}
-          </button>
+        <Section icon={Shield} title={t("security")}>
+          <div className="flex flex-wrap items-center gap-2">
+            {user?.isOAuth !== true && (
+              <button
+                onClick={() => {
+                  setShowPwModal(true)
+                  setPwError("")
+                  setPwSuccess(false)
+                  setOldPw("")
+                  setNewPw("")
+                  setConfirmPw("")
+                }}
+                className="rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent"
+              >
+                <Lock className="mr-1.5 inline h-3.5 w-3.5" />
+                {t("changePassword")}
+              </button>
+            )}
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-2 rounded-md border border-negative/30 bg-negative/10 px-4 py-2 text-sm font-medium text-negative transition-colors hover:bg-negative/20"
+            >
+              <LogOut className="h-4 w-4" /> {t("logout")}
+            </button>
+          </div>
         </Section>
 
         <div className="flex items-center justify-end gap-3">
@@ -285,7 +298,7 @@ function ToggleRow({ label, value, onChange }: { label: string; value: boolean; 
       <button
         onClick={() => onChange(!value)}
         className={cn(
-          "relative h-5 w-9 rounded-full transition-colors",
+          "relative flex h-5 w-9 items-center rounded-full px-0.5 transition-colors",
           value ? "bg-primary" : "bg-accent",
         )}
         aria-label={label}
@@ -294,8 +307,8 @@ function ToggleRow({ label, value, onChange }: { label: string; value: boolean; 
       >
         <span
           className={cn(
-            "absolute top-0.5 h-4 w-4 rounded-full bg-background transition-transform",
-            value ? "translate-x-4" : "translate-x-0.5",
+            "h-4 w-4 rounded-full bg-background transition-transform",
+            value ? "translate-x-4" : "translate-x-0",
           )}
         />
       </button>

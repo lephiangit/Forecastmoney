@@ -24,7 +24,7 @@ export function PortfolioChart({ data }: { data: ForecastPoint[] }) {
   const color = isPositive ? "#0ebd8b" : "#f6465d" // Green or Red
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={260} minWidth={0} minHeight={0}>
       <AreaChart data={data} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
         <defs>
           <linearGradient id="pvColor" x1="0" y1="0" x2="0" y2="1">

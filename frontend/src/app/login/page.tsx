@@ -55,7 +55,7 @@ export default function LoginPage() {
       const res = await api.login(email, password)
       if (res.token) {
         localStorage.setItem("forecast_ai_token", res.token)
-        login(res.username, res.role || "user", res.user_id?.toString())
+        login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
         
         // Handle returnUrl if exists
         const params = new URLSearchParams(window.location.search)

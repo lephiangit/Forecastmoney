@@ -4,9 +4,9 @@ import { useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Search, Sparkles, TrendingUp, TrendingDown, Minus, ArrowUpRight } from "lucide-react"
+import { Search, Sparkles, TrendingUp, TrendingDown, Minus, ArrowUpRight, Star } from "lucide-react"
 import { api } from "@/lib/api"
-import { useT } from "@/lib/store"
+import { useT, useAuthStore } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
 import { Skeleton, ErrorCard, EmptyState } from "@/components/ui/states"
 import { ConfidencePill } from "@/components/ui/tags"
@@ -16,7 +16,20 @@ import { cn } from "@/lib/utils"
 export default function ForecastIndexPage() {
   const t = useT()
   const [search, setSearch] = useState("")
+  const [adding, setAdding] = useState(false)
   const { data, isError, refetch } = useQuery({ queryKey: ["forecasts"], queryFn: api.getForecasts })
+  const { user } = useAuthStore()
+  const { data: watchlist = [], refetch: refetchWatchlist } = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist, enabled: !!user })
+
+  const handleAddNew = async () => {
+    if (!search || !user) return
+    setAdding(true)
+    await api.addWatchlist(search.toUpperCase())
+    setSearch("")
+    refetchWatchlist()
+    refetch()
+    setAdding(false)
+  }
 
   const filtered = (data ?? []).filter(
     (f) => f.ticker.toLowerCase().includes(search.toLowerCase()) || f.name.toLowerCase().includes(search.toLowerCase()),
@@ -47,7 +60,21 @@ export default function ForecastIndexPage() {
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState title="No forecasts found." icon={Sparkles} />
+        <EmptyState 
+          title={search ? `Không tìm thấy "${search}" trong danh sách hiện tại.` : "No forecasts found."} 
+          icon={Sparkles} 
+          action={
+            search && user ? (
+              <button
+                onClick={handleAddNew}
+                disabled={adding}
+                className="mt-2 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {adding ? "Đang thêm..." : `Thêm ${search.toUpperCase()} vào yêu thích`}
+              </button>
+            ) : null
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((f, i) => {
@@ -76,7 +103,25 @@ export default function ForecastIndexPage() {
                         <p className="text-xs text-muted-foreground">{f.name}</p>
                       </div>
                     </div>
-                    <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-primary" />
+                    <div className="flex items-center gap-2">
+                      {user && (
+                        <button 
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            if (watchlist.includes(f.ticker)) {
+                              api.removeWatchlist(f.ticker).then(() => { refetchWatchlist(); refetch() })
+                            } else {
+                              api.addWatchlist(f.ticker).then(() => { refetchWatchlist(); refetch() })
+                            }
+                          }}
+                          className="text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          <Star className={cn("h-4 w-4", watchlist.includes(f.ticker) && "fill-primary text-primary")} />
+                        </button>
+                      )}
+                      <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-primary" />
+                    </div>
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
