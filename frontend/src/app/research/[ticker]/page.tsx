@@ -12,6 +12,7 @@ import { SentimentBadge, ConfidencePill } from "@/components/ui/tags"
 import { Markdown } from "@/components/ui/markdown"
 import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { ResearchChart } from "./research-chart"
 
 export default function ResearchDetailPage({ params }: { params: Promise<{ ticker: string }> }) {
   const { ticker } = use(params)
@@ -155,6 +156,8 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
               </div>
             </div>
 
+            <ResearchChart sentiment={report.sentiment} confidence={report.confidence} />
+
             <div className="rounded-lg border border-border bg-card p-5">
               <h3 className="text-sm font-semibold text-card-foreground">Tags</h3>
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -184,8 +187,8 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
             {report.headlines && report.headlines.length > 0 && (
               <div className="mt-8 rounded-lg border border-border bg-secondary/50 p-5">
                 <h3 className="mb-4 text-sm font-semibold text-card-foreground">Nguồn tham khảo (Reference Links)</h3>
-                <ul className="space-y-3">
-                  {report.headlines.map((headline, idx) => (
+                <ul className="max-h-[300px] space-y-3 overflow-y-auto pr-2 custom-scrollbar">
+                  {report.headlines.map((headline: any, idx: number) => (
                     <li key={idx} className="text-sm">
                       <a 
                         href={headline.link} 

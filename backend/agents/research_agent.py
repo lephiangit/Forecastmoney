@@ -14,7 +14,7 @@ from functools import lru_cache
 
 # ── NEWS ──────────────────────────────────────────────────────────────────────
 
-def fetch_news(ticker: str, max_items: int = 12) -> List[Dict]:
+def fetch_news(ticker: str, max_items: int = 30) -> List[Dict]:
     """Fetch news headlines for a ticker via RSS."""
     from backend.config import settings
 
@@ -153,7 +153,7 @@ def _gemini_analysis(ticker: str, headlines: List[Dict], price_info: str) -> Opt
     """Full Gemini-powered market analysis."""
     headlines_text = "\n".join([
         f"- [{h['source']}] {h['title']}: {h.get('summary','')[:150]}"
-        for h in headlines[:8]
+        for h in headlines[:20]
     ])
 
     prompt = f"""Bạn là chuyên gia phân tích tài chính. Phân tích tin tức sau về {ticker} và đưa ra nhận định thị trường.
@@ -232,7 +232,7 @@ def analyze_market(ticker: str, price_info: str = "") -> Dict:
         "news_count": len(headlines),
         "headlines": [
             {"title": h["title"], "link": h["link"], "source": h["source"]}
-            for h in headlines[:6]
+            for h in headlines[:30]
         ],
     })
 

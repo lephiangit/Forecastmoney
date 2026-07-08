@@ -1,10 +1,10 @@
-# ForecastAI V1.2.5 🤖📈
+# ForecastAI V1.2.5b 🤖📈
 
-**Mới trong bản cập nhật 1.2.5:**
+**Mới trong bản cập nhật 1.2.5 & 1.2.5b:**
+- Nâng cấp **AI Copilot**: Kết nối trực tiếp với LLM Groq ở Backend, hỗ trợ nhận diện và phản hồi tự nhiên bằng Tiếng Việt 100%, có hiệu ứng typing.
+- Nâng cấp **AI Research**: Phân tích từ 30 bài báo (thay vì 12 bài) và thêm Biểu đồ Tâm lý AI (Sentiment Gauge) sinh động bằng Recharts.
 - Thêm tính năng **Quy đổi tiền tệ toàn cầu (USD/VND)** dựa trên tỷ giá trực tiếp từ Open Exchange Rates API.
 - Cập nhật Ticker Tape Navbar để tự động thay đổi định dạng theo thiết lập tiền tệ của người dùng.
-- Đồng bộ hóa hoàn toàn danh sách Watchlist (Gắn sao thẻ) lên cơ sở dữ liệu Supabase, tự động gộp với thẻ mặc định.
-- Sửa lỗi responsive biểu đồ `Recharts` (width/height -1).
 - Trả về nội dung Markdown chi tiết cho trung tâm Nghiên cứu AI.
 
 

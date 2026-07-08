@@ -14,38 +14,16 @@ interface Msg {
 
 const SUGGESTIONS = ["Forecast BTC", "Analyze AAPL", "Compare NVDA vs TSLA", "Show best signal today"]
 
-function resolve(query: string): { reply: string; href?: string } {
-  const q = query.toLowerCase()
-  const tickers = MARKET_ASSETS.filter((a) => q.includes(a.ticker.toLowerCase()) || q.includes(a.name.toLowerCase()))
-
-  if (q.includes("best signal") || q.includes("signal")) {
-    return { reply: "Today's strongest signal is a BUY on NVDA at 91% confidence. Opening signals view.", href: "/" }
-  }
-  if (q.includes("compare") && tickers.length >= 2) {
-    return {
-      reply: `Comparing ${tickers[0].ticker} vs ${tickers[1].ticker}. Loading forecast for ${tickers[0].ticker}.`,
-      href: `/forecast/${tickers[0].ticker}`,
-    }
-  }
-  if (q.includes("forecast") && tickers[0]) {
-    return { reply: `Generating TFT forecast for ${tickers[0].ticker}. Navigating now.`, href: `/forecast/${tickers[0].ticker}` }
-  }
-  if ((q.includes("analyze") || q.includes("research")) && tickers[0]) {
-    return { reply: `Pulling Gemini research for ${tickers[0].ticker}. Opening report.`, href: `/research/${tickers[0].ticker}` }
-  }
-  if (tickers[0]) {
-    return { reply: `Here is the latest forecast for ${tickers[0].ticker}.`, href: `/forecast/${tickers[0].ticker}` }
-  }
-  return { reply: "I can forecast assets, analyze fundamentals, compare tickers, and surface the best signals. Try 'Forecast BTC'." }
-}
+import { api } from "@/lib/api"
 
 export function AiCopilot() {
   const t = useT()
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
   const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", text: "Hi, I'm your AI Copilot. Ask me to forecast, analyze, or compare any asset." },
+    { role: "assistant", text: "Xin chào! Tôi là trợ lý AI của bạn. Bạn muốn tôi phân tích hoặc dự báo mã nào hôm nay?" },
   ])
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -53,13 +31,24 @@ export function AiCopilot() {
     endRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, open])
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     const value = text.trim()
     if (!value) return
-    const { reply, href } = resolve(value)
-    setMessages((m) => [...m, { role: "user", text: value }, { role: "assistant", text: reply }])
+    
+    // Add user message immediately
+    setMessages((m) => [...m, { role: "user", text: value }])
     setInput("")
-    if (href) setTimeout(() => router.push(href), 700)
+    setIsLoading(true)
+    
+    try {
+      const { reply, href } = await api.askCopilot(value)
+      setMessages((m) => [...m, { role: "assistant", text: reply }])
+      if (href) setTimeout(() => router.push(href), 1000)
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", text: "Xin lỗi, đã có lỗi xảy ra. Bạn thử lại nhé!" }])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -109,6 +98,15 @@ export function AiCopilot() {
                   </div>
                 </div>
               ))}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="max-w-[85%] rounded-lg rounded-bl-sm bg-accent px-3 py-2 text-sm text-accent-foreground italic flex gap-1 items-center">
+                    <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                </div>
+              )}
               <div ref={endRef} />
             </div>
 
@@ -140,7 +138,7 @@ export function AiCopilot() {
               <button
                 type="submit"
                 className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-                disabled={!input.trim()}
+                disabled={!input.trim() || isLoading}
               >
                 <ArrowUp className="h-4 w-4" />
               </button>
