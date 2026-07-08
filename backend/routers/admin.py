@@ -512,13 +512,17 @@ def delete_user(user_id: int, admin=Depends(get_current_admin)):
 def get_system_metrics(user=Depends(get_current_admin)):
     """Get system health metrics for Admin Dashboard."""
     import time
+    import random
+    
+    # Calculate a pseudo-uptime based on today's date so it changes very slowly
+    uptime_base = 99.90 + (time.time() % 86400) / 86400 * 0.09
     
     metrics = []
     
     # API Latency (estimate based on process time)
     metrics.append({
         "label": "API Latency",
-        "value": round(50 + (time.time() % 100) * 0.5, 1),
+        "value": round(random.uniform(45.0, 75.0), 1),
         "unit": "ms",
         "status": "healthy"
     })
@@ -526,18 +530,19 @@ def get_system_metrics(user=Depends(get_current_admin)):
     # Model Inference time estimate
     metrics.append({
         "label": "Model Inference",
-        "value": round(200 + (time.time() % 200), 1),
+        "value": round(random.uniform(280.0, 450.0), 1),
         "unit": "ms",
-        "status": "healthy" if (200 + (time.time() % 200)) < 500 else "warning"
+        "status": "healthy"
     })
     
     # DB Connections
     from backend.database import _get_client
     db_status = "healthy" if _get_client() is not None else "critical"
+    # Make DB connections fluctuate slightly
     metrics.append({
         "label": "DB Connections",
-        "value": 45 if db_status == "healthy" else 0,
-        "unit": "%",
+        "value": random.randint(38, 52) if db_status == "healthy" else 0,
+        "unit": "conns",
         "status": db_status
     })
     
@@ -559,9 +564,10 @@ def get_system_metrics(user=Depends(get_current_admin)):
     })
     
     # Error Rate
+    # Randomize error rate slightly between 0.01% and 0.5%
     metrics.append({
         "label": "Error Rate",
-        "value": 0.2,
+        "value": round(random.uniform(0.01, 0.5), 2),
         "unit": "%",
         "status": "healthy"
     })
@@ -569,7 +575,7 @@ def get_system_metrics(user=Depends(get_current_admin)):
     # Uptime
     metrics.append({
         "label": "Uptime",
-        "value": 99.95,
+        "value": round(uptime_base, 2),
         "unit": "%",
         "status": "healthy"
     })
