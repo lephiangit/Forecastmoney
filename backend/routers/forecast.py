@@ -66,8 +66,8 @@ def combined_forecast(
 
     # Log T+1 prediction for future accuracy evaluation (non-blocking)
     from backend.database import save_accuracy_prediction
-    if result.get("forecast") and result["forecast"].get("median") and len(result["forecast"]["median"]) > 0:
-        t1 = result["forecast"]["median"][0]
+    if result.get("sentiment_fusion") and result["sentiment_fusion"].get("median") and len(result["sentiment_fusion"]["median"]) > 0:
+        t1 = result["sentiment_fusion"]["median"][0]
         import threading
         threading.Thread(target=save_accuracy_prediction, args=(ticker, "sentiment_fusion", t1["date"], t1["price"])).start()
 

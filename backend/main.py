@@ -36,6 +36,26 @@ def _take_portfolio_snapshots():
     except Exception as e:
         print(f"Snapshot error: {e}")
 
+def _evaluate_model_predictions():
+    """Evaluate pending model predictions from DB."""
+    from backend.database import get_pending_evaluations, update_accuracy_evaluation
+    from backend.models.forecaster import get_live_quote
+    
+    pending = get_pending_evaluations()
+    if not pending:
+        return
+        
+    print(f"📈 [Cron] Evaluating {len(pending)} pending model predictions...")
+    for record in pending:
+        ticker = record["ticker"]
+        live = get_live_quote(ticker)
+        if live and live["price"] > 0:
+            actual = live["price"]
+            predicted = record["predicted_price"]
+            error_pct = abs(actual - predicted) / actual * 100
+            update_accuracy_evaluation(record["id"], actual, error_pct)
+            print(f"   ✓ Evaluated {ticker}: predicted={predicted:.2f}, actual={actual:.2f}, error={error_pct:.2f}%")
+
 # ── Lifespan: load heavy models once at startup ───────────────────────────────
 
 @asynccontextmanager
@@ -67,11 +87,22 @@ async def lifespan(app: FastAPI):
                 print(f"Portfolio snapshot error: {e}")
             await asyncio.sleep(3600)  # Run every 1 hour
 
+    async def model_evaluation_loop():
+        """Evaluate model accuracy by checking actual prices against predictions (runs every 1 hour)."""
+        while True:
+            try:
+                await asyncio.to_thread(_evaluate_model_predictions)
+            except Exception as e:
+                print(f"Model evaluation error: {e}")
+            await asyncio.sleep(3600)  # Run every 1 hour
+
     task1 = asyncio.create_task(auto_trader_loop())
     task2 = asyncio.create_task(portfolio_snapshot_loop())
+    task3 = asyncio.create_task(model_evaluation_loop())
     yield
     task1.cancel()
     task2.cancel()
+    task3.cancel()
     print("ForecastAI API shutting down...")
 
 

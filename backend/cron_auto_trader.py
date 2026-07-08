@@ -1,5 +1,5 @@
 from datetime import datetime
-from backend.database import _get_client, get_admin_config, update_admin_config, save_trade, get_watchlist, get_bot_config
+from backend.database import _get_client, get_admin_config, update_admin_config, save_trade, get_watchlist, get_bot_config, get_trades
 from backend.models.forecaster import get_live_quote, run_combined_forecast
 
 def run_auto_trade():
@@ -115,11 +115,25 @@ def run_auto_trade():
                     
             elif predicted_price < current_price:
                 # SELL Signal
-                # Ideally we check if they own it, but for simple paper trading we just allow selling (shorting or reducing position)
-                balance += total_value
-                save_trade(user_id, ticker, "SELL", qty, current_price, total_value, "AUTO")
-                trade_executed = True
-                print(f"     ✅ User {user_id} AUTO SELL {qty} {ticker} @ {current_price}")
+                # Calculate current position
+                trades = get_trades(user_id)
+                current_qty = 0.0
+                for t in trades:
+                    if t.get("ticker") == ticker:
+                        if t.get("action") == "BUY":
+                            current_qty += t.get("quantity", 0)
+                        elif t.get("action") == "SELL":
+                            current_qty -= t.get("quantity", 0)
+                
+                if current_qty > 0:
+                    sell_qty = min(qty, current_qty)
+                    sell_value = current_price * sell_qty
+                    balance += sell_value
+                    save_trade(user_id, ticker, "SELL", sell_qty, current_price, sell_value, "AUTO")
+                    trade_executed = True
+                    print(f"     ✅ User {user_id} AUTO SELL {sell_qty:.4f} {ticker} @ {current_price:.2f}")
+                else:
+                    print(f"     ⏩ User {user_id} AUTO SELL Skipped (No position for {ticker})")
                 
             if trade_executed:
                 # Update user's PnL config
