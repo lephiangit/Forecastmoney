@@ -64,7 +64,20 @@ def get_overview(tickers: Optional[str] = Query(
         if q:
             ticker = ticker_list[i]
             q["name"] = TICKER_LABELS.get(ticker, q.get("name", ticker))
-            q["type"] = "crypto" if ticker.endswith("-USD") else "vn_stock" if ticker.endswith(".VN") else "stock"
+            
+            # Determine category
+            category = "stock"
+            if ticker.endswith("-USD"):
+                category = "crypto"
+            elif ticker in ["^GSPC", "^DJI", "^IXIC"]:
+                category = "index"
+            elif ticker in ["GC=F", "CL=F", "SI=F", "GOLD"]:
+                category = "commodity"
+            elif ticker.endswith(".VN"):
+                category = "stock"
+                
+            q["category"] = category
+            q["type"] = category
             results.append(q)
 
     return {

@@ -89,6 +89,7 @@ export const api = {
         changePercent: d.change_pct ?? d.changePercent ?? 0,
         high24h: d.high_24h ?? d.high24h ?? d.price ?? 0,
         low24h: d.low_24h ?? d.low24h ?? d.price ?? 0,
+        category: d.category ?? d.type ?? "stock",
         sparkline: d.sparkline || [],
       }))
     }
