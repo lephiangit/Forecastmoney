@@ -431,7 +431,7 @@ def get_all_research_history(
                  .select("*")
                  .order("created_at", desc=True))
         if ticker:
-            query = query.eq("ticker", ticker.upper())
+            query = query.ilike("ticker", f"%{ticker}%")
         if sentiment:
             query = query.eq("sentiment", sentiment.upper())
         query = query.range(offset, offset + limit - 1)
