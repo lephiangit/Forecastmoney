@@ -35,17 +35,23 @@ export function AiCopilot() {
     const value = text.trim()
     if (!value) return
     
+    // Format existing messages as history array
+    const history = messages.map((m) => ({
+      role: m.role,
+      content: m.text,
+    }))
+    
     // Add user message immediately
     setMessages((m) => [...m, { role: "user", text: value }])
     setInput("")
     setIsLoading(true)
     
     try {
-      const { reply, href } = await api.askCopilot(value)
+      const { reply, href } = await api.askCopilot(value, history)
       setMessages((m) => [...m, { role: "assistant", text: reply }])
       if (href) setTimeout(() => router.push(href), 1000)
     } catch (e) {
-      setMessages((m) => [...m, { role: "assistant", text: "Xin lỗi, đã có lỗi xảy ra. Bạn thử lại nhé!" }])
+      setMessages((m) => [...m, { role: "assistant", text: "Xin lỗi ní, đã có lỗi xảy ra rồi. Ní thử lại nhé!" }])
     } finally {
       setIsLoading(false)
     }

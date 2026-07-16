@@ -561,20 +561,20 @@ export const api = {
     return res.json()
   },
 
-  async askCopilot(message: string): Promise<{ reply: string; href?: string }> {
+  async askCopilot(message: string, history: { role: "user" | "assistant"; content: string }[] = []): Promise<{ reply: string; href?: string }> {
     if (!BASE_URL) return { reply: "API URL not configured" }
     try {
       const res = await fetch(`${BASE_URL}/chat/copilot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, history })
       })
       if (!res.ok) {
-        return { reply: "Xin lỗi, hiện tại tôi không thể kết nối tới server. Bạn thử lại sau nhé!" }
+        return { reply: "Xin lỗi ní, hiện tại tui không thể kết nối tới server. Ní thử lại sau nhé!" }
       }
       return await res.json()
     } catch (e) {
-      return { reply: "Lỗi kết nối. Vui lòng kiểm tra lại mạng!" }
+      return { reply: "Lỗi kết nối rồi ní ơi. Vui lòng kiểm tra lại mạng!" }
     }
   },
 
