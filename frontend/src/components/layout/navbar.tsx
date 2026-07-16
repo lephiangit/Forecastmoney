@@ -15,6 +15,7 @@ const NAV: { href: string; key: TranslationKey; adminOnly?: boolean; userOnly?: 
   { href: "/markets", key: "markets" },
   { href: "/research", key: "research" },
   { href: "/forecast", key: "forecast" },
+  { href: "/backtest", key: "backtesting", userOnly: true },
   { href: "/portfolio", key: "portfolio", userOnly: true },
   { href: "/auto-trade", key: "autoTrade", userOnly: true },
   { href: "/admin", key: "admin", adminOnly: true },

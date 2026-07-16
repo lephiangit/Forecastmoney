@@ -55,7 +55,15 @@ export default function AutoTradePage() {
   }, [botConfigQ.data])
 
   const startMut = useMutation({
-    mutationFn: () => api.startBot(Number(tradeAmount) || 0, Number(durationHours) || 0, config.assets),
+    mutationFn: () => api.startBotAdvanced({
+      amount: Number(tradeAmount) || 0,
+      duration_hours: Number(durationHours) || 0,
+      assets: config.assets,
+      strategy: config.strategy,
+      stop_loss: config.stopLoss,
+      take_profit: config.takeProfit,
+      min_confidence: config.minConfidence,
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["portfolio"] })
       queryClient.invalidateQueries({ queryKey: ["botConfig"] })

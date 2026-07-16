@@ -4,8 +4,6 @@ Fetches news for active tickers, runs Gemini sentiment analysis, and saves to re
 """
 from datetime import datetime
 from backend.database import _get_client
-from backend.models.forecaster import get_sentiment
-from backend.services.news import get_recent_news
 
 def run_research():
     print(f"[{datetime.now()}] Running background research job...")

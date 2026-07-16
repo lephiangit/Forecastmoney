@@ -32,6 +32,10 @@ class StartTradingRequest(BaseModel):
     amount: float
     duration_hours: int
     assets: List[str] = []
+    strategy: str = "balanced"          # conservative | balanced | aggressive
+    stop_loss: float = 5.0              # percent
+    take_profit: float = 15.0           # percent
+    min_confidence: float = 70.0        # percent
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -157,7 +161,11 @@ def start_auto_trading(
     save_bot_config(user_id, {
         "amount": req.amount,
         "end_time": end_time,
-        "assets": req.assets
+        "assets": req.assets,
+        "strategy": req.strategy,
+        "stop_loss": req.stop_loss,
+        "take_profit": req.take_profit,
+        "min_confidence": req.min_confidence,
     })
     
     update_admin_config(user_id, {

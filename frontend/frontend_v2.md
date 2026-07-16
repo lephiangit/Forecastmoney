@@ -41,18 +41,64 @@ Priorities:
 
 # 🧱 TECH STACK
 
-- Next.js App Router
-- TypeScript
-- React
-- Tailwind CSS
-- Framer Motion
-- Zustand (state)
-- React Query (data fetching)
-- TradingView Lightweight Charts (primary)
-- Recharts (secondary)
-- Lucide React (icons)
+- **Language & Framework**: TypeScript, React 19, Next.js 16 (App Router)
+- **Styling**: Tailwind CSS v4, Framer Motion
+- **State Management**: Zustand (Auth & UI state)
+- **Data Fetching**: TanStack Query (React Query)
+- **Charts**: TradingView Lightweight Charts (primary), Recharts (secondary)
+- **Icons**: Lucide React
+- **Supabase**: SDK cho Google OAuth & xác thực người dùng
 
 ---
+
+# 🔌 CONNECTION & SETUP
+
+## Environment Variables ([frontend/.env.local](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/.env.local))
+Tạo file `.env.local` ở thư mục root của frontend:
+```env
+NEXT_PUBLIC_API_URL=https://forecastai-backend-w81j.onrender.com
+NEXT_PUBLIC_SUPABASE_URL=https://xzvminpsnicxqwtnvsxp.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_rFc46goq-BosUQgramtBPQ_TLxhHi3z
+```
+
+## API Connection ([frontend/src/lib/api.ts](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/src/lib/api.ts))
+- **Base URL**: Kết nối FastAPI Backend qua `NEXT_PUBLIC_API_URL`.
+- **JWT Authorization**: Token được lưu tại `localStorage` với key `forecast_ai_token`, tự động gắn vào Header của mỗi API request:
+  ```typescript
+  Authorization: Bearer <token>
+  ```
+- **Session Expiry**: Trả về lỗi 401 từ backend sẽ tự động gọi hàm `logout()` từ Auth Store để xóa token, xóa session và redirect người dùng về `/login?reason=session_expired`.
+
+## Supabase Client ([frontend/src/lib/supabase.ts](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/src/lib/supabase.ts))
+- Khởi tạo client bằng `NEXT_PUBLIC_SUPABASE_URL` và `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Phục vụ chức năng đăng nhập bằng tài khoản Google (OAuth) thông qua hàm `signInWithGoogle`.
+- Callback chuyển hướng về `/auth/callback` trước khi trích xuất JWT token để gửi tới backend.
+
+## Local State & Authentication ([frontend/src/lib/store.ts](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/src/lib/store.ts))
+- **Zustand middleware persist**: Lưu trạng thái phiên làm việc (session state) xuống `localStorage` để duy trì đăng nhập qua reload trang.
+- **`useAuthStore`**:
+  - `user`: Thông tin người dùng (`id`, `name`, `email`, `role` là `"user" | "admin"`).
+  - `login()`: Nhận profile từ backend/Supabase OAuth, lưu token vào `localStorage` và cập nhật thông tin user.
+  - `logout()`: Xóa token JWT khỏi `localStorage` và reset user về `null`.
+
+## Multi-Language & Currency system ([frontend/src/lib/store.ts](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/src/lib/store.ts) & [i18n.ts](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/src/lib/i18n.ts))
+- **`useLangStore`**: Quản lý ngôn ngữ hiện tại (`"en" | "vi"`). Hàm `useT()` dịch tự động nhãn dựa trên từ điển trong `i18n.ts`.
+- **`useCurrencyStore`**: Quản lý đơn vị hiển thị tiền tệ (`"USD" | "VND"`).
+  - Exchange rate mặc định: `1 USD = 25,400 VND`.
+  - Tích hợp hàm format tiền tệ tự động chuyển đổi tỷ giá khi người dùng toggle đơn vị tiền tệ trên UI.
+
+## Charts Data Binding ([frontend/src/components/charts/](file:///c:/Users/ann28/Documents/DuAn/ForecastAI/frontend/src/components/charts/))
+- **TradingView Chart (`chart-advanced.tsx`)**:
+  - Gọi API `/forecast/[ticker]` để lấy dữ liệu lịch sử nến và chuỗi dự báo.
+  - Ánh xạ mảng dữ liệu lịch sử nến (OHLCV) vào chart series dạng Candlestick.
+  - Ánh xạ dải kỳ vọng (P10, P50, P90) thành các đường Line Series nét đứt và vùng Area Series bán trong suốt (Confidence Band).
+- **Portfolio Chart (`chart-portfolio.tsx`)**:
+  - Gọi API `/admin/portfolio/history` (hoặc `/portfolio/history` đối với user thường).
+  - Ánh xạ mảng dữ liệu snapshot tài khoản qua Recharts AreaChart hiển thị tăng trưởng PnL theo thời gian.
+
+---
+
+
 
 # 🌈 GLOBAL DESIGN SYSTEM
 

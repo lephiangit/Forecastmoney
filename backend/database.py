@@ -6,8 +6,14 @@ Price data and forecasts are NEVER saved — always fetched/computed live.
 
 from __future__ import annotations
 import json
+import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except AttributeError:
+    pass
 
 _client = None
 _available: Optional[bool] = None
@@ -440,3 +446,56 @@ def get_all_research_history(
     except Exception as e:
         print(f"DB get_all_research_history error: {e}")
         return []
+
+
+# ── Price Alerts ───────────────────────────────────────────────────────────────
+
+def create_price_alert(user_id: int, ticker: str, condition: str, target_price: float) -> Optional[Dict]:
+    """Create a new price alert. condition: 'above' | 'below'."""
+    c = _get_client()
+    if c is None:
+        return None
+    try:
+        res = c.table("price_alerts").insert({
+            "user_id": user_id,
+            "ticker": ticker.upper(),
+            "condition": condition,
+            "target_price": float(target_price),
+            "is_triggered": False,
+        }).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"DB create_price_alert error: {e}")
+        return None
+
+
+def get_user_alerts(user_id: int) -> List[Dict]:
+    """Get all price alerts for a user."""
+    c = _get_client()
+    if c is None:
+        return []
+    try:
+        res = (c.table("price_alerts")
+               .select("*")
+               .eq("user_id", user_id)
+               .order("created_at", desc=True)
+               .limit(50)
+               .execute())
+        return res.data or []
+    except Exception as e:
+        print(f"DB get_user_alerts error: {e}")
+        return []
+
+
+def delete_price_alert(alert_id: int, user_id: int) -> bool:
+    """Delete a price alert (only if it belongs to the user)."""
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        c.table("price_alerts").delete().eq("id", alert_id).eq("user_id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"DB delete_price_alert error: {e}")
+        return False
+

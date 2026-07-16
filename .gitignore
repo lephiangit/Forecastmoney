@@ -54,4 +54,7 @@ design_rule/
 
 # Admin credentials
 account.txt
-apikey.txt  
+apikey.txt
+
+# Internal docs
+noibo.md

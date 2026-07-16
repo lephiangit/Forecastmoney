@@ -176,3 +176,73 @@ export interface Notification {
   is_read: boolean
   created_at: string
 }
+
+export interface PriceAlert {
+  id: number
+  user_id: number
+  ticker: string
+  condition: "above" | "below"
+  target_price: number
+  is_triggered: boolean
+  created_at: string
+  triggered_at: string | null
+}
+
+export interface BacktestTrade {
+  date: string
+  action: "BUY" | "SELL"
+  price: number
+  quantity: number
+  total: number
+  balance_after: number
+  reason: string
+}
+
+export interface BacktestSummary {
+  ticker: string
+  strategy: string
+  days_back: number
+  initial_balance: number
+  final_balance: number
+  total_pnl: number
+  total_pnl_pct: number
+  total_trades: number
+  win_trades: number
+  loss_trades: number
+  win_rate: number
+  max_drawdown: number
+  sharpe_ratio: number
+}
+
+export interface BacktestResult {
+  summary: BacktestSummary
+  trades: BacktestTrade[]
+  equity_curve: { date: string; balance: number }[]
+}
+
+export interface TickerOHLCV {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  rsi?: number
+  macd?: number
+  macd_signal?: number
+  bb_upper?: number
+  bb_lower?: number
+  ma20?: number
+  ma50?: number
+  atr?: number
+}
+
+export interface TickerDetail {
+  ticker: string
+  name: string
+  period: string
+  live: MarketAsset | null
+  ohlcv: TickerOHLCV[]
+  total_bars: number
+}
+

@@ -99,6 +99,8 @@ CREATE TABLE user_watchlists (
 CREATE INDEX idx_research_ticker_time ON research_reports(ticker, created_at DESC);
 CREATE INDEX idx_forecast_cache_lookup ON forecast_cache(ticker, days, created_at DESC);
 CREATE INDEX idx_user_watchlists_user_id ON user_watchlists(user_id);
+CREATE INDEX idx_price_alerts_user_id ON price_alerts(user_id);
+CREATE INDEX idx_price_alerts_untriggered ON price_alerts(ticker) WHERE is_triggered = FALSE;
 
 -- 4. BẢNG THÔNG BÁO (NOTIFICATIONS)
 CREATE TABLE notifications (
@@ -108,6 +110,18 @@ CREATE TABLE notifications (
     message TEXT NOT NULL,
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. BẢNG CẢNH BÁO GIÁ (PRICE ALERTS)
+CREATE TABLE price_alerts (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    ticker VARCHAR(20) NOT NULL,
+    condition VARCHAR(10) CHECK (condition IN ('above', 'below')),
+    target_price DECIMAL(18,4) NOT NULL,
+    is_triggered BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    triggered_at TIMESTAMPTZ
 );
 
 -- 5. CẤP LẠI TOÀN BỘ QUYỀN TRUY CẬP (SAU KHI BẢNG ĐÃ TỒN TẠI)

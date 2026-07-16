@@ -17,6 +17,8 @@ import { ActionBadge } from "@/components/ui/tags"
 import { cn } from "@/lib/utils"
 import type { Holding } from "@/lib/types"
 
+import { useRealtimePrices } from "@/lib/use-realtime-prices"
+
 export default function DashboardPage() {
   const t = useT()
   const { user } = useAuthStore()
@@ -24,6 +26,9 @@ export default function DashboardPage() {
   const leaderboardQ = useQuery({ queryKey: ["leaderboard"], queryFn: api.getLeaderboard })
   const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, enabled: !!user })
   const marketsQ = useQuery({ queryKey: ["markets"], queryFn: api.getMarkets, refetchInterval: 30000 })
+
+  const topTickers = marketsQ.data ? marketsQ.data.slice(0, 5).map((a) => a.ticker) : []
+  const { prices: rtPrices } = useRealtimePrices(topTickers)
 
   const p = portfolioQ.data
 
@@ -191,7 +196,10 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
             {marketsQ.data.slice(0, 5).map((a, i) => {
-              const pos = a.changePercent >= 0
+              const rt = rtPrices[a.ticker]
+              const currentPrice = rt?.price ?? a.price
+              const changePercent = rt?.change_pct ?? a.changePercent
+              const pos = changePercent >= 0
               return (
                 <motion.div
                   key={a.ticker}
@@ -202,9 +210,9 @@ export default function DashboardPage() {
                   <Link href={`/forecast/${a.ticker}`} className="block rounded-lg border border-border bg-card p-3 transition-colors hover:border-muted-foreground/40">
                     <div className="flex items-center justify-between">
                       <span className="font-mono text-sm font-bold text-card-foreground">{a.ticker}</span>
-                      <span className={cn("font-mono text-xs", pos ? "text-positive" : "text-negative")}>{formatPercent(a.changePercent)}</span>
+                      <span className={cn("font-mono text-xs", pos ? "text-positive" : "text-negative")}>{formatPercent(changePercent)}</span>
                     </div>
-                    <p className="mt-1 font-mono text-sm text-card-foreground">{formatCurrency(a.price, { currency: a.ticker })}</p>
+                    <p className="mt-1 font-mono text-sm text-card-foreground">{formatCurrency(currentPrice, { currency: a.ticker })}</p>
                     <div className="mt-2">
                       <Sparkline data={a.sparkline} positive={pos} width={140} height={32} />
                     </div>

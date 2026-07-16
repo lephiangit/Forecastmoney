@@ -126,7 +126,7 @@ export default function ForecastIndexPage() {
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <div className="rounded border border-border bg-secondary/50 p-2">
-                      <p className="text-[10px] uppercase text-muted-foreground">{t("currentPrice")}</p>
+                      <p className="text-[10px] uppercase text-muted-foreground">{t("price")}</p>
                       <p className="font-mono text-sm font-semibold text-card-foreground">{formatCurrency(f.currentPrice, { currency: f.ticker })}</p>
                     </div>
                     <div className="rounded border border-border bg-secondary/50 p-2">

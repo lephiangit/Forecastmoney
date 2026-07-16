@@ -13,6 +13,9 @@ import { Skeleton, ErrorCard } from "@/components/ui/states"
 import { ConfidencePill } from "@/components/ui/tags"
 import { CountUp } from "@/components/ui/count-up"
 import { cn } from "@/lib/utils"
+import { TechnicalChart } from "@/components/charts/technical-chart"
+import { PriceAlerts } from "@/components/ui/price-alerts"
+
 
 export default function ForecastPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = use(params)
@@ -90,6 +93,20 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
             </div>
             <ForecastChart forecast={f} />
           </section>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-3">
+            <section className="lg:col-span-2 rounded-lg border border-border bg-card p-4 sm:p-5">
+              <h2 className="mb-4 font-semibold text-card-foreground flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                {t("technicalAnalysis")}
+              </h2>
+              <TechnicalChart ticker={ticker} />
+            </section>
+            
+            <div className="space-y-6">
+              <PriceAlerts defaultTicker={ticker} />
+            </div>
+          </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
             <SummaryCard

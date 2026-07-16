@@ -54,7 +54,7 @@ export function ResearchChart({ sentiment, confidence }: ResearchChartProps) {
               ))}
             </Pie>
             <Tooltip 
-              formatter={(val: number) => [`${val}%`, t("confidence")]} 
+              formatter={(val: any) => [`${val}%`, t("confidence")]} 
               contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
               itemStyle={{ color: 'hsl(var(--foreground))' }}
             />
@@ -67,7 +67,7 @@ export function ResearchChart({ sentiment, confidence }: ResearchChartProps) {
             {confidence}%
           </span>
           <span className="text-xs font-semibold text-muted-foreground">
-            {t(sentiment)}
+            {t(sentiment.toLowerCase() as any)}
           </span>
         </div>
       </div>

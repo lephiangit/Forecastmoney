@@ -96,3 +96,50 @@ async def create_notification(req: NotificationRequest, admin: dict = Depends(ge
         return {"success": True, "notification": res.data[0] if res.data else None}
     except Exception as e:
         raise HTTPException(500, f"Error creating notification: {str(e)}")
+
+
+# ── Price Alerts ──────────────────────────────────────────────────────────────
+
+class PriceAlertRequest(BaseModel):
+    ticker: str
+    condition: str  # "above" | "below"
+    target_price: float
+
+
+@router.post("/alerts")
+async def create_alert(req: PriceAlertRequest, user: dict = Depends(get_current_user)):
+    """Create a new price alert."""
+    if req.condition not in ("above", "below"):
+        raise HTTPException(400, "condition must be 'above' or 'below'")
+    if req.target_price <= 0:
+        raise HTTPException(400, "target_price must be positive")
+
+    from backend.database import create_price_alert
+    alert = create_price_alert(
+        user_id=user["user_id"],
+        ticker=req.ticker.upper(),
+        condition=req.condition,
+        target_price=req.target_price,
+    )
+    if alert is None:
+        raise HTTPException(500, "Failed to create alert")
+    return {"success": True, "alert": alert}
+
+
+@router.get("/alerts")
+async def get_alerts(user: dict = Depends(get_current_user)):
+    """Get all price alerts for the current user."""
+    from backend.database import get_user_alerts
+    alerts = get_user_alerts(user["user_id"])
+    return {"success": True, "alerts": alerts}
+
+
+@router.delete("/alerts/{alert_id}")
+async def remove_alert(alert_id: int, user: dict = Depends(get_current_user)):
+    """Delete a price alert."""
+    from backend.database import delete_price_alert
+    success = delete_price_alert(alert_id, user["user_id"])
+    if not success:
+        raise HTTPException(404, "Alert not found or already deleted")
+    return {"success": True}
+

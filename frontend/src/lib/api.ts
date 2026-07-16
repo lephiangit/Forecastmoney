@@ -576,7 +576,65 @@ export const api = {
     } catch (e) {
       return { reply: "Lỗi kết nối. Vui lòng kiểm tra lại mạng!" }
     }
-  }
+  },
+
+  // ── Backtesting ──────────────────────────────────────────────────────────
+
+  async runBacktest(params: {
+    ticker: string
+    days_back: number
+    strategy: string
+    initial_balance: number
+    trade_amount: number
+  }): Promise<import("./types").BacktestResult | null> {
+    return tryFetch<import("./types").BacktestResult>("/backtest/run", {
+      method: "POST",
+      body: JSON.stringify(params),
+    })
+  },
+
+  // ── Technical Data ───────────────────────────────────────────────────────
+
+  async getTickerWithIndicators(ticker: string, period: string = "1y"): Promise<import("./types").TickerDetail | null> {
+    return tryFetch<import("./types").TickerDetail>(`/market/ticker/${ticker}?period=${period}&indicators=true`)
+  },
+
+  // ── Price Alerts ─────────────────────────────────────────────────────────
+
+  async getPriceAlerts(): Promise<import("./types").PriceAlert[]> {
+    const res = await tryFetch<{ alerts: import("./types").PriceAlert[] }>("/alerts")
+    return res?.alerts || []
+  },
+
+  async createPriceAlert(ticker: string, condition: "above" | "below", targetPrice: number): Promise<boolean> {
+    const res = await tryFetch<{ success: boolean }>("/alerts", {
+      method: "POST",
+      body: JSON.stringify({ ticker, condition, target_price: targetPrice }),
+    })
+    return res?.success || false
+  },
+
+  async deletePriceAlert(alertId: number): Promise<boolean> {
+    const res = await tryFetch<{ success: boolean }>(`/alerts/${alertId}`, { method: "DELETE" })
+    return res?.success || false
+  },
+
+  // ── Start Bot (extended) ─────────────────────────────────────────────────
+
+  async startBotAdvanced(params: {
+    amount: number
+    duration_hours: number
+    assets: string[]
+    strategy: string
+    stop_loss: number
+    take_profit: number
+    min_confidence: number
+  }) {
+    return tryFetch("/admin/trading/start", {
+      method: "POST",
+      body: JSON.stringify(params),
+    })
+  },
 }
 
 
