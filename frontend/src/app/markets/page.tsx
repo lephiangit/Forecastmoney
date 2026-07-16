@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
@@ -32,6 +32,29 @@ export default function MarketsPage() {
   const { user } = useAuthStore()
   const { data: watchlist = [], refetch: refetchWatchlist } = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist, enabled: !!user })
 
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+
+  useEffect(() => {
+    const delayDebounce = setTimeout(async () => {
+      if (search.trim().length >= 2) {
+        setIsSearching(true)
+        try {
+          const results = await api.searchTickers(search)
+          setSearchResults(results)
+        } catch {
+          setSearchResults([])
+        } finally {
+          setIsSearching(false)
+        }
+      } else {
+        setSearchResults([])
+      }
+    }, 500)
+
+    return () => clearTimeout(delayDebounce)
+  }, [search])
+
   const filtered = (data ?? [])
     .filter((a) => filter === "all" || a.category === filter || (filter === "watchlist" && watchlist.includes(a.ticker)))
     .filter((a) => a.ticker.toLowerCase().includes(search.toLowerCase()) || a.name.toLowerCase().includes(search.toLowerCase()))
@@ -44,6 +67,7 @@ export default function MarketsPage() {
       await api.addWatchlist(ticker)
     }
     refetchWatchlist()
+    setTimeout(() => refetch(), 100) // Trigger refetch to update prices list immediately
   }
 
   return (
@@ -146,6 +170,54 @@ export default function MarketsPage() {
           </table>
           {filtered.length === 0 && (
             <p className="py-10 text-center text-sm text-muted-foreground">No assets found.</p>
+          )}
+        </div>
+      )}
+
+      {/* yfinance Search Results Section */}
+      {search.trim().length >= 2 && (
+        <div className="mt-6 rounded-lg border border-border bg-card p-5">
+          <h3 className="mb-4 font-semibold text-card-foreground flex items-center gap-2">
+            <Search className="h-4.5 w-4.5 text-primary" />
+            <span>Kết quả tìm kiếm yfinance cho "{search}"</span>
+          </h3>
+          
+          {isSearching ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Đang tìm kiếm trên yfinance...</div>
+          ) : searchResults.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Không tìm thấy mã nào tương tự trên yfinance.</div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {searchResults.map((res) => {
+                const isStarred = watchlist.includes(res.symbol)
+                return (
+                  <div key={res.symbol} className="flex items-center justify-between rounded-md border border-border/50 bg-background p-3 hover:border-primary/40 transition-colors">
+                    <div className="flex-1 min-w-0 pr-3">
+                      <Link href={`/forecast/${res.symbol}`} className="block group">
+                        <span className="font-mono font-bold text-sm text-primary block truncate group-hover:underline">{res.symbol}</span>
+                        <span className="text-xs text-card-foreground block truncate font-medium">{res.name}</span>
+                        <span className="text-[10px] text-muted-foreground block truncate font-mono uppercase mt-0.5">{res.exchange} · {res.type}</span>
+                      </Link>
+                    </div>
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault()
+                        if (isStarred) {
+                          await api.removeWatchlist(res.symbol)
+                        } else {
+                          await api.addWatchlist(res.symbol)
+                        }
+                        refetchWatchlist()
+                        setTimeout(() => refetch(), 100) // Refresh markets page overview prices
+                      }}
+                      className="rounded p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                    >
+                      <Star className={cn("h-4 w-4", isStarred && "fill-primary text-primary")} />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
           )}
         </div>
       )}

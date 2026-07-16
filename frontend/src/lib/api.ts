@@ -82,7 +82,23 @@ const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms))
 
 export const api = {
   async getMarkets(): Promise<MarketAsset[]> {
-    const res = await tryFetch<{ data: any[] }>("/market/overview")
+    let watchlistTickers: string[] = []
+    try {
+      const watchlist = await api.getWatchlist()
+      if (watchlist && watchlist.length > 0) {
+        watchlistTickers = [...watchlist]
+      }
+    } catch {
+      // Ignore if not logged in
+    }
+
+    const defaultTickers = [
+      "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "ADA-USD", "XRP-USD",
+      "DOGE-USD", "AVAX-USD", "AAPL", "NVDA", "TSLA", "FPT.VN", "HPG.VN", "VCB.VN"
+    ]
+
+    const allTickers = Array.from(new Set([...defaultTickers, ...watchlistTickers])).slice(0, 30)
+    const res = await tryFetch<{ data: any[] }>(`/market/overview?tickers=${allTickers.join(",")}`)
     if (res?.data) {
       return res.data.map((d: any) => ({
         ...d,
@@ -93,13 +109,17 @@ export const api = {
         sparkline: d.sparkline || [],
       }))
     }
-    // Temporarily return MARKET_ASSETS as fallback so UI can show data without backend
     return MARKET_ASSETS
   },
 
   async getAsset(ticker: string): Promise<MarketAsset | undefined> {
     const res = await tryFetch<MarketAsset>(`/market/live/${ticker}`)
     return res || undefined
+  },
+
+  async searchTickers(query: string): Promise<{ symbol: string; name: string; exchange: string; type: string }[]> {
+    const res = await tryFetch<{ results: any[] }>(`/market/search?q=${encodeURIComponent(query)}`)
+    return res?.results || []
   },
 
   async getForecasts(): Promise<Forecast[]> {
@@ -561,20 +581,20 @@ export const api = {
     return res.json()
   },
 
-  async askCopilot(message: string, history: { role: "user" | "assistant"; content: string }[] = []): Promise<{ reply: string; href?: string }> {
+  async askCopilot(message: string, history: { role: "user" | "assistant"; content: string }[] = [], lang: "en" | "vi" = "vi"): Promise<{ reply: string; href?: string }> {
     if (!BASE_URL) return { reply: "API URL not configured" }
     try {
       const res = await fetch(`${BASE_URL}/chat/copilot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history })
+        body: JSON.stringify({ message, history, lang })
       })
       if (!res.ok) {
-        return { reply: "Xin lỗi ní, hiện tại tui không thể kết nối tới server. Ní thử lại sau nhé!" }
+        return { reply: lang === "vi" ? "Xin lỗi bạn, hiện tại tôi không thể kết nối tới server. Bạn thử lại sau nhé!" : "Sorry, I cannot connect to the server right now. Please try again later!" }
       }
       return await res.json()
     } catch (e) {
-      return { reply: "Lỗi kết nối rồi ní ơi. Vui lòng kiểm tra lại mạng!" }
+      return { reply: lang === "vi" ? "Lỗi kết nối rồi. Vui lòng kiểm tra lại mạng!" : "Connection error. Please check your network!" }
     }
   },
 

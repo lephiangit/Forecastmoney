@@ -99,8 +99,6 @@ CREATE TABLE user_watchlists (
 CREATE INDEX idx_research_ticker_time ON research_reports(ticker, created_at DESC);
 CREATE INDEX idx_forecast_cache_lookup ON forecast_cache(ticker, days, created_at DESC);
 CREATE INDEX idx_user_watchlists_user_id ON user_watchlists(user_id);
-CREATE INDEX idx_price_alerts_user_id ON price_alerts(user_id);
-CREATE INDEX idx_price_alerts_untriggered ON price_alerts(ticker) WHERE is_triggered = FALSE;
 
 -- 4. BẢNG THÔNG BÁO (NOTIFICATIONS)
 CREATE TABLE notifications (
@@ -123,6 +121,9 @@ CREATE TABLE price_alerts (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     triggered_at TIMESTAMPTZ
 );
+
+CREATE INDEX idx_price_alerts_user_id ON price_alerts(user_id);
+CREATE INDEX idx_price_alerts_untriggered ON price_alerts(ticker) WHERE is_triggered = FALSE;
 
 -- 5. CẤP LẠI TOÀN BỘ QUYỀN TRUY CẬP (SAU KHI BẢNG ĐÃ TỒN TẠI)
 -- (Khắc phục triệt để lỗi đăng ký 500 do backend không có quyền INSERT)

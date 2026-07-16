@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { Sparkles, X, ArrowUp, Bot } from "lucide-react"
-import { useT } from "@/lib/store"
+import { useT, useLangStore } from "@/lib/store"
 import { MARKET_ASSETS } from "@/lib/data"
 
 interface Msg {
@@ -18,14 +18,24 @@ import { api } from "@/lib/api"
 
 export function AiCopilot() {
   const t = useT()
+  const lang = useLangStore((s) => s.lang)
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", text: "Xin chào! Tôi là trợ lý AI của bạn. Bạn muốn tôi phân tích hoặc dự báo mã nào hôm nay?" },
-  ])
+  const [messages, setMessages] = useState<Msg[]>([])
   const endRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setMessages([
+      {
+        role: "assistant",
+        text: lang === "vi"
+          ? "Xin chào! Tôi là trợ lý AI của bạn. Bạn muốn tôi phân tích hoặc dự báo mã nào hôm nay?"
+          : "Hello! I am your AI assistant. Which asset would you like me to analyze or forecast today?"
+      }
+    ])
+  }, [lang])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -47,11 +57,19 @@ export function AiCopilot() {
     setIsLoading(true)
     
     try {
-      const { reply, href } = await api.askCopilot(value, history)
+      const { reply, href } = await api.askCopilot(value, history, lang)
       setMessages((m) => [...m, { role: "assistant", text: reply }])
       if (href) setTimeout(() => router.push(href), 1000)
     } catch (e) {
-      setMessages((m) => [...m, { role: "assistant", text: "Xin lỗi ní, đã có lỗi xảy ra rồi. Ní thử lại nhé!" }])
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          text: lang === "vi"
+            ? "Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại!"
+            : "Sorry, an error occurred. Please try again!"
+        }
+      ])
     } finally {
       setIsLoading(false)
     }
