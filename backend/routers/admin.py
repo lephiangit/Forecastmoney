@@ -148,7 +148,7 @@ def start_auto_trading(
     user=Depends(get_current_user),
 ):
     """Start auto-trading for the current user."""
-    from backend.database import save_bot_config, get_admin_config
+    from backend.database import save_bot_config, get_admin_config, _get_client
     from datetime import datetime, timedelta
     
     user_id = user["user_id"]
@@ -168,10 +168,26 @@ def start_auto_trading(
         "min_confidence": req.min_confidence,
     })
     
+    # Reset active portfolio simulation stats to start clean with the requested capital amount
     update_admin_config(user_id, {
         "is_running": True,
         "started_at": datetime.now().isoformat(),
+        "initial_balance": req.amount,
+        "current_balance": req.amount,
+        "total_pnl": 0.0,
+        "win_trades": 0,
+        "loss_trades": 0,
     })
+    
+    # Delete previous trades for this user to start fresh
+    c = _get_client()
+    if c:
+        try:
+            c.table("paper_trades").delete().eq("user_id", user_id).execute()
+            # Also reset cached portfolio snapshots if any
+            c.table("portfolio_snapshots").delete().eq("user_id", user_id).execute()
+        except Exception as e:
+            print(f"Error resetting user trade tables on start: {e}")
     
     # Trigger an immediate run in the background
     from backend.cron_auto_trader import run_auto_trade

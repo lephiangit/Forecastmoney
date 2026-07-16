@@ -14,17 +14,17 @@ import type { BacktestResult } from "@/lib/types"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts"
 
 const PERIODS = [
-  { value: 30, label: "30 days" },
-  { value: 60, label: "60 days" },
-  { value: 90, label: "90 days" },
-  { value: 180, label: "6 months" },
-  { value: 365, label: "1 year" },
+  { value: 30, key: "days30" },
+  { value: 60, key: "days60" },
+  { value: 90, key: "days90" },
+  { value: 180, key: "months6" },
+  { value: 365, key: "year1" },
 ]
 
 const STRATEGIES = [
-  { value: "conservative", label: "Conservative", color: "text-blue-400" },
-  { value: "balanced", label: "Balanced", color: "text-primary" },
-  { value: "aggressive", label: "Aggressive", color: "text-orange-400" },
+  { value: "conservative", color: "text-blue-400" },
+  { value: "balanced", color: "text-primary" },
+  { value: "aggressive", color: "text-orange-400" },
 ]
 
 export default function BacktestPage() {
@@ -44,7 +44,7 @@ export default function BacktestPage() {
 
   return (
     <div>
-      <PageHeader title={t("backtesting")} subtitle="Simulate AI strategies on historical data" />
+      <PageHeader title={t("backtesting")} subtitle={t("backtestSubtitle")} />
 
       {/* Config Form */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-lg border border-border bg-card p-5">
@@ -66,7 +66,7 @@ export default function BacktestPage() {
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {PERIODS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
+                <option key={p.value} value={p.value}>{t(p.key as any)}</option>
               ))}
             </select>
           </div>
@@ -78,7 +78,7 @@ export default function BacktestPage() {
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {STRATEGIES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+                <option key={s.value} value={s.value}>{t(s.value as any)}</option>
               ))}
             </select>
           </div>

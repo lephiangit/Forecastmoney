@@ -173,7 +173,9 @@ export const api = {
           currentPrice,
           targetPrice,
           horizonDays: real.days || 30,
-          confidence: real?.research?.confidence || (70 + Math.floor(Math.random() * 20)),
+          confidence: real?.research?.confidence
+            ? (real.research.confidence <= 1 ? Math.round(real.research.confidence * 100) : real.research.confidence)
+            : (70 + Math.floor(Math.random() * 20)),
           direction,
           expectedReturn,
           model: real.model || "TFT",
