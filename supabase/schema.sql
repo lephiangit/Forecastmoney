@@ -95,6 +95,28 @@ CREATE TABLE user_watchlists (
     UNIQUE(user_id, ticker)
 );
 
+CREATE TABLE bot_configs (
+    id             BIGSERIAL PRIMARY KEY,
+    user_id        BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    amount         DECIMAL(18,4) NOT NULL DEFAULT 500.0,
+    end_time       TIMESTAMPTZ,
+    assets         JSONB DEFAULT '[]',
+    strategy       VARCHAR(50) DEFAULT 'balanced',
+    stop_loss      DECIMAL(5,2) DEFAULT 5.0,
+    take_profit    DECIMAL(5,2) DEFAULT 15.0,
+    min_confidence DECIMAL(5,2) DEFAULT 70.0,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE user_profiles (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    name        VARCHAR(255) NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 3. TẠO INDEX ĐỂ TĂNG TỐC ĐỘ ĐỌC DỮ LIỆU
 CREATE INDEX idx_research_ticker_time ON research_reports(ticker, created_at DESC);
 CREATE INDEX idx_forecast_cache_lookup ON forecast_cache(ticker, days, created_at DESC);

@@ -98,8 +98,8 @@ def _call_groq(prompt: str) -> Optional[str]:
             return None
 
 
-def _parse_gemini_json(text: str) -> Optional[Dict]:
-    """Extract JSON from Gemini response text."""
+def _parse_groq_json(text: str) -> Optional[Dict]:
+    """Extract JSON from Groq response text."""
     match = re.search(r'\{[\s\S]*\}', text)
     if match:
         try:
@@ -149,8 +149,8 @@ def _keyword_sentiment(headlines: List[Dict]) -> Dict:
     }
 
 
-def _gemini_analysis(ticker: str, headlines: List[Dict], price_info: str) -> Optional[Dict]:
-    """Full Gemini-powered market analysis."""
+def _groq_analysis(ticker: str, headlines: List[Dict], price_info: str) -> Optional[Dict]:
+    """Full Groq-powered market analysis."""
     headlines_text = "\n".join([
         f"- [{h['source']}] {h['title']}: {h.get('summary','')[:150]}"
         for h in headlines[:20]
@@ -179,7 +179,7 @@ Chỉ trả về JSON, không thêm text nào khác."""
     text = _call_groq(prompt)
     if text is None:
         return None
-    return _parse_gemini_json(text)
+    return _parse_groq_json(text)
 
 
 # ── PUBLIC API ────────────────────────────────────────────────────────────────
@@ -207,10 +207,10 @@ def analyze_market(ticker: str, price_info: str = "") -> Dict:
             "price_target_bias": "SIDEWAYS",
         }
     else:
-        analysis = _gemini_analysis(ticker, headlines, price_info)
+        analysis = _groq_analysis(ticker, headlines, price_info)
         if analysis is not None:
             result = analysis
-            source = "gemini"
+            source = "groq"
         else:
             result = _keyword_sentiment(headlines)
             source = "keyword"

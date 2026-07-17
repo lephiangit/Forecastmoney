@@ -239,32 +239,72 @@ def get_bot_config(user_id: int) -> Optional[Dict]:
     c = _get_client()
     if c is None: return None
     try:
-        res = c.table("forecast_cache").select("response_json").eq("ticker", "USER_BOT_CONFIG").eq("days", user_id).order("created_at", desc=True).limit(1).execute()
-        return res.data[0]["response_json"] if res.data else None
-    except: return None
+        res = c.table("bot_configs").select("*").eq("user_id", user_id).limit(1).execute()
+        if res.data:
+            row = res.data[0]
+            return {
+                "amount": float(row["amount"]),
+                "end_time": row["end_time"],
+                "assets": row["assets"],
+                "strategy": row["strategy"],
+                "stop_loss": float(row["stop_loss"]),
+                "take_profit": float(row["take_profit"]),
+                "min_confidence": float(row["min_confidence"])
+            }
+        return None
+    except Exception as e:
+        print(f"DB get_bot_config error: {e}")
+        return None
 
 def save_bot_config(user_id: int, config: Dict) -> bool:
     c = _get_client()
     if c is None: return False
     try:
-        c.table("forecast_cache").insert({"ticker": "USER_BOT_CONFIG", "days": user_id, "response_json": config}).execute()
+        data = {
+            "user_id": user_id,
+            "amount": float(config.get("amount", 500)),
+            "end_time": config.get("end_time"),
+            "assets": config.get("assets", []),
+            "strategy": config.get("strategy", "balanced"),
+            "stop_loss": float(config.get("stop_loss", 5.0)),
+            "take_profit": float(config.get("take_profit", 15.0)),
+            "min_confidence": float(config.get("min_confidence", 70.0)),
+            "updated_at": datetime.now().isoformat()
+        }
+        existing = c.table("bot_configs").select("id").eq("user_id", user_id).execute()
+        if existing.data:
+            c.table("bot_configs").update(data).eq("user_id", user_id).execute()
+        else:
+            c.table("bot_configs").insert(data).execute()
         return True
-    except: return False
+    except Exception as e:
+        print(f"DB save_bot_config error: {e}")
+        return False
 
 def get_user_profile(user_id: int) -> Dict:
     c = _get_client()
     if c is None: return {}
     try:
-        res = c.table("forecast_cache").select("response_json").eq("ticker", "USER_PROFILE").eq("days", user_id).order("created_at", desc=True).limit(1).execute()
-        return res.data[0]["response_json"] if res.data else {}
-    except: return {}
+        res = c.table("user_profiles").select("name").eq("user_id", user_id).limit(1).execute()
+        return res.data[0] if res.data else {}
+    except Exception as e:
+        print(f"DB get_user_profile error: {e}")
+        return {}
 
 def save_user_profile(user_id: int, profile: Dict) -> bool:
     c = _get_client()
     if c is None: return False
     try:
-        c.table("forecast_cache").delete().eq("ticker", "USER_PROFILE").eq("days", user_id).execute()
-        c.table("forecast_cache").insert({"ticker": "USER_PROFILE", "days": user_id, "response_json": profile}).execute()
+        data = {
+            "user_id": user_id,
+            "name": profile.get("name", ""),
+            "updated_at": datetime.now().isoformat()
+        }
+        existing = c.table("user_profiles").select("id").eq("user_id", user_id).execute()
+        if existing.data:
+            c.table("user_profiles").update(data).eq("user_id", user_id).execute()
+        else:
+            c.table("user_profiles").insert(data).execute()
         return True
     except Exception as e:
         print(f"DB save_user_profile error: {e}")

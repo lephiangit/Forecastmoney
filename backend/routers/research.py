@@ -39,13 +39,13 @@ def _parse_tags(val) -> list:
             parsed = json.loads(val)
             if isinstance(parsed, list):
                 return parsed
-        except:
+        except Exception:
             pass
         try:
             parsed = ast.literal_eval(val)
             if isinstance(parsed, list):
                 return parsed
-        except:
+        except Exception:
             pass
         return [t.strip() for t in val.split(",") if t.strip()]
     if isinstance(val, list):

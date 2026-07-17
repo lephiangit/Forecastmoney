@@ -4,6 +4,7 @@ main.py – FastAPI application entry point.
 
 import os
 import sys
+from datetime import datetime
 from contextlib import asynccontextmanager
 
 # Ensure backend/ is importable
@@ -143,7 +144,6 @@ def _check_price_alerts():
                 triggered = True
             
             if triggered:
-                from datetime import datetime
                 # Mark alert as triggered
                 c.table("price_alerts").update({
                     "is_triggered": True,

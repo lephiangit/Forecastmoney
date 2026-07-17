@@ -7,7 +7,7 @@ import hmac
 import hashlib
 import base64
 import json
-from fastapi import APIRouter, HTTPException, Depends, Header, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Header, BackgroundTasks, Request
 from pydantic import BaseModel
 from typing import Optional
 
@@ -85,8 +85,8 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
             c = _get_client()
             if c:
                 c.table("users").update({"last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).eq("id", payload["user_id"]).execute()
-        except:
-            pass
+        except Exception as e:
+            print(f"Error updating last_active: {e}")
         return payload
         
     raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -279,7 +279,7 @@ class ForgotPasswordRequest(BaseModel):
     email: str
 
 @router.post("/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest):
+async def forgot_password(req: ForgotPasswordRequest, request: Request):
     """Trigger Supabase to send a magic link/password reset email."""
     try:
         from backend.database import _get_client
@@ -287,11 +287,17 @@ async def forgot_password(req: ForgotPasswordRequest):
         if not supabase:
             raise HTTPException(503, "Database unavailable")
             
+        # Determine redirect origin dynamically to handle CORS wildcard *
+        origin = request.headers.get("origin")
+        if not origin or origin == "*":
+            origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip() and o.strip() != "*"]
+            origin = origins[0] if origins else "http://localhost:3000"
+
         # Send password reset email via Supabase Auth
         # Note: frontend needs to handle the callback at /auth/reset-password
         res = supabase.auth.reset_password_email(
             req.email,
-            options={"redirect_to": f"{settings.allowed_origins.split(',')[0]}/auth/reset-password"}
+            options={"redirect_to": f"{origin}/auth/reset-password"}
         )
         return {"success": True, "message": "Password reset email sent (if account exists)"}
     except Exception as e:
