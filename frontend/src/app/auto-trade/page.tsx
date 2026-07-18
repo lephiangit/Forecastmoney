@@ -35,9 +35,9 @@ const DEFAULT_CONFIG: AutoTradeConfig = {
 export default function AutoTradePage() {
   const queryClient = useQueryClient()
   const t = useT()
-  const statsQ = useQuery({ queryKey: ["autoTradeStats"], queryFn: api.getAutoTradeStats, refetchInterval: 5000 })
-  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio, refetchInterval: 5000 })
-  const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, refetchInterval: 5000 })
+  const statsQ = useQuery({ queryKey: ["autoTradeStats"], queryFn: api.getAutoTradeStats, refetchInterval: 15000 })
+  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio, refetchInterval: 15000 })
+  const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, refetchInterval: 15000 })
   const botConfigQ = useQuery({ queryKey: ["botConfig"], queryFn: api.getBotConfig })
   const watchlistQ = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist })
 

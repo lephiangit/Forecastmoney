@@ -20,8 +20,8 @@ const ALLOC_COLORS = ["#fcd535", "#0ecb81", "#3861fb", "#f6465d", "#a78bfa"]
 
 export default function PortfolioPage() {
   const t = useT()
-  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio, refetchInterval: 5000 })
-  const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, refetchInterval: 5000 })
+  const portfolioQ = useQuery({ queryKey: ["portfolio"], queryFn: api.getPortfolio, refetchInterval: 15000 })
+  const txQ = useQuery({ queryKey: ["transactions"], queryFn: api.getTransactions, refetchInterval: 15000 })
   const [tab, setTab] = useState<"holdings" | "transactions">("holdings")
   const p = portfolioQ.data
 

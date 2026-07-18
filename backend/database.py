@@ -415,24 +415,12 @@ def save_portfolio_snapshot(user_id: int, balance: float, total_pnl: float) -> b
         return False
     try:
         today = datetime.now().date().isoformat()
-        # Try to update existing snapshot for today
-        existing = (c.table("portfolio_snapshots")
-                    .select("id")
-                    .eq("user_id", user_id)
-                    .eq("snapshot_date", today)
-                    .execute())
-        if existing.data:
-            c.table("portfolio_snapshots").update({
-                "balance": balance,
-                "total_pnl": total_pnl,
-            }).eq("id", existing.data[0]["id"]).execute()
-        else:
-            c.table("portfolio_snapshots").insert({
-                "user_id": user_id,
-                "balance": balance,
-                "total_pnl": total_pnl,
-                "snapshot_date": today,
-            }).execute()
+        c.table("portfolio_snapshots").upsert({
+            "user_id": user_id,
+            "balance": balance,
+            "total_pnl": total_pnl,
+            "snapshot_date": today,
+        }, on_conflict="user_id,snapshot_date").execute()
         return True
     except Exception as e:
         print(f"DB save_portfolio_snapshot error: {e}")

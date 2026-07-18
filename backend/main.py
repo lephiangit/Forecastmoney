@@ -297,6 +297,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,  # Cache preflight OPTIONS requests in browser for 24h to reduce request count
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────

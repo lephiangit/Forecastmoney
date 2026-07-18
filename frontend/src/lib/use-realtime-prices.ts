@@ -22,6 +22,13 @@ export function useRealtimePrices(tickers: string[]) {
   const retriesRef = useRef(0)
   const maxRetries = 5
 
+  const tickersRef = useRef<string[]>(tickers)
+  const tickersStr = JSON.stringify(tickers)
+
+  useEffect(() => {
+    tickersRef.current = tickers
+  }, [tickersStr])
+
   const connect = useCallback(() => {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL
     if (!baseUrl) return
@@ -37,7 +44,7 @@ export function useRealtimePrices(tickers: string[]) {
         setConnected(true)
         retriesRef.current = 0
         // Subscribe to tickers
-        ws.send(JSON.stringify({ type: "subscribe", tickers }))
+        ws.send(JSON.stringify({ type: "subscribe", tickers: tickersRef.current }))
       }
 
       ws.onmessage = (event) => {
@@ -68,7 +75,7 @@ export function useRealtimePrices(tickers: string[]) {
     } catch {
       // WebSocket not available — will fallback to polling
     }
-  }, [tickers])
+  }, [])
 
   useEffect(() => {
     connect()
@@ -85,7 +92,7 @@ export function useRealtimePrices(tickers: string[]) {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "subscribe", tickers }))
     }
-  }, [tickers])
+  }, [tickersStr])
 
   return { prices, connected }
 }
