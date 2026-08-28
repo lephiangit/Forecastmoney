@@ -1,6 +1,27 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ForecastAI — Design tokens
+
+   Bảng màu giữ nguyên tinh thần bản gốc (nền tối kiểu sàn giao dịch, nhấn vàng).
+   Các thay đổi ở bản này đều nhắm vào những thứ đo được:
+
+   1. Độ tương phản chữ phụ: #707a8a trên nền #0b0e11 chỉ đạt ~4.3:1, dưới ngưỡng
+      WCAG AA cho chữ nhỏ. Nâng lên #98a1af (~7.1:1) — dễ đọc hơn hẳn với bảng số
+      dày đặc, mà vẫn giữ được tôn ti thị giác so với chữ chính.
+
+   2. Trạng thái focus: bản cũ không định nghĩa focus-visible, nên người dùng
+      bàn phím (và trình đọc màn hình) không biết đang đứng ở đâu. Đây là lỗi
+      accessibility cơ bản, và là thứ dễ bị hỏi khi demo.
+
+   3. Chữ số dạng bảng (tabular-nums): với dữ liệu tài chính, các con số phải
+      thẳng cột. Font tỷ lệ thường làm chúng nhảy khi giá cập nhật.
+
+   4. Tôn trọng prefers-reduced-motion: dải giá chạy ngang và các animation
+      sẽ dừng với người dùng đã bật giảm chuyển động.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 @theme inline {
   --font-sans: var(--font-geist-sans), 'Geist Fallback';
   --font-mono: var(--font-geist-mono), 'Geist Mono Fallback';
@@ -10,6 +31,7 @@
   --color-bg-secondary: var(--bg-secondary);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-card-elevated: var(--card-elevated);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
@@ -23,12 +45,14 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
 
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-info: var(--info);
+  --color-warning: var(--warning);
   --color-text-muted: var(--text-muted);
 
   --color-chart-1: var(--chart-1);
@@ -36,6 +60,7 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
 
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -50,55 +75,165 @@
   color-scheme: dark;
   --radius: 0.5rem;
 
+  /* ── Nền, theo tầng độ cao ─────────────────────────────────────────────── */
   --background: #0b0e11;
-  --foreground: #ffffff;
   --bg-secondary: #12161c;
-  --card: #1e2329;
-  --card-foreground: #eaecef;
-  --popover: #12161c;
-  --popover-foreground: #eaecef;
+  --card: #1a1f26;
+  --card-elevated: #222831;
+  --popover: #161b22;
 
+  /* ── Chữ ───────────────────────────────────────────────────────────────── */
+  --foreground: #ffffff;
+  --card-foreground: #eaecef;
+  --popover-foreground: #eaecef;
+  /* Nâng từ #707a8a để đạt WCAG AA trên nền tối */
+  --muted-foreground: #98a1af;
+  --text-muted: #98a1af;
+
+  /* ── Màu thương hiệu ───────────────────────────────────────────────────── */
   --primary: #fcd535;
   --primary-foreground: #0b0e11;
   --secondary: #1e2329;
   --secondary-foreground: #eaecef;
   --muted: #1e2329;
-  --muted-foreground: #707a8a;
   --accent: #2b3139;
   --accent-foreground: #ffffff;
+
+  /* ── Màu ngữ nghĩa ─────────────────────────────────────────────────────── */
+  --positive: #0ecb81;
+  --negative: #f6465d;
   --destructive: #f6465d;
   --destructive-foreground: #ffffff;
+  --info: #4b7bff;
+  --warning: #f0a020;
 
-  --border: #2b3139;
+  /* ── Viền ──────────────────────────────────────────────────────────────── */
+  --border: #262c35;
+  --border-strong: #363d47;
   --input: #2b3139;
   --ring: #fcd535;
 
-  --positive: #0ecb81;
-  --negative: #f6465d;
-  --info: #3861fb;
-  --text-muted: #707a8a;
-
+  /* ── Bảng màu biểu đồ ──────────────────────────────────────────────────────
+     Sáu màu phân biệt được cả với người mù màu đỏ-lục: sắc độ được chọn cách xa
+     nhau về cả tông màu lẫn độ sáng, nên vẫn đọc được khi in đen trắng.
+     Riêng xanh lá / đỏ chỉ dùng cho ý nghĩa tăng/giảm, không dùng để phân loại. */
   --chart-1: #fcd535;
   --chart-2: #0ecb81;
-  --chart-3: #3861fb;
+  --chart-3: #4b7bff;
   --chart-4: #f6465d;
-  --chart-5: #707a8a;
+  --chart-5: #b47cff;
+  --chart-6: #2dd4bf;
 
   --sidebar: #12161c;
   --sidebar-foreground: #eaecef;
+
+  /* ── Đổ bóng ───────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.45);
 }
 
 @layer base {
   * {
     border-color: var(--border);
   }
+
   html {
     background-color: var(--background);
     font-family: var(--font-sans);
+    /* Chặn cuộn ngang do bảng rộng gây ra ở màn hình nhỏ */
+    overflow-x: hidden;
   }
+
   body {
     background-color: var(--background);
     color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ── Focus: bắt buộc cho khả năng dùng bàn phím ───────────────────────────
+     :focus-visible chỉ hiện vòng focus khi người dùng điều hướng bằng bàn phím,
+     không hiện khi bấm chuột — nên không ảnh hưởng tới cảm giác thị giác thông thường. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Bỏ vòng focus mặc định của trình duyệt khi bấm chuột */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* ── Chữ số tài chính ─────────────────────────────────────────────────────
+     Bảng giá phải thẳng cột; font tỷ lệ khiến số nhảy mỗi lần cập nhật. */
+  .font-mono,
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* ── Thanh cuộn ───────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 5px;
+    border: 2px solid var(--bg-secondary);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) var(--bg-secondary);
+  }
+
+  /* ── Lựa chọn văn bản ─────────────────────────────────────────────────── */
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+}
+
+@layer components {
+  /* Kiểu card dùng chung — tránh lặp lại chuỗi class dài ở mọi trang */
+  .fa-card {
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .fa-card-interactive {
+    transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  }
+  .fa-card-interactive:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-md);
+  }
+
+  /* Nhãn nhỏ cho badge trạng thái */
+  .fa-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border-radius: var(--radius-sm);
+    border-width: 1px;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 600;
+    white-space: nowrap;
   }
 }
 
@@ -110,12 +245,26 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Số liệu tài chính: luôn thẳng cột */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Bảng rộng tự cuộn trong khung của nó, không đẩy cả trang cuộn ngang */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .ticker-track {
     animation: ticker-scroll 120s linear infinite;
   }
   .ticker-track:hover {
     animation-play-state: paused;
   }
+
   @keyframes ticker-scroll {
     0% {
       transform: translateX(0);
@@ -123,5 +272,93 @@
     100% {
       transform: translateX(-50%);
     }
+  }
+
+  /* Hiệu ứng nhấp nháy khi giá thay đổi */
+  @keyframes flash-positive {
+    0%,
+    100% {
+      background-color: transparent;
+    }
+    50% {
+      background-color: color-mix(in srgb, var(--positive) 18%, transparent);
+    }
+  }
+  @keyframes flash-negative {
+    0%,
+    100% {
+      background-color: transparent;
+    }
+    50% {
+      background-color: color-mix(in srgb, var(--negative) 18%, transparent);
+    }
+  }
+  .flash-up {
+    animation: flash-positive 600ms ease-out;
+  }
+  .flash-down {
+    animation: flash-negative 600ms ease-out;
+  }
+
+  /* Hiệu ứng loading dạng vệt sáng chạy qua */
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--accent) 60%, transparent),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Tôn trọng lựa chọn giảm chuyển động của người dùng.
+
+   Dải giá chạy ngang liên tục có thể gây khó chịu hoặc chóng mặt với một số
+   người dùng. Đây không phải chi tiết trang trí — nó nằm trong tiêu chuẩn WCAG.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .ticker-track {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Kiểu in — hữu ích khi cần xuất biểu đồ/bảng số vào báo cáo đồ án.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+  nav,
+  footer,
+  .ticker-track,
+  [data-print-hide] {
+    display: none !important;
   }
 }

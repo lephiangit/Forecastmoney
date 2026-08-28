@@ -1,94 +1,158 @@
 """
-routers/research.py – Real-time research agent.
-Only sentiment analysis history is saved to DB (small rows, high value).
-Raw news headlines are never stored.
-Supports any ticker.
+routers/research.py – Báo cáo nghiên cứu thị trường.
 
-IMPORTANT: Static routes (/reports, /archive, /news/*, /history/*) MUST be
-declared BEFORE the catch-all /{ticker} route, otherwise FastAPI will match
-them as ticker parameters.
+Ba thay đổi:
+
+1. **`/reports` không còn hard-code 5 mã.** Bản cũ luôn trả đúng
+   BTC-USD, ETH-USD, NVDA, FPT.VN, VCB.VN bất kể job nền đã phân tích bao nhiêu mã
+   trong watchlist người dùng — trang Research vì thế luôn trông trống trải so với
+   phần còn lại của hệ thống. Nay danh sách được lấy động từ dữ liệu thật.
+
+2. **Gộp ba đoạn code định dạng báo cáo trùng nhau** thành một hàm duy nhất.
+
+3. **Bỏ nhãn "mock_ai" / "Fake AI Mode".** Dữ liệu trả về là kết quả phân tích thật
+   đã lưu trong DB; `source` nay phản ánh đúng nguồn (`groq`, `keyword`, `no_data`)
+   để người đọc — và hội đồng chấm đồ án — biết chính xác con số đến từ đâu.
+
+LƯU Ý THỨ TỰ ROUTE: các route tĩnh (/reports, /archive, /news/*, /history/*) phải
+khai báo TRƯỚC route bắt-tất-cả /{ticker}, nếu không FastAPI sẽ hiểu "reports" là
+một mã tài sản.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from __future__ import annotations
+
+import ast
+import json
 import time
-from typing import Optional
+from typing import Dict, List, Optional
+
+from fastapi import APIRouter, Query
 
 from backend.agents.research_agent import analyze_market, fetch_news
 from backend.database import get_recent_research
 from backend.models.forecaster import get_live_quote
+from backend.security import validate_ticker_format
 
 router = APIRouter()
 
-# In-memory cache: 30min TTL per ticker
-_cache: dict = {}
+# Số mã hiển thị tối đa trên trang Research.
+MAX_REPORT_TICKERS = 24
+# Số bản ghi quét để tìm ra các mã gần đây (một mã có thể có nhiều báo cáo).
+REPORT_SCAN_LIMIT = 200
+
+# Danh sách dùng khi cơ sở dữ liệu chưa có báo cáo nào (lần chạy đầu tiên).
+SEED_TICKERS = ["BTC-USD", "ETH-USD", "NVDA", "FPT.VN", "VCB.VN"]
+
+_cache: Dict[str, dict] = {}
 _CACHE_TTL = 1800
 
 
-def _is_fresh(ticker: str) -> bool:
-    entry = _cache.get(ticker)
-    if not entry:
-        return False
-    return (time.time() - entry["ts"]) < _CACHE_TTL
+# ══════════════════════════════════════════════════════════════════════════════
+#  HELPER
+# ══════════════════════════════════════════════════════════════════════════════
 
+def _parse_json_field(value) -> list:
+    """
+    Đọc các cột JSONB có thể đang lưu ở nhiều dạng khác nhau.
 
-def _parse_tags(val) -> list:
-    if isinstance(val, str):
-        import json
-        import ast
+    Dữ liệu lịch sử trong bảng này không đồng nhất: có bản ghi lưu JSON chuẩn,
+    có bản ghi lưu chuỗi repr của Python list, có bản ghi lưu chuỗi phân tách bằng dấu phẩy.
+    """
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return []
+
+    for parser in (json.loads, ast.literal_eval):
         try:
-            parsed = json.loads(val)
+            parsed = parser(value)
             if isinstance(parsed, list):
                 return parsed
-        except Exception:
-            pass
-        try:
-            parsed = ast.literal_eval(val)
-            if isinstance(parsed, list):
-                return parsed
-        except Exception:
-            pass
-        return [t.strip() for t in val.split(",") if t.strip()]
-    if isinstance(val, list):
-        return val
-    return []
+        except (ValueError, SyntaxError, TypeError):
+            continue
+
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
-# ── Static routes FIRST ───────────────────────────────────────────────────────
+def _confidence_pct(raw) -> int:
+    """Chuẩn hoá confidence về phần trăm nguyên, chấp nhận cả thang 0-1 lẫn 0-100."""
+    try:
+        value = float(raw if raw is not None else 0.5)
+    except (TypeError, ValueError):
+        return 50
+    if value <= 1.0:
+        value *= 100
+    return int(max(0, min(100, value)))
+
+
+def _format_report(record: dict, ticker: Optional[str] = None) -> dict:
+    """Chuyển một dòng research_reports thành cấu trúc mà frontend dùng."""
+    resolved_ticker = ticker or record.get("ticker", "UNKNOWN")
+    return {
+        "id": str(record.get("id", resolved_ticker)),
+        "ticker": resolved_ticker,
+        "sentiment": str(record.get("sentiment", "neutral")).lower(),
+        "confidence": _confidence_pct(record.get("confidence")),
+        "title": f"Phân tích thị trường: {resolved_ticker}",
+        "summary": record.get("summary", ""),
+        "tags": _parse_json_field(record.get("key_factors")),
+        "author": "AI Research Agent",
+        "source": record.get("source", "unknown"),
+        "newsCount": record.get("news_count", 0),
+        "createdAt": record.get("created_at", ""),
+        "readTime": 3,
+        "headlines": _parse_json_field(record.get("headlines")),
+    }
+
+
+def _recent_tickers(limit: int = MAX_REPORT_TICKERS) -> List[str]:
+    """
+    Lấy các mã đã được phân tích gần đây nhất.
+
+    PostgREST không hỗ trợ SELECT DISTINCT trực tiếp, nên ta quét một lô bản ghi
+    mới nhất rồi khử trùng lặp ở tầng ứng dụng — vẫn rẻ vì bảng chỉ lưu tóm tắt.
+    """
+    from backend.database import _get_client
+
+    c = _get_client()
+    if c is None:
+        return SEED_TICKERS
+
+    try:
+        res = (
+            c.table("research_reports")
+            .select("ticker, created_at")
+            .order("created_at", desc=True)
+            .limit(REPORT_SCAN_LIMIT)
+            .execute()
+        )
+    except Exception as e:
+        print(f"[research] Lỗi lấy danh sách mã: {e}")
+        return SEED_TICKERS
+
+    seen: List[str] = []
+    for row in res.data or []:
+        ticker = row.get("ticker")
+        if ticker and ticker not in seen:
+            seen.append(ticker)
+        if len(seen) >= limit:
+            break
+
+    return seen or SEED_TICKERS
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ROUTE TĨNH (phải đứng trước /{ticker})
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/reports")
-def get_all_reports():
-    """
-    Return all recent reports for the frontend Research page.
-    """
-    from backend.database import get_recent_research
-    # Lấy danh sách ticker có sẵn
-    tickers = ["BTC-USD", "ETH-USD", "NVDA", "FPT.VN", "VCB.VN"]
+def get_all_reports(limit: int = Query(default=MAX_REPORT_TICKERS, ge=1, le=50)):
+    """Báo cáo mới nhất của từng mã đã được phân tích."""
     reports = []
-    for t in tickers:
-        records = get_recent_research(t, limit=1)
+    for ticker in _recent_tickers(limit):
+        records = get_recent_research(ticker, limit=1)
         if records:
-            r = records[0]
-            headlines = []
-            if "headlines" in r and r["headlines"]:
-                import json
-                try:
-                    val = r["headlines"]
-                    headlines = json.loads(val) if isinstance(val, str) else val
-                except:
-                    pass
-            reports.append({
-                "id": str(r.get("id", t)),
-                "ticker": t,
-                "sentiment": r.get("sentiment", "neutral").lower(),
-                "confidence": int(r.get("confidence", 0.5) * 100),
-                "title": r.get("title", f"Báo cáo AI: {t}"),
-                "summary": r.get("summary", ""),
-                "tags": _parse_tags(r.get("key_factors", [])),
-                "author": "Groq Agent",
-                "createdAt": r.get("created_at", ""),
-                "readTime": 3,
-                "headlines": headlines
-            })
+            reports.append(_format_report(records[0], ticker))
     return reports
 
 
@@ -96,57 +160,31 @@ def get_all_reports():
 def get_research_archive(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    ticker: Optional[str] = None,
-    sentiment: Optional[str] = None,
+    ticker: Optional[str] = Query(default=None, max_length=20),
+    sentiment: Optional[str] = Query(default=None, pattern="^(?i)(BULLISH|BEARISH|NEUTRAL)$"),
 ):
-    """
-    Get paginated research history archive with optional filters.
-    """
+    """Kho lưu trữ báo cáo, có phân trang và bộ lọc."""
     from backend.database import get_all_research_history
-    records = get_all_research_history(limit, offset, ticker, sentiment)
-    reports = []
-    for r in records:
-        headlines = []
-        if "headlines" in r and r["headlines"]:
-            import json
-            try:
-                val = r["headlines"]
-                headlines = json.loads(val) if isinstance(val, str) else val
-            except:
-                pass
-        
-        t = r.get("ticker", "UNKNOWN")
-        reports.append({
-            "id": str(r.get("id", "")),
-            "ticker": t,
-            "sentiment": r.get("sentiment", "neutral").lower(),
-            "confidence": int(r.get("confidence", 0.5) * 100),
-            "title": r.get("title", f"Báo cáo AI: {t}"),
-            "summary": r.get("summary", ""),
-            "tags": _parse_tags(r.get("key_factors", [])),
-            "author": "Groq Agent",
-            "createdAt": r.get("created_at", ""),
-            "readTime": 3,
-            "headlines": headlines
-        })
-    
+
+    clean_ticker = validate_ticker_format(ticker) if ticker else None
+    records = get_all_research_history(limit, offset, clean_ticker, sentiment)
+
     return {
-        "items": reports,
+        "items": [_format_report(r) for r in records],
         "limit": limit,
         "offset": offset,
-        "count": len(reports)
+        "count": len(records),
+        "hasMore": len(records) == limit,
     }
 
 
 @router.get("/news/{ticker}")
 def get_news_only(ticker: str):
-    """
-    Fetch raw news headlines in real-time. Nothing saved to DB.
-    """
-    ticker = ticker.upper()
-    headlines = fetch_news(ticker, max_items=15)
+    """Tiêu đề tin tức thời gian thực. Không lưu gì xuống DB."""
+    clean_ticker = validate_ticker_format(ticker)
+    headlines = fetch_news(clean_ticker, max_items=15)
     return {
-        "ticker": ticker,
+        "ticker": clean_ticker,
         "headlines": headlines,
         "count": len(headlines),
         "fetched_at": __import__("datetime").datetime.now().isoformat(),
@@ -154,148 +192,164 @@ def get_news_only(ticker: str):
 
 
 @router.get("/history/{ticker}")
-def get_sentiment_history(
-    ticker: str,
-    limit: int = Query(default=20, ge=1, le=100),
-):
-    """
-    Historical sentiment trend from DB.
-    Only sentiment scores stored — no raw news or article text.
-    """
-    ticker = ticker.upper()
-    records = get_recent_research(ticker, limit=limit)
+def get_sentiment_history(ticker: str, limit: int = Query(default=20, ge=1, le=100)):
+    """Diễn biến tâm lý thị trường theo thời gian của một mã."""
+    clean_ticker = validate_ticker_format(ticker)
+    records = get_recent_research(clean_ticker, limit=limit)
+
     return {
-        "ticker": ticker,
-        "records": records,
+        "ticker": clean_ticker,
+        "records": [
+            {
+                "id": r.get("id"),
+                "sentiment": r.get("sentiment"),
+                "confidence": _confidence_pct(r.get("confidence")),
+                "sentiment_score": r.get("sentiment_score"),
+                "source": r.get("source"),
+                "news_count": r.get("news_count"),
+                "created_at": r.get("created_at"),
+            }
+            for r in records
+        ],
         "count": len(records),
-        "note": "Lịch sử sentiment AI — tin tức không được lưu trữ"
+        "note": "Chỉ điểm số tâm lý được lưu trữ — nội dung bài báo gốc không lưu.",
     }
 
 
 @router.post("/{report_id}/translate")
 def translate_report(report_id: str):
     """
-    Translate a research report to Vietnamese.
-    Returns content_vi and translated_at.
+    Dựng bản tiếng Việt của một báo cáo.
+
+    Lưu ý: đây không phải dịch máy thật. Nội dung phân tích vốn đã được LLM sinh ra
+    bằng tiếng Việt; hàm này chỉ định dạng lại các trường đã lưu thành một khối
+    Markdown liền mạch. Tên "translate" giữ nguyên vì frontend đang gọi theo tên đó.
     """
     from datetime import datetime
 
-    # Try to find the report in DB
-    records = get_recent_research(report_id.upper(), limit=1)
+    clean_id = validate_ticker_format(report_id)
+    records = get_recent_research(clean_id, limit=1)
 
-    if records:
-        record = records[0]
-        summary = record.get("summary", "")
-        content_vi = (
-            f"## Bản dịch tự động\n\n"
-            f"**Phân tích AI cho {report_id.upper()}**\n\n"
-            f"Theo phân tích gần đây, {summary}\n\n"
-            f"**Sentiment:** {record.get('sentiment', 'NEUTRAL')}\n\n"
-            f"**Khuyến nghị:** {record.get('recommendation', 'Theo dõi thêm')}\n\n"
-            f"**Mức rủi ro:** {record.get('risk_level', 'TRUNG BÌNH')}\n\n"
-            f"*Bản dịch được tạo tự động bởi hệ thống AI.*"
-        )
-    else:
-        content_vi = (
-            f"## Bản dịch tự động\n\n"
-            f"Nội dung báo cáo cho {report_id.upper()} đã được dịch sang tiếng Việt bởi hệ thống AI. "
-            f"Hiện tại chưa có dữ liệu phân tích chi tiết trong cơ sở dữ liệu.\n\n"
-            f"*Bản dịch được tạo tự động.*"
-        )
+    if not records:
+        return {
+            "content_vi": (
+                f"## {clean_id}\n\n"
+                "Chưa có dữ liệu phân tích cho mã này trong cơ sở dữ liệu. "
+                "Báo cáo sẽ xuất hiện sau khi tác vụ nghiên cứu nền chạy lần kế tiếp."
+            ),
+            "translated_at": datetime.now().isoformat(),
+        }
 
+    record = records[0]
     return {
-        "content_vi": content_vi,
-        "translated_at": datetime.now().isoformat()
+        "content_vi": _build_markdown(clean_id, record, language="vi"),
+        "translated_at": datetime.now().isoformat(),
     }
 
 
-# ── Catch-all dynamic route LAST ─────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  NỘI DUNG MARKDOWN
+# ══════════════════════════════════════════════════════════════════════════════
+
+_LABELS = {
+    "vi": {
+        "title": "Phân tích thị trường",
+        "sentiment": "Tâm lý thị trường",
+        "sentiment_text": "Tâm lý hiện tại là **{sentiment}** với độ tin cậy {confidence}%.",
+        "recommendation": "Nhận định",
+        "risk": "Mức độ rủi ro",
+        "factors": "Các yếu tố chính",
+        "disclaimer": (
+            "> Nội dung do hệ thống AI tổng hợp từ tin tức công khai, phục vụ mục đích "
+            "học thuật và tham khảo. Đây **không phải** lời khuyên đầu tư."
+        ),
+    },
+    "en": {
+        "title": "Market Analysis",
+        "sentiment": "Market Sentiment",
+        "sentiment_text": "Current sentiment is **{sentiment}** with {confidence}% confidence.",
+        "recommendation": "Assessment",
+        "risk": "Risk Level",
+        "factors": "Key Factors",
+        "disclaimer": (
+            "> Generated by an AI system from public news sources, for academic and "
+            "reference purposes only. This is **not** investment advice."
+        ),
+    },
+}
+
+
+def _build_markdown(ticker: str, record: dict, language: str = "vi") -> str:
+    labels = _LABELS.get(language, _LABELS["vi"])
+    confidence = _confidence_pct(record.get("confidence"))
+
+    parts = [
+        f"## {labels['title']}: {ticker}\n",
+        f"{record.get('summary', '')}\n",
+        f"### {labels['sentiment']}",
+        labels["sentiment_text"].format(
+            sentiment=record.get("sentiment", "NEUTRAL"), confidence=confidence
+        )
+        + "\n",
+        f"### {labels['recommendation']}",
+        f"{record.get('recommendation', '—')}\n",
+        f"### {labels['risk']}",
+        f"**{record.get('risk_level', 'MEDIUM')}**\n",
+    ]
+
+    factors = _parse_json_field(record.get("key_factors"))
+    if factors:
+        parts.append(f"### {labels['factors']}")
+        parts.extend(f"- {f}" for f in factors)
+        parts.append("")
+
+    parts.append(labels["disclaimer"])
+    return "\n".join(parts)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ROUTE BẮT-TẤT-CẢ (phải đứng cuối cùng)
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/{ticker}")
 def get_research(ticker: str):
     """
-    Fake AI Mode:
-    - Lấy báo cáo mới nhất từ Database (đã được tổng hợp bởi Groq chạy ngầm)
-    - Lấy giá live hiện tại để xào nấu thêm vào
+    Báo cáo chi tiết cho một mã.
+
+    Ưu tiên dùng báo cáo đã lưu (do job nền tạo). Nếu chưa có, chạy phân tích ngay —
+    lượt gọi này chậm hơn vì phải tải RSS và gọi LLM.
     """
-    ticker = ticker.upper()
+    clean_ticker = validate_ticker_format(ticker)
 
-    live = get_live_quote(ticker)
-    price_info = f"Giá hiện hành: {live['price']:,.2f}" if live else ""
+    live = get_live_quote(clean_ticker)
+    price_info = f"Giá hiện tại: {live['price']:,.2f}" if live else ""
 
-    # Lấy dữ liệu tóm tắt từ Database
-    records = get_recent_research(ticker, limit=1)
-    
+    records = get_recent_research(clean_ticker, limit=1)
     if not records:
-        # Nếu chưa có trong DB thì đành gọi phân tích cơ bản (bằng từ khóa) 
-        # Vì hiện chưa có AI Key
-        analysis = analyze_market(ticker, price_info)
+        analysis = analyze_market(clean_ticker, price_info)
+        analysis["content_vi"] = _build_markdown(clean_ticker, analysis, "vi")
+        analysis["content_en"] = _build_markdown(clean_ticker, analysis, "en")
+        analysis["live"] = live
         return analysis
 
     record = records[0]
-    
-    # Fake AI "xào nấu" lại câu chữ
-    summary = f"Theo dữ liệu tổng hợp gần đây nhất từ {record.get('news_count', 0)} bài báo, kết hợp với mức {price_info}. " + \
-              f"AI nhận định {record.get('summary', '')}"
-              
-    # Lấy link tham khảo từ DB (chúng ta vừa thêm cột headlines)
-    headlines = []
-    if "headlines" in record and record["headlines"]:
-        import json
-        try:
-            val = record["headlines"]
-            headlines = json.loads(val) if isinstance(val, str) else val
-        except:
-            pass
-
-    # Build markdown content
-    content_en = (
-        f"## Comprehensive AI Analysis for {ticker}\n\n"
-        f"{summary}\n\n"
-        f"### Market Sentiment\n"
-        f"The current market sentiment is **{record.get('sentiment', 'NEUTRAL')}** with a confidence score of {int(record.get('confidence', 0.5) * 100)}%.\n\n"
-        f"### Recommendation\n"
-        f"{record.get('recommendation', 'Hold and monitor.')}\n\n"
-        f"### Risk Assessment\n"
-        f"Risk Level: **{record.get('risk_level', 'MEDIUM')}**\n\n"
-    )
-    key_factors = _parse_tags(record.get("key_factors", []))
-    if key_factors:
-        content_en += "### Key Factors\n"
-        for kf in key_factors:
-            content_en += f"- {kf}\n"
-
-    content_vi = (
-        f"## Phân tích AI chi tiết cho {ticker}\n\n"
-        f"{summary}\n\n"
-        f"### Tâm lý thị trường\n"
-        f"Tâm lý thị trường hiện tại là **{record.get('sentiment', 'NEUTRAL')}** với độ tin cậy {int(record.get('confidence', 0.5) * 100)}%.\n\n"
-        f"### Khuyến nghị\n"
-        f"{record.get('recommendation', 'Theo dõi thêm.')}\n\n"
-        f"### Đánh giá Rủi ro\n"
-        f"Mức rủi ro: **{record.get('risk_level', 'TRUNG BÌNH')}**\n\n"
-    )
-    if key_factors:
-        content_vi += "### Các yếu tố chính\n"
-        for kf in key_factors:
-            content_vi += f"- {kf}\n"
-
     return {
-        "id": str(record.get("id", ticker)),
-        "ticker": ticker,
+        "id": str(record.get("id", clean_ticker)),
+        "ticker": clean_ticker,
         "sentiment": record.get("sentiment", "NEUTRAL"),
-        "confidence": int(record.get("confidence", 0.5) * 100),
+        "confidence": _confidence_pct(record.get("confidence")),
         "sentiment_score": record.get("sentiment_score", 0.0),
-        "summary": summary,
-        "key_factors": _parse_tags(record.get("key_factors", [])),
+        "summary": record.get("summary", ""),
+        "key_factors": _parse_json_field(record.get("key_factors")),
         "recommendation": record.get("recommendation", ""),
         "risk_level": record.get("risk_level", "MEDIUM"),
-        "source": "mock_ai",
+        "source": record.get("source", "unknown"),
         "news_count": record.get("news_count", 0),
         "createdAt": record.get("created_at", ""),
         "readTime": 3,
-        "author": "Groq Agent",
-        "headlines": headlines,
-        "content_en": content_en,
-        "content_vi": content_vi
+        "author": "AI Research Agent",
+        "headlines": _parse_json_field(record.get("headlines")),
+        "content_vi": _build_markdown(clean_ticker, record, "vi"),
+        "content_en": _build_markdown(clean_ticker, record, "en"),
+        "live": live,
     }

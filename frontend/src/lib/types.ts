@@ -149,6 +149,12 @@ export interface SystemMetric {
   value: number
   unit: string
   status: "healthy" | "warning" | "critical"
+  /**
+   * Dòng giải thích ngắn kèm theo chỉ số, do backend gửi xuống.
+   * Ví dụ: "p95: 340 ms trên 1.204 request".
+   * Tuỳ chọn, để các phản hồi cũ (không có trường này) vẫn dùng được.
+   */
+  hint?: string
 }
 
 export interface ResearchQueueItem {
@@ -166,6 +172,10 @@ export interface LeaderboardEntry {
   total_pnl: number
   win_trades: number
   loss_trades: number
+  /** Thứ hạng do backend tính sẵn — tuỳ chọn để tương thích ngược. */
+  rank?: number
+  /** Tỷ lệ thắng tính trên số lệnh ĐÃ ĐÓNG, không phải tổng số giao dịch. */
+  win_rate?: number
 }
 
 export interface Notification {

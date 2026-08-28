@@ -9,6 +9,7 @@ import { api } from "@/lib/api"
 import { useT, useAuthStore } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
 import { Skeleton, ErrorCard, EmptyState } from "@/components/ui/states"
+import { DisclaimerCard } from "@/components/ui/system-banners"
 import { ConfidencePill } from "@/components/ui/tags"
 import { formatCurrency, formatPercent } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -39,6 +40,11 @@ export default function ForecastIndexPage() {
     <div>
       <PageHeader title={t("forecastExplorer")} subtitle={t("whatAiThinks")} />
 
+      {/* Đặt ngay đầu trang, trước khi người dùng nhìn thấy bất kỳ con số dự báo nào.
+          Cho phép đóng để không cản trở việc sử dụng, nhưng trạng thái đóng không
+          được lưu — mỗi phiên làm việc mới, cảnh báo lại hiện. */}
+      <DisclaimerCard dismissible className="mb-5" />
+
       <div className="mb-5 flex justify-end">
         <div className="relative sm:w-64">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -54,9 +60,32 @@ export default function ForecastIndexPage() {
       {isError ? (
         <ErrorCard onRetry={() => refetch()} />
       ) : !data ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        /* Khung chờ mô phỏng đúng bố cục thẻ dự báo thật, thay vì một khối xám
+           đặc. Nhờ vậy nội dung không "nhảy" khi dữ liệu về, và người dùng đoán
+           trước được cái gì sắp hiện ra. */
+        <div
+          role="status"
+          aria-label="Đang tải dự báo"
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+        >
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-44" />
+            <div key={i} className="fa-card p-5">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-8 w-8 rounded" />
+                <div className="flex-1">
+                  <Skeleton className="h-3.5 w-20" />
+                  <Skeleton className="mt-1.5 h-3 w-28" />
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <Skeleton className="h-14 rounded" />
+                <Skeleton className="h-14 rounded" />
+              </div>
+              <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-14" />
+              </div>
+            </div>
           ))}
         </div>
       ) : filtered.length === 0 ? (

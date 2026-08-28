@@ -10,6 +10,7 @@ import { useT } from "@/lib/store"
 import type { TranslationKey } from "@/lib/i18n"
 import { PageHeader } from "@/components/ui/page-header"
 import { Skeleton, ErrorCard, EmptyState } from "@/components/ui/states"
+import { DisclaimerCard } from "@/components/ui/system-banners"
 import { SentimentBadge, ConfidencePill } from "@/components/ui/tags"
 import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -38,6 +39,10 @@ export default function ResearchPage() {
   return (
     <div>
       <PageHeader title={t("researchCenter")} subtitle={t("whyAiThinks")} />
+
+      {/* Trang này hiển thị khuyến nghị do LLM sinh ra từ tin tức — chính là loại
+          nội dung dễ bị đọc thành lời khuyên mua bán nhất trong toàn bộ ứng dụng. */}
+      <DisclaimerCard dismissible className="mb-5" />
 
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
@@ -77,9 +82,32 @@ export default function ResearchPage() {
       {isError ? (
         <ErrorCard onRetry={() => refetch()} />
       ) : !data ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div
+          role="status"
+          aria-label="Đang tải báo cáo nghiên cứu"
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+        >
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-56" />
+            <div key={i} className="fa-card flex flex-col p-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-8 w-8 rounded" />
+                  <Skeleton className="h-3.5 w-16" />
+                </div>
+                <Skeleton className="h-5 w-16 rounded" />
+              </div>
+              <Skeleton className="mt-3 h-4 w-full" />
+              <Skeleton className="mt-1.5 h-4 w-4/5" />
+              <Skeleton className="mt-3 h-3 w-full" />
+              <Skeleton className="mt-1.5 h-3 w-3/4" />
+              <div className="mt-4 flex gap-1.5">
+                <Skeleton className="h-5 w-16 rounded" />
+                <Skeleton className="h-5 w-20 rounded" />
+              </div>
+              <div className="mt-4 border-t border-border pt-3">
+                <Skeleton className="h-4 w-24" />
+              </div>
+            </div>
           ))}
         </div>
       ) : filtered.length === 0 ? (

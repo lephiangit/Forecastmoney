@@ -9,7 +9,7 @@ import { api } from "@/lib/api"
 import { useT, useAuthStore } from "@/lib/store"
 import type { TranslationKey } from "@/lib/i18n"
 import { PageHeader } from "@/components/ui/page-header"
-import { Skeleton, ErrorCard } from "@/components/ui/states"
+import { Skeleton, ErrorCard, TableSkeleton } from "@/components/ui/states"
 import { Sparkline } from "@/components/ui/sparkline"
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -105,7 +105,9 @@ export default function MarketsPage() {
       {isError ? (
         <ErrorCard onRetry={() => refetch()} />
       ) : !data ? (
-        <Skeleton className="h-96" />
+        /* Khung chờ có hình dạng bảng thật, thay cho một khối xám 384px.
+           Người dùng thấy ngay đây sẽ là bảng dữ liệu chứ không phải biểu đồ. */
+        <TableSkeleton rows={10} cols={6} />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full min-w-[760px] text-sm">

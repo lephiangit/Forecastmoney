@@ -10,7 +10,8 @@ import type { AutoTradeConfig } from "@/lib/types"
 import type { TranslationKey } from "@/lib/i18n"
 import { PageHeader } from "@/components/ui/page-header"
 import { StatCard } from "@/components/ui/stat-card"
-import { Skeleton, ErrorCard } from "@/components/ui/states"
+import { Skeleton, ErrorCard, StatCardSkeleton } from "@/components/ui/states"
+import { DisclaimerCard } from "@/components/ui/system-banners"
 import { formatCurrency } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -100,8 +101,26 @@ export default function AutoTradePage() {
     <div>
       <PageHeader title={t("autoTrading")} subtitle={t("whatAiTrades")} />
 
+      {/* Đây là trang cần cảnh báo rõ nhất trong toàn bộ ứng dụng: nó có một nút
+          bật bot tự động đặt lệnh. KHÔNG cho đóng cảnh báo ở đây — người dùng
+          phải nhìn thấy nó mỗi lần vào trang, ngay cạnh nút bật bot. */}
+      <DisclaimerCard className="mb-5" />
+
       {!config ? (
-        <Skeleton className="h-96" />
+        <div role="status" aria-label="Đang tải cấu hình bot" className="space-y-6">
+          <div className="fa-card flex items-center justify-between p-5">
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-12 w-12 rounded-lg" />
+              <div>
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="mt-2 h-3 w-48" />
+              </div>
+            </div>
+            <Skeleton className="h-10 w-28 rounded-md" />
+          </div>
+          <StatCardSkeleton count={4} />
+          <Skeleton className="h-64 rounded-lg" />
+        </div>
       ) : (
         <>
           {/* Bot status / Start-Stop */}
@@ -205,16 +224,16 @@ export default function AutoTradePage() {
           </div>
 
           {/* Stats */}
-          <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="mt-6">
             {!stats ? (
-              Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)
+              <StatCardSkeleton count={4} />
             ) : (
-              <>
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                 <StatCard label={t("winRate")} value={stats.winRate ?? 0} format={(n) => `${(Number(n) || 0).toFixed(1)}%`} icon={Target} accent />
                 <StatCard label={t("totalTrades")} value={stats.totalTrades ?? 0} format={(n) => (Number(n) || 0).toFixed(0)} icon={Activity} delay={0.05} />
                 <StatCard label="Bot P&L" value={stats.pnl ?? 0} format={(n) => formatCurrency(n)} changePercent={stats.totalReturn ?? 0} icon={TrendingUp} delay={0.1} />
                 <StatCard label={t("activePositions")} value={stats.activePositions ?? 0} format={(n) => (Number(n) || 0).toFixed(0)} icon={Shield} delay={0.15} />
-              </>
+              </div>
             )}
           </div>
 

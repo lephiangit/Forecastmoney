@@ -1,47 +1,163 @@
 """
-routers/auth.py – Simple custom JWT-like token auth router using standard libraries.
+routers/auth.py – Xác thực người dùng bằng token tự ký (HMAC-SHA256).
+
+Thay đổi quan trọng so với bản trước:
+
+1. **Salt mật khẩu tách khỏi khoá ký JWT.**
+   Bản cũ lấy salt từ `ADMIN_SECRET_KEY`, nghĩa là mỗi lần đổi khoá JWT thì
+   TOÀN BỘ mật khẩu người dùng trở thành không đăng nhập được. Bản này dùng
+   salt ngẫu nhiên riêng cho từng user, lưu kèm trong chuỗi hash.
+
+2. **Tự động nâng cấp hash cũ.** Hash theo định dạng cũ vẫn đăng nhập được;
+   ngay sau lần đăng nhập thành công đầu tiên nó được ghi đè bằng định dạng mới.
+   Nhờ vậy không cần bắt người dùng đặt lại mật khẩu khi triển khai bản này.
+
+3. **Không trả `str(e)` ra client** — chi tiết lỗi chỉ nằm ở log server.
 """
 
-import time
-import hmac
-import hashlib
 import base64
+import hashlib
+import hmac
 import json
-from fastapi import APIRouter, HTTPException, Depends, Header, BackgroundTasks, Request
-from pydantic import BaseModel
-from typing import Optional
+import os
+import secrets
+import time
+from typing import Optional, Tuple
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from backend.config import settings
-from backend.database import get_user_by_username, create_user
+from backend.database import create_user, get_user_by_username
+from backend.security import log_and_raise
 
 router = APIRouter()
 
 SECRET_KEY = settings.admin_secret_key.encode()
 
+TOKEN_TTL_SECONDS = 86400 * 7  # 7 ngày
+PBKDF2_ITERATIONS = 200_000    # Gấp đôi bản cũ; vẫn dưới 200ms trên CPU của Render
+MIN_PASSWORD_LENGTH = 8
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCHEMAS
+# ══════════════════════════════════════════════════════════════════════════════
+
 class AuthRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=256)
+
 
 class GoogleAuthRequest(BaseModel):
-    access_token: str
+    access_token: str = Field(min_length=10, max_length=4096)
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
+    supabase_token: str = Field(min_length=10, max_length=4096)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MẬT KHẨU
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _pbkdf2(password: str, salt: bytes, iterations: int) -> str:
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations).hex()
 
 
 def hash_password(password: str) -> str:
-    # PBKDF2 HMAC SHA-256 — salt derived from SECRET_KEY for per-deployment uniqueness
-    salt = hashlib.sha256(SECRET_KEY + b"_password_salt").digest()
-    hashed = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return hashed.hex()
+    """
+    Sinh hash mới theo định dạng: pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>
 
+    Salt ngẫu nhiên cho từng user — hai người dùng đặt cùng mật khẩu sẽ có hash
+    khác nhau, và rainbow table dựng sẵn trở thành vô dụng.
+    """
+    salt = os.urandom(16)
+    digest = _pbkdf2(password, salt, PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${digest}"
+
+
+def _legacy_hash(password: str) -> str:
+    """Tái tạo hash theo định dạng cũ để xác thực tài khoản tạo trước bản này."""
+    salt = hashlib.sha256(SECRET_KEY + b"_password_salt").digest()
+    return _pbkdf2(password, salt, 100_000)
+
+
+def verify_password(password: str, stored: str) -> Tuple[bool, bool]:
+    """
+    Kiểm tra mật khẩu.
+
+    Trả về (hợp_lệ, cần_nâng_cấp_hash). `cần_nâng_cấp_hash` bằng True khi mật khẩu
+    đúng nhưng đang lưu ở định dạng cũ — caller nên ghi đè bằng `hash_password()`.
+    """
+    if not stored:
+        return False, False
+
+    if stored.startswith("pbkdf2_sha256$"):
+        try:
+            _, iterations_s, salt_hex, digest = stored.split("$", 3)
+            candidate = _pbkdf2(password, bytes.fromhex(salt_hex), int(iterations_s))
+            return hmac.compare_digest(candidate, digest), False
+        except (ValueError, TypeError):
+            return False, False
+
+    # Định dạng cũ: hex thuần, salt suy ra từ SECRET_KEY.
+    is_valid = hmac.compare_digest(_legacy_hash(password), stored)
+    return is_valid, is_valid
+
+
+def _validate_password_strength(password: str) -> None:
+    """Yêu cầu tối thiểu. Cố ý giữ nhẹ nhàng cho đồ án, nhưng chặn các mật khẩu tệ nhất."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(400, f"Mật khẩu phải có ít nhất {MIN_PASSWORD_LENGTH} ký tự.")
+    if password.lower() in {"password", "12345678", "qwertyui", "admin123", "11111111"}:
+        raise HTTPException(400, "Mật khẩu quá phổ biến, vui lòng chọn mật khẩu khác.")
+    if len(set(password)) < 4:
+        raise HTTPException(400, "Mật khẩu quá đơn giản, vui lòng dùng nhiều ký tự khác nhau hơn.")
+
+
+def _upgrade_hash_if_needed(user_id: int, password: str, needs_upgrade: bool) -> None:
+    """Ghi đè hash cũ bằng định dạng mới. Thất bại ở đây không được chặn đăng nhập."""
+    if not needs_upgrade:
+        return
+    try:
+        from backend.database import _get_client
+
+        c = _get_client()
+        if c:
+            c.table("users").update({"password_hash": hash_password(password)}).eq("id", user_id).execute()
+            print(f"[auth] Đã nâng cấp định dạng hash mật khẩu cho user {user_id}.")
+    except Exception as e:
+        print(f"[auth] Không nâng cấp được hash cho user {user_id}: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TOKEN
+# ══════════════════════════════════════════════════════════════════════════════
 
 def create_token(user_id: int, username: str, role: str = "user") -> str:
     payload = {
         "user_id": user_id,
         "username": username,
         "role": role,
-        "exp": time.time() + 86400 * 7  # 7 days
+        "exp": time.time() + TOKEN_TTL_SECONDS,
     }
-    payload_json = json.dumps(payload)
-    payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     signature = hmac.new(SECRET_KEY, payload_b64.encode(), hashlib.sha256).hexdigest()
     return f"{payload_b64}.{signature}"
 
@@ -52,290 +168,316 @@ def verify_token(token: str) -> Optional[dict]:
         if len(parts) != 2:
             return None
         payload_b64, signature = parts
+
         expected_sig = hmac.new(SECRET_KEY, payload_b64.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected_sig):
             return None
-        
-        # Add padding back if necessary
-        rem = len(payload_b64) % 4
-        if rem > 0:
-            payload_b64 += "=" * (4 - rem)
-            
-        payload_data = base64.urlsafe_b64decode(payload_b64.encode()).decode()
-        payload = json.loads(payload_data)
-        if payload["exp"] < time.time():
+
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+
+        if payload.get("exp", 0) < time.time():
+            return None
+        if "user_id" not in payload or "username" not in payload:
             return None
         return payload
-    except Exception as e:
-        print(f"Token verification error: {e}")
+    except Exception:
+        # Token hỏng là chuyện bình thường (hết hạn, bị sửa) — không cần log ồn ào.
         return None
 
 
+# ── Ghi nhận hoạt động, có tiết chế ───────────────────────────────────────────
+# Bản cũ UPDATE bảng users trên MỖI request đã xác thực, tức là mỗi lần load trang
+# tốn thêm vài round-trip tới DB. Ở đây ta chỉ ghi tối đa 5 phút một lần cho mỗi user.
+
+_last_active_writes: dict = {}
+_LAST_ACTIVE_THROTTLE = 300
+
+
+def _touch_last_active(user_id: int) -> None:
+    now = time.time()
+    if now - _last_active_writes.get(user_id, 0) < _LAST_ACTIVE_THROTTLE:
+        return
+    _last_active_writes[user_id] = now
+    try:
+        from backend.database import _get_client
+
+        c = _get_client()
+        if c:
+            c.table("users").update(
+                {"last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            ).eq("id", user_id).execute()
+    except Exception as e:
+        print(f"[auth] Không cập nhật được last_active: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DEPENDENCIES
+# ══════════════════════════════════════════════════════════════════════════════
+
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    """Verify custom JWT only. All login methods (email/password, Google) produce custom JWTs."""
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication token required")
-    token = authorization.split(" ")[1]
-    
-    payload = verify_token(token)
-    if payload:
-        # Fire and forget update last_active
-        try:
-            from backend.database import _get_client
-            c = _get_client()
-            if c:
-                c.table("users").update({"last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).eq("id", payload["user_id"]).execute()
-        except Exception as e:
-            print(f"Error updating last_active: {e}")
-        return payload
-        
-    raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(401, "Cần đăng nhập để thực hiện thao tác này.")
+
+    payload = verify_token(authorization[7:])
+    if not payload:
+        raise HTTPException(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.")
+
+    _touch_last_active(payload["user_id"])
+    return payload
 
 
 def get_current_admin(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin privileges required")
+        raise HTTPException(403, "Bạn không có quyền truy cập chức năng này.")
     return user
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+def _auth_response(user: dict, token: str, message: str) -> dict:
+    from backend.database import get_user_profile
+
+    profile = get_user_profile(user["id"])
+    return {
+        "success": True,
+        "token": token,
+        "user_id": user["id"],
+        "username": user["username"],
+        "name": profile.get("name") or user["username"],
+        "role": user.get("role", "user"),
+        "is_oauth": user.get("password_hash") == "GOOGLE_OAUTH_USER",
+        "message": message,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/register")
-async def register(req: AuthRequest):
-    username = req.username.strip()
-    if len(username) < 3 or len(req.password) < 4:
-        raise HTTPException(400, "Username (>=3 chars) or password (>=4 chars) too short")
-        
+def register(req: AuthRequest):
+    username = req.username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(400, "Tên đăng nhập phải có ít nhất 3 ký tự.")
+    _validate_password_strength(req.password)
+
     try:
         existing = get_user_by_username(username)
     except Exception as e:
-        raise HTTPException(500, f"DB error checking user: {str(e)}")
-        
+        log_and_raise("register/lookup", e, 503, "Không kết nối được cơ sở dữ liệu.")
+        return
+
     if existing:
-        raise HTTPException(400, "Username already registered")
-        
-    hashed = hash_password(req.password)
+        raise HTTPException(400, "Tên đăng nhập đã tồn tại.")
+
     try:
-        user = create_user(username, hashed)
+        user = create_user(username, hash_password(req.password))
     except Exception as e:
-        raise HTTPException(500, f"DB error creating user: {str(e)}")
-        
+        log_and_raise("register/create", e, 503, "Không tạo được tài khoản. Vui lòng thử lại.")
+        return
+
     if not user:
-        raise HTTPException(500, "Could not create user in database")
-        
-    # Generate token immediately
+        raise HTTPException(500, "Không tạo được tài khoản. Vui lòng thử lại.")
+
     token = create_token(user["id"], user["username"], user.get("role", "user"))
-    
-    from backend.database import get_user_profile
-    profile = get_user_profile(user["id"])
-    
-    return {
-        "success": True,
-        "token": token,
-        "user_id": user["id"],
-        "username": user["username"],
-        "name": profile.get("name", user["username"]),
-        "role": user.get("role", "user"),
-        "is_oauth": user["password_hash"] == "GOOGLE_OAUTH_USER",
-        "message": "User registered successfully"
-    }
+    return _auth_response(user, token, "Đăng ký thành công")
 
 
 @router.post("/login")
-async def login(req: AuthRequest):
+def login(req: AuthRequest):
+    generic_error = "Tên đăng nhập hoặc mật khẩu không đúng."
+
     try:
-        user = get_user_by_username(req.username.strip())
+        user = get_user_by_username(req.username.strip().lower())
     except Exception as e:
-        raise HTTPException(500, f"DB error fetching user: {str(e)}")
-        
+        log_and_raise("login/lookup", e, 503, "Không kết nối được cơ sở dữ liệu.")
+        return
+
     if not user:
-        raise HTTPException(400, "Invalid username or password")
-        
-    hashed = hash_password(req.password)
-    if user["password_hash"] != hashed:
-        raise HTTPException(400, "Invalid username or password")
-        
+        # Vẫn tốn thời gian băm để thời gian phản hồi giống trường hợp sai mật khẩu,
+        # tránh việc kẻ tấn công dò được username nào tồn tại qua độ trễ.
+        hash_password(req.password)
+        raise HTTPException(400, generic_error)
+
+    if user.get("status") == "suspended":
+        raise HTTPException(403, "Tài khoản của bạn đang bị tạm khoá.")
+
+    is_valid, needs_upgrade = verify_password(req.password, user.get("password_hash", ""))
+    if not is_valid:
+        raise HTTPException(400, generic_error)
+
+    _upgrade_hash_if_needed(user["id"], req.password, needs_upgrade)
+
     token = create_token(user["id"], user["username"], user.get("role", "user"))
-    
-    from backend.database import get_user_profile
-    profile = get_user_profile(user["id"])
-    
-    return {
-        "success": True,
-        "token": token,
-        "user_id": user["id"],
-        "username": user["username"],
-        "name": profile.get("name", user["username"]),
-        "role": user.get("role", "user"),
-        "is_oauth": user["password_hash"] == "GOOGLE_OAUTH_USER",
-        "message": "Logged in successfully"
-    }
+    return _auth_response(user, token, "Đăng nhập thành công")
 
 
 @router.post("/google")
-async def google_auth(req: GoogleAuthRequest):
-    """Exchange a Supabase access_token (from Google OAuth) for a custom JWT."""
+def google_auth(req: GoogleAuthRequest):
+    """Đổi access_token của Supabase (Google OAuth) lấy token nội bộ."""
     try:
-        from backend.database import _get_client, get_user_by_username, create_user
+        from backend.database import _get_client
+
         supabase = _get_client()
         if not supabase:
-            raise HTTPException(503, "Database unavailable")
+            raise HTTPException(503, "Dịch vụ đăng nhập tạm thời không khả dụng.")
 
-        # Verify the Supabase token once
         user_response = supabase.auth.get_user(req.access_token)
         if not user_response or not user_response.user:
-            raise HTTPException(401, "Invalid Google token")
+            raise HTTPException(401, "Token Google không hợp lệ.")
 
-        email = user_response.user.email
-        if not email:
-            email = "google_user_" + user_response.user.id[:8]
+        email = (user_response.user.email or f"google_user_{user_response.user.id[:8]}").lower()
 
-        # Find or create user in local DB
         existing_user = get_user_by_username(email)
         if not existing_user:
-            dummy_hash = "GOOGLE_OAUTH_USER"
-            create_user(email, dummy_hash)
+            create_user(email, "GOOGLE_OAUTH_USER")
             existing_user = get_user_by_username(email)
-
         if not existing_user:
-            raise HTTPException(500, "Could not create user")
+            raise HTTPException(500, "Không tạo được tài khoản.")
 
-        # Issue custom JWT — same as email/password login
         token = create_token(existing_user["id"], existing_user["username"], existing_user.get("role", "user"))
-        
-        from backend.database import get_user_profile
-        profile = get_user_profile(existing_user["id"])
-        
-        return {
-            "success": True,
-            "token": token,
-            "user_id": existing_user["id"],
-            "username": existing_user["username"],
-            "name": profile.get("name", existing_user["username"]),
-            "role": existing_user.get("role", "user"),
-            "is_oauth": existing_user["password_hash"] == "GOOGLE_OAUTH_USER",
-            "message": "Google login successful"
-        }
+        return _auth_response(existing_user, token, "Đăng nhập Google thành công")
+
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Google auth error: {e}")
-        raise HTTPException(401, f"Google authentication failed: {str(e)}")
+        log_and_raise("google_auth", e, 401, "Đăng nhập Google thất bại.")
 
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str
 
 @router.put("/change-password")
-async def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
-    """Change password for the currently authenticated user."""
-    if len(req.new_password) < 4:
-        raise HTTPException(400, "New password must be at least 4 characters")
+def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    _validate_password_strength(req.new_password)
 
-    user = get_user_by_username(current_user["username"])
+    try:
+        user = get_user_by_username(current_user["username"])
+    except Exception as e:
+        log_and_raise("change_password/lookup", e, 503, "Không kết nối được cơ sở dữ liệu.")
+        return
+
     if not user:
-        raise HTTPException(404, "User not found")
+        raise HTTPException(404, "Không tìm thấy tài khoản.")
 
-    old_hashed = hash_password(req.old_password)
-    if user["password_hash"] != old_hashed:
-        raise HTTPException(400, "Current password is incorrect")
+    is_valid, _ = verify_password(req.old_password, user.get("password_hash", ""))
+    if not is_valid:
+        raise HTTPException(400, "Mật khẩu hiện tại không đúng.")
 
-    new_hashed = hash_password(req.new_password)
-    from backend.database import _get_client
-    c = _get_client()
-    if c is None:
-        raise HTTPException(503, "Database unavailable")
-
-    c.table("users").update({"password_hash": new_hashed}).eq("id", current_user["user_id"]).execute()
-    return {"success": True, "message": "Password changed successfully"}
-
-
-class ProfileUpdateRequest(BaseModel):
-    name: str
-
-@router.get("/profile")
-async def get_profile(current_user: dict = Depends(get_current_user)):
-    from backend.database import get_user_profile
-    p = get_user_profile(current_user["user_id"])
-    return {"success": True, "name": p.get("name", current_user["username"])}
-
-@router.put("/profile")
-async def update_profile(req: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
-    from backend.database import get_user_profile, save_user_profile
-    p = get_user_profile(current_user["user_id"])
-    p["name"] = req.name
-    success = save_user_profile(current_user["user_id"], p)
-    if not success:
-        raise HTTPException(500, "Failed to save profile")
-    return {"success": True, "message": "Profile updated"}
-
-# NOTE: Watchlist endpoints are in admin.py under /admin/watchlist.
-# Frontend exclusively calls /admin/watchlist endpoints.
-
-
-
-class ForgotPasswordRequest(BaseModel):
-    email: str
-
-@router.post("/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest, request: Request):
-    """Trigger Supabase to send a magic link/password reset email."""
     try:
         from backend.database import _get_client
+
+        c = _get_client()
+        if c is None:
+            raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+        c.table("users").update({"password_hash": hash_password(req.new_password)}).eq(
+            "id", current_user["user_id"]
+        ).execute()
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_and_raise("change_password/update", e, 500, "Không đổi được mật khẩu.")
+
+    return {"success": True, "message": "Đổi mật khẩu thành công"}
+
+
+@router.get("/profile")
+def get_profile(current_user: dict = Depends(get_current_user)):
+    from backend.database import get_user_profile
+
+    p = get_user_profile(current_user["user_id"])
+    return {"success": True, "name": p.get("name") or current_user["username"]}
+
+
+@router.put("/profile")
+def update_profile(req: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
+    from backend.database import get_user_profile, save_user_profile
+
+    profile = get_user_profile(current_user["user_id"])
+    profile["name"] = req.name.strip()
+
+    if not save_user_profile(current_user["user_id"], profile):
+        raise HTTPException(500, "Không lưu được thông tin cá nhân.")
+    return {"success": True, "message": "Đã cập nhật thông tin"}
+
+
+@router.post("/forgot-password")
+def forgot_password(req: ForgotPasswordRequest, request: Request):
+    """
+    Gửi email đặt lại mật khẩu qua Supabase Auth.
+
+    Luôn trả về thành công dù email có tồn tại hay không — nếu phản hồi khác nhau,
+    endpoint này trở thành công cụ dò xem địa chỉ nào đã đăng ký.
+    """
+    success_response = {
+        "success": True,
+        "message": "Nếu email tồn tại trong hệ thống, liên kết đặt lại mật khẩu đã được gửi.",
+    }
+
+    try:
+        from backend.database import _get_client
+
         supabase = _get_client()
         if not supabase:
-            raise HTTPException(503, "Database unavailable")
-            
-        # Determine redirect origin dynamically to handle CORS wildcard *
+            return success_response
+
         origin = request.headers.get("origin")
-        if not origin or origin == "*":
-            origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip() and o.strip() != "*"]
-            origin = origins[0] if origins else "http://localhost:3000"
+        allowed = settings.origin_list
+        # Chỉ chấp nhận origin nằm trong danh sách cho phép — nếu không, kẻ tấn công
+        # có thể ép link đặt lại mật khẩu trỏ về domain của họ.
+        if origin not in allowed:
+            origin = allowed[0] if allowed and allowed[0] != "*" else "http://localhost:3000"
 
-        # Send password reset email via Supabase Auth
-        # Note: frontend needs to handle the callback at /auth/reset-password
-        res = supabase.auth.reset_password_email(
-            req.email,
-            options={"redirect_to": f"{origin}/auth/reset-password"}
+        supabase.auth.reset_password_email(
+            req.email.strip().lower(),
+            options={"redirect_to": f"{origin}/auth/reset-password"},
         )
-        return {"success": True, "message": "Password reset email sent (if account exists)"}
     except Exception as e:
-        print(f"Forgot password error: {e}")
-        # Return success anyway to prevent email enumeration
-        return {"success": True, "message": "Password reset email sent (if account exists)"}
+        print(f"[auth] forgot_password: {e}")
 
+    return success_response
 
-class ResetPasswordRequest(BaseModel):
-    email: str
-    new_password: str
-    supabase_token: str
 
 @router.post("/reset-password")
-async def reset_password(req: ResetPasswordRequest):
-    """Update password hash in our DB after verifying Supabase token."""
-    if len(req.new_password) < 4:
-        raise HTTPException(400, "New password must be at least 4 characters")
-        
+def reset_password(req: ResetPasswordRequest):
+    _validate_password_strength(req.new_password)
+
     try:
-        from backend.database import _get_client, get_user_by_username
+        from backend.database import _get_client
+
         supabase = _get_client()
         if not supabase:
-            raise HTTPException(503, "Database unavailable")
-            
-        # Verify the token is valid for this user
+            raise HTTPException(503, "Dịch vụ tạm thời không khả dụng.")
+
+        email = req.email.strip().lower()
         user_response = supabase.auth.get_user(req.supabase_token)
-        if not user_response or not user_response.user or user_response.user.email != req.email:
-            raise HTTPException(401, "Invalid or expired reset token")
-            
-        user = get_user_by_username(req.email)
+        if (
+            not user_response
+            or not user_response.user
+            or (user_response.user.email or "").lower() != email
+        ):
+            raise HTTPException(401, "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+
+        user = get_user_by_username(email)
         if not user:
-            raise HTTPException(404, "User not found")
-            
-        new_hashed = hash_password(req.new_password)
-        supabase.table("users").update({"password_hash": new_hashed}).eq("id", user["id"]).execute()
-        
-        return {"success": True, "message": "Password reset successfully"}
+            raise HTTPException(404, "Không tìm thấy tài khoản.")
+
+        supabase.table("users").update({"password_hash": hash_password(req.new_password)}).eq(
+            "id", user["id"]
+        ).execute()
+
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Reset password error: {e}")
-        raise HTTPException(500, f"Failed to reset password: {str(e)}")
+        log_and_raise("reset_password", e, 500, "Không đặt lại được mật khẩu.")
+
+    return {"success": True, "message": "Đặt lại mật khẩu thành công"}
+
+
+# ── Tiện ích dòng lệnh ────────────────────────────────────────────────────────
+# Dùng để sinh hash khi cần seed tài khoản admin thẳng vào Supabase:
+#   python -m backend.routers.auth "MatKhauCuaBan"
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        print('Cách dùng: python -m backend.routers.auth "<mật khẩu>"')
+        sys.exit(1)
+    print(hash_password(sys.argv[1]))

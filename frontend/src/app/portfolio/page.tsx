@@ -11,7 +11,7 @@ import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
 import { StatCard } from "@/components/ui/stat-card"
 import { PortfolioChart } from "@/components/dashboard/portfolio-chart"
-import { Skeleton, ErrorCard } from "@/components/ui/states"
+import { Skeleton, ErrorCard, StatCardSkeleton, TableSkeleton } from "@/components/ui/states"
 import { ActionBadge } from "@/components/ui/tags"
 import { formatCurrency, formatPercent, timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -32,10 +32,9 @@ export default function PortfolioPage() {
       {portfolioQ.isError ? (
         <ErrorCard onRetry={() => portfolioQ.refetch()} />
       ) : !p ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28" />
-          ))}
+        <div className="space-y-6">
+          <StatCardSkeleton count={4} />
+          <TableSkeleton rows={6} cols={5} />
         </div>
       ) : (
         <>

@@ -1,24 +1,60 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  Cấu hình triển khai Render — ForecastAI backend
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# `sync: false` nghĩa là giá trị KHÔNG nằm trong file này mà phải nhập thủ công
+# ở dashboard Render (Environment → Add Environment Variable). Đây là cách đúng:
+# secret không bao giờ đi vào repo.
+#
+# LƯU Ý VỀ GÓI FREE: service ngủ sau 15 phút không có traffic, và lần đánh thức
+# đầu tiên mất 30-60 giây (phải nạp lại TensorFlow + mô hình TFT). Khi demo đồ án,
+# hãy gọi thử API trước vài phút để service kịp khởi động.
+
 services:
-  # ── Bảng điều khiển Web API (FastAPI Backend) ──
   - type: web
     name: forecastai-backend
-    env: python
+    runtime: python
     region: singapore
     plan: free
-    buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+
+    buildCommand: "pip install --no-cache-dir -r backend/requirements.txt"
+    startCommand: "uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1"
+
+    # Render dùng đường dẫn này để kiểm tra service còn sống.
+    healthCheckPath: /health
+
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "3.11.9"
+
+      # Bật chế độ production: tắt /docs, ẩn stack trace, và bắt buộc
+      # secret/CORS phải được cấu hình đúng thì app mới khởi động.
+      - key: ENVIRONMENT
+        value: production
+
+      # ── Secret: nhập ở dashboard, không đưa vào repo ──
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
-        sync: false
-      - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: ADMIN_SECRET_KEY
         sync: false
+      - key: CRON_SECRET_KEY
+        sync: false
+
+      # Danh sách domain frontend được phép gọi API.
+      # Ví dụ: https://forecastai.netlify.app
       - key: ALLOWED_ORIGINS
         sync: false
+
+      # ── Rate limiting ──
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_DEFAULT
+        value: "120"
+      - key: RATE_LIMIT_AUTH
+        value: "10"
+      - key: RATE_LIMIT_EXPENSIVE
+        value: "20"

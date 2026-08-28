@@ -1,176 +1,273 @@
 """
-cron_accuracy_learner.py
-A standalone script meant to run daily (e.g., via cron) to:
-1. Evaluate past predictions against actual closing prices.
-2. Calculate the % Error and save it to the `model_accuracy` table.
-3. Automatically fine-tune the TFT model on recent data (Online Learning).
+cron_accuracy_learner.py – Đánh giá sai số dự báo và fine-tune mô hình định kỳ.
+
+Ba vấn đề được xử lý ở bản này:
+
+1. **Fine-tune xong nhưng không có tác dụng.**
+   Bản cũ ghi đè `models/global_tft.keras` rồi kết thúc. Nhưng tiến trình web đang
+   phục vụ request bằng một instance đã nạp sẵn trong RAM (`_model_cache`), và biến
+   đó không hề được làm mới. Trên Render free tier, service hiếm khi tự khởi động lại,
+   nên mô hình "đã học" chỉ thực sự được dùng sau lần deploy kế tiếp — có thể là vài tuần.
+   Nay sau khi lưu, hàm gọi `reload_tft_model()` để nạp lại ngay.
+
+2. **Ghi đè mô hình production mà không kiểm chứng.**
+   Fine-tune 3 epoch trên một lô dữ liệu nhỏ có thể làm mô hình tệ đi (catastrophic
+   forgetting), đặc biệt khi thị trường vừa qua một giai đoạn bất thường. Bản cũ ghi đè
+   vô điều kiện và không có đường lùi. Nay mô hình mới phải vượt qua kiểm tra trên tập
+   giữ lại thì mới được chấp nhận, và bản cũ luôn được sao lưu trước khi ghi đè.
+
+3. **Phụ thuộc vào file scaler đã lỗi thời.**
+   Bản cũ đọc `models/scaler_tft_{ticker}.pkl` — các file này do phiên bản cũ của
+   train_tft.py sinh ra và không còn được tạo nữa, nên vòng lặp thường xuyên `continue`
+   và không học được gì. Nay scaler được khớp tại chỗ trên dữ liệu lịch sử, đúng như
+   cách `forecaster.py` làm lúc inference.
 """
 
+from __future__ import annotations
+
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
+from typing import List
 
-# Ensure project root is in path
+import numpy as np
+import pandas as pd
+
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from backend.database import get_pending_evaluations, update_accuracy_evaluation
-from backend.models.forecaster import fetch_ohlcv
+from backend.models.forecaster import LOOK_BACK, fetch_ohlcv, reload_tft_model
 
-def run_evaluations():
-    print(f"[{datetime.now().isoformat()}] Starting Model Accuracy Evaluation...")
-    
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+MODEL_PATH = os.path.join(MODELS_DIR, "global_tft.keras")
+BACKUP_PATH = os.path.join(MODELS_DIR, "global_tft.backup.keras")
+
+FINE_TUNE_EPOCHS = 3
+FINE_TUNE_LR = 1e-4
+# Số cửa sổ gần nhất lấy từ mỗi mã cho một lượt fine-tune.
+RECENT_WINDOWS_PER_TICKER = 14
+# Mô hình mới chỉ được chấp nhận nếu loss trên tập giữ lại không tệ hơn quá ngưỡng này.
+MAX_ACCEPTABLE_REGRESSION = 1.05  # tệ hơn tối đa 5%
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BƯỚC 1: ĐÁNH GIÁ DỰ BÁO CŨ
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_evaluations() -> List[str]:
+    """
+    Đối chiếu các dự báo đã ghi với giá đóng cửa thực tế của đúng phiên được dự báo.
+
+    Trả về danh sách mã đã đánh giá được — đây chính là đầu vào cho bước fine-tune,
+    vì đó là những mã hệ thống vừa có thêm thông tin mới về chất lượng dự báo.
+    """
+    print(f"[{datetime.now().isoformat()}] Bắt đầu đánh giá sai số mô hình...")
+
     pending = get_pending_evaluations()
     if not pending:
-        print("✅ No pending evaluations. Everything is up to date.")
+        print("Không có dự báo nào chờ đánh giá.")
         return []
 
-    print(f"🔍 Found {len(pending)} predictions pending evaluation.")
-    
-    evaluated_tickers = set()
+    print(f"Tìm thấy {len(pending)} dự báo chờ đánh giá.")
 
+    # Gom theo mã để mỗi mã chỉ tải dữ liệu lịch sử một lần.
+    by_ticker: dict = {}
     for record in pending:
-        record_id = record["id"]
-        ticker = record["ticker"]
-        forecast_date = record["forecast_date"]
-        predicted_price = float(record["predicted_price"])
-        
-        # We need historical data up to today to check the forecast_date
-        # If forecast_date is today or earlier, we can evaluate
-        df = fetch_ohlcv(ticker, period="1mo")
-        if df is None or df.empty:
-            print(f"⚠️ Cannot fetch data for {ticker}. Skipping.")
-            continue
-            
-        # Ensure the index is just the date string for easy comparison
-        df.index = df.index.tz_localize(None).normalize()
-        
-        # Convert forecast_date to pandas datetime
-        import pandas as pd
-        target_date = pd.to_datetime(forecast_date).normalize()
-        
-        if target_date in df.index:
-            actual_price = float(df.loc[target_date, "Close"])
-            error_pct = abs(actual_price - predicted_price) / actual_price * 100
-            
-            success = update_accuracy_evaluation(record_id, actual_price, error_pct)
-            if success:
-                print(f"📈 Evaluated {ticker} for {forecast_date}: Pred=${predicted_price:.2f}, Act=${actual_price:.2f} -> Err: {error_pct:.2f}%")
-                evaluated_tickers.add(ticker)
-            else:
-                print(f"❌ Failed to update DB for record {record_id}")
-        else:
-            print(f"⏳ Market data for {ticker} on {forecast_date} not yet available.")
-            
-    return list(evaluated_tickers)
+        by_ticker.setdefault(record["ticker"], []).append(record)
 
-def online_learning(tickers: list):
+    evaluated: set = set()
+
+    for ticker, records in by_ticker.items():
+        df = fetch_ohlcv(ticker, period="3mo", use_cache=False)
+        if df is None or df.empty:
+            print(f"  {ticker}: không tải được dữ liệu, bỏ qua.")
+            continue
+
+        df.index = df.index.normalize()
+
+        for record in records:
+            try:
+                target_date = pd.to_datetime(record["forecast_date"]).normalize()
+            except (ValueError, TypeError):
+                continue
+
+            if target_date not in df.index:
+                # Phiên chưa diễn ra, hoặc là ngày nghỉ — để lại đánh giá lần sau.
+                continue
+
+            actual = float(df.loc[target_date, "Close"])
+            predicted = float(record["predicted_price"])
+            if actual <= 0:
+                continue
+
+            error_pct = abs(actual - predicted) / actual * 100
+            if update_accuracy_evaluation(record["id"], actual, error_pct):
+                print(
+                    f"  {ticker} {record['forecast_date']}: dự báo {predicted:.2f}, "
+                    f"thực tế {actual:.2f}, sai số {error_pct:.2f}%"
+                )
+                evaluated.add(ticker)
+
+    print(f"Đã đánh giá xong {len(evaluated)} mã.")
+    return sorted(evaluated)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BƯỚC 2: FINE-TUNE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _collect_recent_samples(tickers: List[str], look_back: int, expected_features: int):
     """
-    Briefly fine-tune the existing TFT model using the most recent data of the evaluated tickers.
-    This fulfills the 'tự động học hỏi' requirement.
+    Thu thập các cửa sổ dữ liệu gần nhất của những mã vừa được đánh giá.
+
+    Scaler được khớp tại chỗ trên chính lịch sử của từng mã — nhất quán với cách
+    `forecaster.py` chuẩn hoá lúc inference, nên mô hình được fine-tune trên đúng
+    phân phối dữ liệu mà nó sẽ gặp khi chạy thật.
+    """
+    from sklearn.preprocessing import MinMaxScaler
+
+    from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+
+    all_X, all_Y = [], []
+
+    for ticker in tickers:
+        df = fetch_ohlcv(ticker, period="1y")
+        if df is None or df.empty:
+            continue
+
+        df = add_technical_indicators(df)
+        available = [c for c in get_feature_columns() if c in df.columns]
+        df_clean = df[["Close"] + available].dropna()
+
+        if len(df_clean) < look_back + 5:
+            continue
+        if df_clean.shape[1] != expected_features:
+            print(
+                f"  {ticker}: số đặc trưng ({df_clean.shape[1]}) không khớp mô hình "
+                f"({expected_features}), bỏ qua."
+            )
+            continue
+
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled = scaler.fit_transform(df_clean.values)
+
+        start = max(0, len(scaled) - look_back - RECENT_WINDOWS_PER_TICKER)
+        for i in range(start, len(scaled) - look_back):
+            all_X.append(scaled[i : i + look_back])
+            all_Y.append(scaled[i + look_back, 0])
+
+    if not all_X:
+        return None, None
+
+    X = np.array(all_X, dtype=np.float32)
+    Y = np.column_stack([all_Y] * 3).astype(np.float32)
+    return X, Y
+
+
+def online_learning(tickers: List[str]) -> bool:
+    """
+    Fine-tune nhẹ mô hình trên dữ liệu mới nhất của các mã vừa được đánh giá.
+
+    Trả về True nếu mô hình production thực sự được cập nhật.
     """
     if not tickers:
-        return
-        
-    print(f"\n🧠 Starting Online Learning for: {', '.join(tickers)}")
-    
+        return False
+
+    print(f"\nBắt đầu học tăng cường cho: {', '.join(tickers)}")
+
+    if not os.path.exists(MODEL_PATH):
+        print("Chưa có mô hình đã huấn luyện. Chạy backend/train_tft.py trước.")
+        return False
+
     import tensorflow as tf
-    from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+
     from backend.models.tft_model import quantile_loss
-    import pickle
-    import numpy as np
-    
-    MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-    model_path = os.path.join(MODELS_DIR, "global_tft.keras")
-    meta_path = os.path.join(MODELS_DIR, "tft_meta.pkl")
-    
-    if not os.path.exists(model_path) or not os.path.exists(meta_path):
-        print("❌ Pre-trained model or metadata not found. Run training first.")
-        return
-        
-    # Load model
+
     try:
         model = tf.keras.models.load_model(
-            model_path,
-            custom_objects={"loss_fn": quantile_loss([0.1, 0.5, 0.9])}
+            MODEL_PATH, custom_objects={"loss_fn": quantile_loss([0.1, 0.5, 0.9])}
         )
     except Exception as e:
-        print(f"❌ Failed to load model for learning: {e}")
-        return
-        
-    # Load Meta
-    with open(meta_path, "rb") as f:
-        meta = pickle.load(f)
-    look_back = meta["look_back"]
-    
-    all_X = []
-    all_Y = []
-    
-    # Collect fresh data for fine-tuning
-    for ticker in tickers:
-        df = fetch_ohlcv(ticker, period="3mo") # Get recent data
-        if df is None or df.empty:
-            continue
-            
-        df = add_technical_indicators(df)
-        feature_cols = get_feature_columns()
-        available_cols = [c for c in feature_cols if c in df.columns]
-        
-        target_col = "Close"
-        all_cols = [target_col] + available_cols
-        df_clean = df[all_cols].dropna()
-        
-        if len(df_clean) < look_back + 5: # Just need a few samples
-            continue
-            
-        scaler_path = os.path.join(MODELS_DIR, f"scaler_tft_{ticker}.pkl")
-        if not os.path.exists(scaler_path):
-            continue
-            
-        with open(scaler_path, "rb") as f:
-            scaler = pickle.load(f)
-            
-        scaled_data = scaler.transform(df_clean[all_cols].values)
-        
-        # Create sequences (only the most recent ones for fast learning)
-        X, Y = [], []
-        # Take the last 14 days of possible sequences
-        start_idx = max(0, len(scaled_data) - look_back - 14)
-        for i in range(start_idx, len(scaled_data) - look_back):
-            X.append(scaled_data[i:i + look_back])
-            Y.append(scaled_data[i + look_back, 0])
-            
-        all_X.extend(X)
-        all_Y.extend(Y)
-        
-    if not all_X:
-        print("⚠️ Not enough new data generated for learning.")
-        return
-        
-    X = np.array(all_X)
-    Y = np.array(all_Y)
-    Y_quantile = np.column_stack([Y, Y, Y])
-    
-    print(f"📊 Fine-tuning on {len(X)} new recent samples...")
-    
-    # Fine-tune for a very small number of epochs so it doesn't overfit/forget
-    # We use a smaller learning rate for fine-tuning
-    import tensorflow.keras.backend as K
-    K.set_value(model.optimizer.learning_rate, 1e-4)
-    
+        print(f"Không nạp được mô hình để fine-tune: {e}")
+        return False
+
+    expected_features = model.input_shape[-1]
+    look_back = model.input_shape[1] or LOOK_BACK
+
+    X, Y = _collect_recent_samples(tickers, look_back, expected_features)
+    if X is None or len(X) < 10:
+        print("Không đủ dữ liệu mới để học (cần tối thiểu 10 mẫu).")
+        return False
+
+    # ── Giữ lại một phần để kiểm chứng ──
+    # Tách theo thứ tự (không trộn) để tập giữ lại luôn là phần MỚI NHẤT —
+    # đúng thứ mà ta muốn mô hình cải thiện.
+    split = max(1, int(len(X) * 0.8))
+    X_train, Y_train = X[:split], Y[:split]
+    X_holdout, Y_holdout = X[split:], Y[split:]
+
+    if len(X_holdout) == 0:
+        X_holdout, Y_holdout = X_train, Y_train
+
+    loss_before = float(model.evaluate(X_holdout, Y_holdout, verbose=0)[0])
+    print(f"Loss trước khi học: {loss_before:.6f} (trên {len(X_holdout)} mẫu giữ lại)")
+
+    print(f"Fine-tune trên {len(X_train)} mẫu mới...")
+    tf.keras.backend.set_value(model.optimizer.learning_rate, FINE_TUNE_LR)
     model.fit(
-        X, Y_quantile,
-        epochs=3,
-        batch_size=min(32, len(X)),
-        verbose=1
+        X_train,
+        Y_train,
+        epochs=FINE_TUNE_EPOCHS,
+        batch_size=min(32, len(X_train)),
+        verbose=1,
     )
-    
-    # Save the updated model
-    model.save(model_path)
-    print("✅ Online Learning completed and model updated successfully.")
+
+    loss_after = float(model.evaluate(X_holdout, Y_holdout, verbose=0)[0])
+    print(f"Loss sau khi học:  {loss_after:.6f}")
+
+    # ── Cổng kiểm chứng ──
+    if loss_after > loss_before * MAX_ACCEPTABLE_REGRESSION:
+        print(
+            f"TỪ CHỐI cập nhật: mô hình sau fine-tune tệ hơn {loss_after / loss_before - 1:.1%}, "
+            f"vượt ngưỡng cho phép {MAX_ACCEPTABLE_REGRESSION - 1:.0%}. "
+            "Giữ nguyên mô hình đang chạy."
+        )
+        return False
+
+    # ── Sao lưu rồi mới ghi đè ──
+    try:
+        shutil.copy2(MODEL_PATH, BACKUP_PATH)
+    except Exception as e:
+        print(f"Cảnh báo: không sao lưu được mô hình cũ ({e}). Vẫn tiếp tục.")
+
+    model.save(MODEL_PATH)
+
+    # Nạp lại vào tiến trình đang phục vụ — nếu thiếu bước này, toàn bộ việc học
+    # ở trên sẽ không có tác dụng gì cho tới lần khởi động lại tiếp theo.
+    reload_tft_model()
+
+    improvement = (loss_before - loss_after) / loss_before * 100 if loss_before else 0.0
+    print(f"Đã cập nhật mô hình (cải thiện {improvement:+.2f}%) và nạp lại vào bộ nhớ.")
+    return True
+
+
+def restore_backup() -> bool:
+    """Khôi phục mô hình từ bản sao lưu gần nhất. Dùng khi mô hình mới có vấn đề."""
+    if not os.path.exists(BACKUP_PATH):
+        print("Không có bản sao lưu để khôi phục.")
+        return False
+    shutil.copy2(BACKUP_PATH, MODEL_PATH)
+    reload_tft_model()
+    print("Đã khôi phục mô hình từ bản sao lưu.")
+    return True
+
 
 if __name__ == "__main__":
-    tickers_evaluated = run_evaluations()
-    online_learning(tickers_evaluated)
+    if "--restore" in sys.argv:
+        restore_backup()
+    else:
+        online_learning(run_evaluations())

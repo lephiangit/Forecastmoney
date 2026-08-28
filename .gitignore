@@ -1,6 +1,30 @@
-# ─── ForecastAI .gitignore ─────────────────────────────────────────
+# ─── ForecastAI .gitignore ─────────────────────────────────────────────────────
 
-# Python
+# ══════════════════════════════════════════════════════════════════════════════
+#  BÍ MẬT — không bao giờ commit
+# ══════════════════════════════════════════════════════════════════════════════
+# Dùng mẫu rộng để một file .env đặt sai chỗ vẫn bị chặn.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.local
+**/.env.*.local
+*.pem
+*.key
+secrets.json
+.streamlit/secrets.toml
+
+# File chứa thông tin đăng nhập / API key ở dạng thô
+account.txt
+apikey.txt
+credentials.txt
+*_secret*
+*_credentials*
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Python
+# ══════════════════════════════════════════════════════════════════════════════
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,57 +32,71 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Virtual Environment
+# Môi trường ảo
 venv/
 .venv/
 env/
+ENV/
 
-# IDE
+# ══════════════════════════════════════════════════════════════════════════════
+#  Node / Next.js
+# ══════════════════════════════════════════════════════════════════════════════
+node_modules/
+.next/
+out/
+.vercel/
+.netlify/
+*.tsbuildinfo
+next-env.d.ts
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Mô hình & dữ liệu
+# ══════════════════════════════════════════════════════════════════════════════
+# GHI CHÚ: global_tft.keras và tft_meta.pkl ĐƯỢC theo dõi bởi git (không ignore),
+# vì Render cần kéo mô hình đã huấn luyện trực tiếp từ repo. Chúng đủ nhỏ (~2MB).
+models/*.h5
+models/*.pt
+models/*.pth
+models/*.backup.keras
+models/scaler_*.pkl
+models/loss_*.png
+
+# Dữ liệu giá được tải lúc chạy hoặc trên Kaggle — không đưa vào repo
+data/
+*.zip
+
+# Kết quả đánh giá (sinh lại được bằng backend/evaluate_tft.py)
+models/evaluation_results.csv
+models/evaluation_results.json
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  IDE & hệ điều hành
+# ══════════════════════════════════════════════════════════════════════════════
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Secrets & Environment
-.env
-.streamlit/secrets.toml
-
-# Model weights
-# NOTE: Removed ignore for .keras and .pkl so that Render can pull the trained model from GitHub.
-# TFT model and scalers are small enough to be tracked by git directly.
-# models/*.keras
-models/*.h5
-# models/*.pkl
-models/*.pt
-models/*.pth
-
-# Data (downloaded at runtime & Kaggle local base)
-data/
-*.zip
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Logs
+# ══════════════════════════════════════════════════════════════════════════════
+#  Log & file tạm
+# ══════════════════════════════════════════════════════════════════════════════
 *.log
+scratch/
+tmp/
+.cache/
 
-# Internal docs
+# ══════════════════════════════════════════════════════════════════════════════
+#  Tài liệu nội bộ (không public)
+# ══════════════════════════════════════════════════════════════════════════════
 README_INTERNAL.md
 DEPLOYMENT_CHECKLIST.md
 PROJECT_ACTIVITIES.md
-
-# Ignore design_rule directory to avoid pushing heavy design guides
-design_rule/
-
-# Admin credentials
-account.txt
-apikey.txt
-
-# Internal docs
 noibo.md
 logic.md
-
-# Scratch folder (temporary test scripts)
-scratch/
+design_rule/

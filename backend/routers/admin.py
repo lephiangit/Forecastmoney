@@ -1,125 +1,206 @@
 """
-routers/admin.py – User portfolio and paper trading endpoints.
-Scoped to the authenticated user.
+routers/admin.py – Danh mục đầu tư, paper trading và quản trị hệ thống.
 
-NOTE: All endpoints are sync `def` so FastAPI runs them in a threadpool,
-preventing blocking calls from freezing the event loop.
+Thay đổi quan trọng so với bản trước:
+
+1. **3 endpoint `trigger-*` không còn nhận secret qua query string.**
+   Secret nay đi trong header `X-Cron-Secret` và dùng secret RIÊNG
+   (`CRON_SECRET_KEY`), không dùng chung khoá ký JWT nữa. Trước đây nếu secret
+   này lộ, kẻ tấn công có thể tự ký token admin — giờ thì không.
+
+2. **`/system` trả số liệu THẬT.** Bản cũ dựng độ trễ, tỷ lệ lỗi, số kết nối DB
+   bằng `random.uniform(...)`.
+
+3. **Phép tính vị thế và tỷ lệ thắng dùng chung service** với bot auto-trade,
+   nên hai nơi không còn ra kết quả lệch nhau.
+
+4. **Chặn admin tự khoá mình** (tự hạ quyền / tự treo / tự xoá tài khoản).
+
+Toàn bộ endpoint để `def` (không phải `async def`) để FastAPI chạy chúng trong
+threadpool — các lời gọi Supabase và yfinance là blocking, nếu chạy trực tiếp
+trên event loop sẽ làm đơ toàn bộ server.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel
-from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import List, Optional
 
-from backend.config import settings
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+
 from backend.database import (
-    get_admin_config, update_admin_config,
-    save_trade, get_trades,
+    _get_client,
+    get_admin_config,
+    get_trades,
+    save_trade,
+    update_admin_config,
 )
-from backend.routers.auth import get_current_user, get_current_admin
+from backend.metrics import metrics
+from backend.routers.auth import get_current_admin, get_current_user
+from backend.security import log_and_raise, validate_ticker_format, verify_cron_secret
+from backend.services.portfolio import (
+    compute_position_for,
+    compute_positions,
+    compute_win_rate,
+    sort_trades_ascending,
+)
 
 router = APIRouter()
 
+MAX_WATCHLIST_SIZE = 50
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCHEMAS
+# ══════════════════════════════════════════════════════════════════════════════
 
 class TradeRequest(BaseModel):
-    ticker: str
-    action: str  # "BUY" | "SELL"
-    quantity: float
+    ticker: str = Field(min_length=1, max_length=20)
+    action: str = Field(pattern="^(BUY|SELL)$")
+    quantity: float = Field(gt=0, le=1_000_000_000)
+
 
 class StartTradingRequest(BaseModel):
-    amount: float
-    duration_hours: int
-    assets: List[str] = []
-    strategy: str = "balanced"          # conservative | balanced | aggressive
-    stop_loss: float = 5.0              # percent
-    take_profit: float = 15.0           # percent
-    min_confidence: float = 70.0        # percent
+    amount: float = Field(gt=0, le=100_000_000)
+    duration_hours: int = Field(ge=1, le=24 * 30)
+    assets: List[str] = Field(default_factory=list, max_length=MAX_WATCHLIST_SIZE)
+    strategy: str = Field(default="balanced", pattern="^(conservative|balanced|aggressive)$")
+    stop_loss: float = Field(default=5.0, ge=0, le=100)
+    take_profit: float = Field(default=15.0, ge=0, le=1000)
+    min_confidence: float = Field(default=70.0, ge=0, le=100)
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+class BalanceRequest(BaseModel):
+    amount: float = Field(ge=0, le=1_000_000_000)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DANH MỤC & GIAO DỊCH
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/portfolio")
 def get_portfolio(user=Depends(get_current_user)):
-    """Get current user's paper trading state: balance, positions, P&L."""
+    """Trạng thái paper trading của người dùng hiện tại: số dư, vị thế, lãi/lỗ."""
     user_id = user["user_id"]
     config = get_admin_config(user_id)
-    trades = get_trades(user_id, limit=50)
+    trades = get_trades(user_id, limit=500)
 
-    # Build positions from trades
-    positions = {}
-    for t in reversed(trades):
-        ticker = t["ticker"]
-        if ticker not in positions:
-            positions[ticker] = {"qty": 0.0, "avg_cost": 0.0, "total_cost": 0.0}
+    positions = compute_positions(sort_trades_ascending(trades))
 
-        if t["action"] == "BUY":
-            old_cost = positions[ticker]["avg_cost"] * positions[ticker]["qty"]
-            positions[ticker]["qty"] += t["quantity"]
-            positions[ticker]["total_cost"] = old_cost + t["total_value"]
-            if positions[ticker]["qty"] > 0:
-                positions[ticker]["avg_cost"] = positions[ticker]["total_cost"] / positions[ticker]["qty"]
-        elif t["action"] == "SELL":
-            positions[ticker]["qty"] = max(0, positions[ticker]["qty"] - t["quantity"])
-
-    # Remove zeroed positions
-    positions = {k: v for k, v in positions.items() if v["qty"] > 0}
-
-    total_trades = len(trades)
-    win_trades = config.get("win_trades", 0)
-    loss_trades = config.get("loss_trades", 0)
-    win_rate = win_trades / total_trades * 100 if total_trades > 0 else 0
+    win_trades = config.get("win_trades", 0) or 0
+    loss_trades = config.get("loss_trades", 0) or 0
 
     return {
         "initial_balance": config.get("initial_balance", 0.0),
         "current_balance": config.get("current_balance", 0.0),
         "total_pnl": config.get("total_pnl", 0.0),
-        "win_rate": round(win_rate, 1),
+        "win_rate": compute_win_rate(win_trades, loss_trades),
         "win_trades": win_trades,
         "loss_trades": loss_trades,
+        "closed_trades": win_trades + loss_trades,
+        "total_trades": len(trades),
         "is_running": config.get("is_running", False),
         "positions": positions,
         "recent_trades": trades[:20],
-        "sentiment_enhanced": True,  # Signal that bot uses SentimentFusion
+        "sentiment_enhanced": True,
     }
 
 
 @router.get("/portfolio/history")
-def get_portfolio_history_api(days: int = 90, user=Depends(get_current_user)):
-    """Get portfolio balance history for chart plotting."""
+def get_portfolio_history_api(
+    days: int = Query(default=90, ge=1, le=365), user=Depends(get_current_user)
+):
     from backend.database import get_portfolio_history
-    history = get_portfolio_history(user["user_id"], days=days)
-    return {"history": history}
+
+    return {"history": get_portfolio_history(user["user_id"], days=days)}
+
+
+@router.get("/portfolio/chart")
+def get_portfolio_chart(user=Depends(get_current_user)):
+    """Diễn biến số dư theo từng giao dịch, dùng để vẽ biểu đồ P&L."""
+    user_id = user["user_id"]
+    config = get_admin_config(user_id)
+
+    trades = sort_trades_ascending(get_trades(user_id, limit=500))
+    initial = float(config.get("initial_balance", 0.0) or 0.0)
+    balance = initial
+
+    start_date = config.get("started_at") or (
+        trades[0]["trade_time"] if trades else datetime.now().isoformat()
+    )
+    history = [{"time": start_date, "balance": round(initial, 2), "pnl": 0.0}]
+
+    for t in trades:
+        value = float(t.get("total_value") or 0)
+        balance += -value if t.get("action") == "BUY" else value
+        history.append(
+            {
+                "time": t.get("trade_time"),
+                "balance": round(balance, 2),
+                "pnl": round(balance - initial, 2),
+            }
+        )
+
+    return history
+
+
+@router.get("/pnl")
+def get_pnl_report(user=Depends(get_current_user)):
+    user_id = user["user_id"]
+    config = get_admin_config(user_id)
+    trades = get_trades(user_id, limit=200)
+
+    initial = float(config.get("initial_balance", 0.0) or 0.0)
+    current = float(config.get("current_balance", 0.0) or 0.0)
+    total_pnl = current - initial
+
+    return {
+        "initial_balance": initial,
+        "current_balance": current,
+        "total_pnl": total_pnl,
+        "pnl_pct": round(total_pnl / initial * 100, 2) if initial > 0 else 0.0,
+        "win_trades": config.get("win_trades", 0),
+        "loss_trades": config.get("loss_trades", 0),
+        "is_running": config.get("is_running", False),
+        "started_at": config.get("started_at"),
+        "trade_count": len(trades),
+        "trades": trades[:50],
+    }
 
 
 @router.post("/trade")
 def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
-    """Execute a manual paper trade for the current user."""
+    """Đặt một lệnh paper trading thủ công."""
     from backend.models.forecaster import get_live_quote
 
     user_id = user["user_id"]
-    ticker = req.ticker.upper()
-    if req.action not in ("BUY", "SELL"):
-        raise HTTPException(400, "action must be 'BUY' or 'SELL'")
-    if req.quantity <= 0:
-        raise HTTPException(400, "quantity must be positive")
+    ticker = validate_ticker_format(req.ticker)
 
     live = get_live_quote(ticker)
     if not live:
-        raise HTTPException(503, f"Cannot get price for {ticker}")
+        raise HTTPException(503, f"Không lấy được giá hiện tại của {ticker}.")
 
     price = live["price"]
     total = price * req.quantity
     config = get_admin_config(user_id)
-    current_balance = config.get("current_balance", 10000.0)
+    balance = float(config.get("current_balance", 0.0) or 0.0)
 
-    if req.action == "BUY" and total > current_balance:
-        raise HTTPException(400, f"Insufficient balance: need {total:.2f}, have {current_balance:.2f}")
+    if req.action == "BUY":
+        if total > balance:
+            raise HTTPException(
+                400, f"Số dư không đủ: cần {total:,.2f}, hiện có {balance:,.2f}."
+            )
+        new_balance = balance - total
+    else:
+        # Không cho bán khống — chỉ bán được phần đang thực sự nắm giữ.
+        position = compute_position_for(sort_trades_ascending(get_trades(user_id, limit=500)), ticker)
+        if position["qty"] < req.quantity:
+            raise HTTPException(
+                400,
+                f"Bạn chỉ đang nắm giữ {position['qty']:.6f} {ticker}, không đủ để bán.",
+            )
+        new_balance = balance + total
 
-    new_balance = current_balance - total if req.action == "BUY" else current_balance + total
     update_admin_config(user_id, {"current_balance": new_balance})
-
     save_trade(
         user_id=user_id,
         ticker=ticker,
@@ -141,499 +222,527 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
     }
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  BOT AUTO-TRADE
+# ══════════════════════════════════════════════════════════════════════════════
+
 @router.post("/trading/start")
 def start_auto_trading(
     req: StartTradingRequest,
     background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
 ):
-    """Start auto-trading for the current user."""
-    from backend.database import save_bot_config, get_admin_config, _get_client
-    from datetime import datetime, timedelta
-    
+    """
+    Bật bot auto-trade cho người dùng hiện tại.
+
+    Lưu ý: thao tác này XOÁ toàn bộ lịch sử giao dịch mô phỏng cũ để bắt đầu
+    một phiên chạy sạch với số vốn mới. Frontend cần cảnh báo rõ điều này.
+    """
+    from backend.database import save_bot_config
+
     user_id = user["user_id"]
-    
-    # Ensure config exists
-    get_admin_config(user_id)
-    
+    assets = [validate_ticker_format(a) for a in req.assets]
+
+    get_admin_config(user_id)  # Đảm bảo bản ghi cấu hình đã tồn tại
     end_time = (datetime.now() + timedelta(hours=req.duration_hours)).isoformat()
-    
-    save_bot_config(user_id, {
-        "amount": req.amount,
-        "end_time": end_time,
-        "assets": req.assets,
-        "strategy": req.strategy,
-        "stop_loss": req.stop_loss,
-        "take_profit": req.take_profit,
-        "min_confidence": req.min_confidence,
-    })
-    
-    # Reset active portfolio simulation stats to start clean with the requested capital amount
-    update_admin_config(user_id, {
-        "is_running": True,
-        "started_at": datetime.now().isoformat(),
-        "initial_balance": req.amount,
-        "current_balance": req.amount,
-        "total_pnl": 0.0,
-        "win_trades": 0,
-        "loss_trades": 0,
-    })
-    
-    # Delete previous trades for this user to start fresh
+
+    save_bot_config(
+        user_id,
+        {
+            "amount": req.amount,
+            "end_time": end_time,
+            "assets": assets,
+            "strategy": req.strategy,
+            "stop_loss": req.stop_loss,
+            "take_profit": req.take_profit,
+            "min_confidence": req.min_confidence,
+        },
+    )
+
+    update_admin_config(
+        user_id,
+        {
+            "is_running": True,
+            "started_at": datetime.now().isoformat(),
+            "initial_balance": req.amount,
+            "current_balance": req.amount,
+            "total_pnl": 0.0,
+            "win_trades": 0,
+            "loss_trades": 0,
+        },
+    )
+
     c = _get_client()
     if c:
         try:
             c.table("paper_trades").delete().eq("user_id", user_id).execute()
-            # Also reset cached portfolio snapshots if any
             c.table("portfolio_snapshots").delete().eq("user_id", user_id).execute()
         except Exception as e:
-            print(f"Error resetting user trade tables on start: {e}")
-    
-    # Trigger an immediate run in the background
+            print(f"[admin] Lỗi khi reset dữ liệu giao dịch của user {user_id}: {e}")
+
     from backend.cron_auto_trader import run_auto_trade
+
     background_tasks.add_task(run_auto_trade)
-    
-    return {"message": "Auto-trading started", "is_running": True}
+
+    return {"message": "Đã bật bot auto-trade", "is_running": True, "end_time": end_time}
 
 
 @router.post("/trading/stop")
 def stop_auto_trading(user=Depends(get_current_user)):
-    """Stop auto-trading for the current user."""
     user_id = user["user_id"]
     update_admin_config(user_id, {"is_running": False})
     config = get_admin_config(user_id)
     return {
-        "message": "Auto-trading stopped",
+        "message": "Đã dừng bot auto-trade",
         "is_running": False,
         "final_balance": config.get("current_balance"),
         "total_pnl": config.get("total_pnl"),
     }
 
+
 @router.get("/trading/config")
 def get_auto_trading_config(user=Depends(get_current_user)):
-    """Get the current bot config for the user."""
     from backend.database import get_bot_config
-    user_id = user["user_id"]
-    cfg = get_bot_config(user_id)
-    if not cfg:
-        return {"amount": 0, "end_time": None}
-    return cfg
+
+    return get_bot_config(user["user_id"]) or {"amount": 0, "end_time": None}
 
 
-@router.get("/pnl")
-def get_pnl_report(user=Depends(get_current_user)):
-    """Get user-specific P&L report."""
-    user_id = user["user_id"]
-    config = get_admin_config(user_id)
-    trades = get_trades(user_id, limit=200)
-
-    initial = config.get("initial_balance", 10000.0)
-    current = config.get("current_balance", 10000.0)
-    total_pnl = current - initial
-    pnl_pct = total_pnl / initial * 100 if initial > 0 else 0
-
-    return {
-        "initial_balance": initial,
-        "current_balance": current,
-        "total_pnl": total_pnl,
-        "pnl_pct": round(pnl_pct, 2),
-        "win_trades": config.get("win_trades", 0),
-        "loss_trades": config.get("loss_trades", 0),
-        "is_running": config.get("is_running", False),
-        "started_at": config.get("started_at"),
-        "trade_count": len(trades),
-        "trades": trades[:50],
-    }
-
-@router.get("/portfolio/chart")
-def get_portfolio_chart(user=Depends(get_current_user)):
-    """Get balance history for chart plotting."""
-    user_id = user["user_id"]
-    config = get_admin_config(user_id)
-    # Fetch trades in ascending order (oldest first)
-    from backend.database import _get_client
-    c = _get_client()
-    if c is None:
-        return []
-        
-    res = c.table("paper_trades").select("*").eq("user_id", user_id).order("trade_time", desc=False).execute()
-    trades = res.data or []
-    
-    initial = config.get("initial_balance", 10000.0)
-    current_balance = initial
-    
-    history = []
-    # Add initial point
-    start_date = config.get("started_at") or (trades[0]["trade_time"] if trades else datetime.now().isoformat())
-    history.append({
-        "time": start_date,
-        "balance": initial,
-        "pnl": 0
-    })
-    
-    for t in trades:
-        # Simulate balance change. Note: BUY decreases cash, SELL increases cash
-        val = float(t.get("total_value", 0))
-        if t["action"] == "BUY":
-            current_balance -= val
-        else:
-            current_balance += val
-            
-        history.append({
-            "time": t["trade_time"],
-            "balance": round(current_balance, 2),
-            "pnl": round(current_balance - initial, 2)
-        })
-        
-    return history
-
-
-@router.get("/system/accuracy")
-def get_system_accuracy(user=Depends(get_current_user)):
-    """Get recent model accuracy evaluations for Admin Dashboard."""
-    from backend.database import _get_client
-    c = _get_client()
-    if c is None:
-        return {"success": False, "records": []}
-    try:
-        res = (c.table("model_accuracy").select("*")
-               .not_.is_("actual_price", "null")
-               .order("forecast_date", desc=True)
-               .limit(10).execute())
-        return {"success": True, "records": res.data or []}
-    except Exception as e:
-        print(f"Error fetching system accuracy: {e}")
-        return {"success": False, "records": []}
-
-@router.get("/trigger-learner")
-def trigger_learner(background_tasks: BackgroundTasks, secret: str = None):
-    """Hidden endpoint to trigger auto-learning via external cron services (e.g. cron-job.org)."""
-    from backend.config import settings
-    # We use admin_secret_key as the password for this cron job
-    if secret != settings.admin_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized cron trigger")
-        
-    def run_learning_task():
-        import backend.cron_accuracy_learner as learner
-        try:
-            tickers = learner.run_evaluations()
-            learner.online_learning(tickers)
-        except Exception as e:
-            print(f"Cron Learner Error: {e}")
-            
-    # Run in background so the external cron ping doesn't timeout
-    background_tasks.add_task(run_learning_task)
-    return {"success": True, "message": "Accuracy evaluation and online learning started in background."}
-
-@router.get("/trigger-autotrade")
-def trigger_autotrade(background_tasks: BackgroundTasks, secret: str = None):
-    """Hidden endpoint to trigger auto-trading logic via external cron services."""
-    from backend.config import settings
-    if secret != settings.admin_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized cron trigger")
-        
-    def run_autotrade_task():
-        import backend.cron_auto_trader as trader
-        try:
-            trader.run_auto_trade()
-        except Exception as e:
-            print(f"Cron AutoTrader Error: {e}")
-            
-    background_tasks.add_task(run_autotrade_task)
-    return {"success": True, "message": "Auto-trading job started in background."}
-
-@router.get("/trigger-research")
-def trigger_research(background_tasks: BackgroundTasks, secret: str = None):
-    """Hidden endpoint to trigger news fetching & NLP research via external cron services."""
-    from backend.config import settings
-    if secret != settings.admin_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized cron trigger")
-        
-    def run_research_task():
-        import backend.cron_researcher as researcher
-        try:
-            researcher.run_research()
-        except Exception as e:
-            print(f"Cron Researcher Error: {e}")
-            
-    background_tasks.add_task(run_research_task)
-    return {"success": True, "message": "Research job started in background."}
+# ══════════════════════════════════════════════════════════════════════════════
+#  WATCHLIST
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/watchlist")
-def get_watchlist(user=Depends(get_current_user)):
-    """Get current user's watchlist."""
-    from backend.database import _get_client
-    c = _get_client()
-    if c is None:
-        return []
-    res = c.table("user_watchlists").select("ticker").eq("user_id", user["user_id"]).execute()
-    return [r["ticker"] for r in (res.data or [])]
+def get_watchlist_api(user=Depends(get_current_user)):
+    from backend.database import get_watchlist
+
+    return get_watchlist(user["user_id"])
+
 
 @router.post("/watchlist")
-def add_to_watchlist(ticker: str, user=Depends(get_current_user)):
-    """Add a ticker to the watchlist."""
-    from backend.database import _get_client
+def add_to_watchlist_api(
+    ticker: str = Query(..., min_length=1, max_length=20), user=Depends(get_current_user)
+):
+    from backend.database import get_watchlist
+
+    user_id = user["user_id"]
+    clean_ticker = validate_ticker_format(ticker)
+
+    current = get_watchlist(user_id)
+    if clean_ticker in current:
+        return {"success": True, "message": "Mã đã có trong danh sách theo dõi."}
+    if len(current) >= MAX_WATCHLIST_SIZE:
+        raise HTTPException(
+            400, f"Danh sách theo dõi tối đa {MAX_WATCHLIST_SIZE} mã. Hãy xoá bớt trước khi thêm."
+        )
+
     c = _get_client()
     if c is None:
-        raise HTTPException(503, "Database unavailable")
+        raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+
     try:
-        c.table("user_watchlists").insert({
-            "user_id": user["user_id"],
-            "ticker": ticker.upper()
-        }).execute()
-        return {"success": True}
+        c.table("user_watchlists").insert({"user_id": user_id, "ticker": clean_ticker}).execute()
     except Exception as e:
         if "duplicate key" in str(e).lower():
-            return {"success": True} # Already exists
-        raise HTTPException(500, str(e))
+            return {"success": True, "message": "Mã đã có trong danh sách theo dõi."}
+        log_and_raise("add_watchlist", e, 500, "Không thêm được mã vào danh sách theo dõi.")
+
+    return {"success": True}
+
 
 @router.delete("/watchlist/{ticker}")
-def remove_from_watchlist(ticker: str, user=Depends(get_current_user)):
-    """Remove a ticker from the watchlist."""
-    from backend.database import _get_client
+def remove_from_watchlist_api(ticker: str, user=Depends(get_current_user)):
+    clean_ticker = validate_ticker_format(ticker)
     c = _get_client()
     if c is None:
-        raise HTTPException(503, "Database unavailable")
-    c.table("user_watchlists").delete().eq("user_id", user["user_id"]).eq("ticker", ticker.upper()).execute()
+        raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+    c.table("user_watchlists").delete().eq("user_id", user["user_id"]).eq(
+        "ticker", clean_ticker
+    ).execute()
     return {"success": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LEADERBOARD
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/leaderboard")
 def get_leaderboard():
-    """Get top 10 traders by PnL."""
-    from backend.database import _get_client
+    """Top 10 tài khoản theo lãi/lỗ. Tên đăng nhập được che bớt để giữ riêng tư."""
     c = _get_client()
     if c is None:
         return []
-    
-    # Query admin_config and join with users to get username
-    res = c.table("admin_config").select("total_pnl, win_trades, loss_trades, users!inner(username)").order("total_pnl", desc=True).limit(10).execute()
-    
+
+    try:
+        res = (
+            c.table("admin_config")
+            .select("id, total_pnl, win_trades, loss_trades, users!inner(username)")
+            .order("total_pnl", desc=True)
+            .limit(10)
+            .execute()
+        )
+    except Exception as e:
+        print(f"[admin] Lỗi lấy leaderboard: {e}")
+        return []
+
     leaderboard = []
-    for row in (res.data or []):
-        raw_username = row.get("users", {}).get("username", "unknown")
-        # Mask username
-        if len(raw_username) > 4:
-            masked = raw_username[:4] + "***"
-        else:
-            masked = raw_username + "***"
-            
-        leaderboard.append({
-            "id": row.get("id", str(len(leaderboard))),
-            "username": masked,
-            "total_pnl": row.get("total_pnl", 0),
-            "win_trades": row.get("win_trades", 0),
-            "loss_trades": row.get("loss_trades", 0)
-        })
-    
+    for idx, row in enumerate(res.data or []):
+        raw_username = (row.get("users") or {}).get("username", "unknown")
+        # Che phần định danh: giữ 4 ký tự đầu, ẩn phần còn lại kể cả domain email.
+        masked = (raw_username[:4] if len(raw_username) > 4 else raw_username) + "***"
+
+        win = row.get("win_trades", 0) or 0
+        loss = row.get("loss_trades", 0) or 0
+        leaderboard.append(
+            {
+                "id": str(row.get("id") or idx),
+                "rank": idx + 1,
+                "username": masked,
+                "total_pnl": row.get("total_pnl", 0),
+                "win_trades": win,
+                "loss_trades": loss,
+                "win_rate": compute_win_rate(win, loss),
+            }
+        )
     return leaderboard
 
-# ── User Management (Admin Only) ─────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  QUẢN LÝ NGƯỜI DÙNG (CHỈ ADMIN)
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/users")
 def get_all_users(admin=Depends(get_current_admin)):
-    """Get all users for Admin Dashboard."""
-    from backend.database import _get_client
     c = _get_client()
     if c is None:
         return []
-    
-    # We need to join users with admin_config to get portfolioValue
-    # In Supabase, we can select from users and embed admin_config
-    res = c.table("users").select("id, username, role, status, created_at, last_active, admin_config(current_balance)").execute()
-    
+
+    try:
+        res = c.table("users").select(
+            "id, username, role, status, created_at, last_active, admin_config(current_balance)"
+        ).execute()
+    except Exception as e:
+        print(f"[admin] Lỗi lấy danh sách user: {e}")
+        return []
+
     mapped = []
-    for u in (res.data or []):
-        configs = u.get("admin_config", [])
-        balance = 0
-        if isinstance(configs, list) and len(configs) > 0:
-            balance = configs[0].get("current_balance", 0)
+    for u in res.data or []:
+        configs = u.get("admin_config") or []
+        if isinstance(configs, list):
+            balance = configs[0].get("current_balance", 0) if configs else 0
         elif isinstance(configs, dict):
             balance = configs.get("current_balance", 0)
-            
-        mapped.append({
-            "id": str(u["id"]),
-            "name": u["username"].split("@")[0],
-            "email": u["username"],
-            "role": u.get("role", "user"),
-            "status": u.get("status", "active"),
-            "portfolioValue": balance,
-            "joinedAt": u.get("created_at"),
-            "lastActive": u.get("last_active")
-        })
+        else:
+            balance = 0
+
+        mapped.append(
+            {
+                "id": str(u["id"]),
+                "name": u["username"].split("@")[0],
+                "email": u["username"],
+                "role": u.get("role", "user"),
+                "status": u.get("status", "active"),
+                "portfolioValue": balance,
+                "joinedAt": u.get("created_at"),
+                "lastActive": u.get("last_active"),
+            }
+        )
     return mapped
 
-class BalanceRequest(BaseModel):
-    amount: float
+
+def _guard_not_self(admin: dict, target_user_id: int, action: str) -> None:
+    """
+    Chặn admin tự tác động lên chính mình.
+
+    Không có bước này, một cú nhấp nhầm vào nút "Hạ quyền" trên chính dòng của mình
+    sẽ khoá vĩnh viễn quyền quản trị, và không còn đường nào lấy lại ngoài việc
+    sửa tay trong Supabase.
+    """
+    if int(admin.get("user_id", -1)) == int(target_user_id):
+        raise HTTPException(400, f"Bạn không thể tự {action} tài khoản của chính mình.")
+
 
 @router.put("/users/{user_id}/balance")
 def update_user_balance(user_id: int, req: BalanceRequest, admin=Depends(get_current_admin)):
-    """Update user's current_balance and initial_balance."""
-    from backend.database import _get_client, get_admin_config
     c = _get_client()
     if c is None:
-        raise HTTPException(503, "DB unavailable")
-    
-    # Ensure config exists before updating
-    config = get_admin_config(user_id)
-    
-    # Update both so PnL isn't artificially skewed
-    updates = {
-        "current_balance": req.amount,
-        "initial_balance": req.amount
-    }
-    c.table("admin_config").update(updates).eq("user_id", user_id).execute()
+        raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+
+    get_admin_config(user_id)  # Đảm bảo bản ghi tồn tại trước khi update
+    c.table("admin_config").update(
+        {"current_balance": req.amount, "initial_balance": req.amount, "total_pnl": 0.0}
+    ).eq("user_id", user_id).execute()
+
     return {"success": True, "new_balance": req.amount}
+
 
 @router.put("/users/{user_id}/status")
 def update_user_status(user_id: int, admin=Depends(get_current_admin)):
-    """Toggle user active/suspended status."""
-    from backend.database import _get_client
+    _guard_not_self(admin, user_id, "khoá")
     c = _get_client()
     if c is None:
-        raise HTTPException(503, "DB unavailable")
-        
+        raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+
     res = c.table("users").select("status").eq("id", user_id).execute()
     if not res.data:
-        raise HTTPException(404, "User not found")
-        
-    current = res.data[0].get("status", "active")
-    new_status = "suspended" if current == "active" else "active"
+        raise HTTPException(404, "Không tìm thấy người dùng.")
+
+    new_status = "suspended" if res.data[0].get("status", "active") == "active" else "active"
     c.table("users").update({"status": new_status}).eq("id", user_id).execute()
     return {"success": True, "new_status": new_status}
 
+
 @router.put("/users/{user_id}/role")
 def update_user_role(user_id: int, admin=Depends(get_current_admin)):
-    """Toggle user role admin/user."""
-    from backend.database import _get_client
+    _guard_not_self(admin, user_id, "đổi quyền")
     c = _get_client()
     if c is None:
-        raise HTTPException(503, "DB unavailable")
-        
+        raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+
     res = c.table("users").select("role").eq("id", user_id).execute()
     if not res.data:
-        raise HTTPException(404, "User not found")
-        
-    current = res.data[0].get("role", "user")
-    new_role = "user" if current == "admin" else "admin"
+        raise HTTPException(404, "Không tìm thấy người dùng.")
+
+    current_role = res.data[0].get("role", "user")
+    new_role = "user" if current_role == "admin" else "admin"
+
+    # Không cho hạ quyền admin cuối cùng — hệ thống phải luôn còn ít nhất một quản trị viên.
+    if current_role == "admin":
+        admins = c.table("users").select("id", count="exact").eq("role", "admin").execute()
+        if (admins.count or 0) <= 1:
+            raise HTTPException(400, "Không thể hạ quyền quản trị viên cuối cùng của hệ thống.")
+
     c.table("users").update({"role": new_role}).eq("id", user_id).execute()
     return {"success": True, "new_role": new_role}
 
+
 @router.delete("/users/{user_id}")
 def delete_user(user_id: int, admin=Depends(get_current_admin)):
-    """Delete a user."""
-    from backend.database import _get_client
+    _guard_not_self(admin, user_id, "xoá")
     c = _get_client()
     if c is None:
-        raise HTTPException(503, "DB unavailable")
-        
+        raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
+
+    res = c.table("users").select("role").eq("id", user_id).execute()
+    if not res.data:
+        raise HTTPException(404, "Không tìm thấy người dùng.")
+
+    if res.data[0].get("role") == "admin":
+        admins = c.table("users").select("id", count="exact").eq("role", "admin").execute()
+        if (admins.count or 0) <= 1:
+            raise HTTPException(400, "Không thể xoá quản trị viên cuối cùng của hệ thống.")
+
     c.table("users").delete().eq("id", user_id).execute()
     return {"success": True}
 
 
-# ── System Metrics & Research Queue ───────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  SỨC KHOẺ HỆ THỐNG
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/system/accuracy")
+def get_system_accuracy(
+    limit: int = Query(default=20, ge=1, le=100), user=Depends(get_current_user)
+):
+    """Các bản ghi đánh giá sai số mô hình gần nhất (đã có giá thực tế để đối chiếu)."""
+    c = _get_client()
+    if c is None:
+        return {"success": False, "records": [], "summary": None}
+
+    try:
+        res = (
+            c.table("model_accuracy")
+            .select("*")
+            .not_.is_("actual_price", "null")
+            .order("forecast_date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        records = res.data or []
+
+        errors = [float(r["error_pct"]) for r in records if r.get("error_pct") is not None]
+        summary = None
+        if errors:
+            summary = {
+                "count": len(errors),
+                "mape": round(sum(errors) / len(errors), 2),
+                "best": round(min(errors), 2),
+                "worst": round(max(errors), 2),
+            }
+
+        return {"success": True, "records": records, "summary": summary}
+    except Exception as e:
+        print(f"[admin] Lỗi lấy số liệu accuracy: {e}")
+        return {"success": False, "records": [], "summary": None}
+
 
 @router.get("/system")
-def get_system_metrics(user=Depends(get_current_admin)):
-    """Get system health metrics for Admin Dashboard."""
-    import time
-    import random
-    
-    # Calculate a pseudo-uptime based on today's date so it changes very slowly
-    uptime_base = 99.90 + (time.time() % 86400) / 86400 * 0.09
-    
-    metrics = []
-    
-    # API Latency (estimate based on process time)
-    metrics.append({
-        "label": "API Latency",
-        "value": round(random.uniform(45.0, 75.0), 1),
-        "unit": "ms",
-        "status": "healthy"
-    })
-    
-    # Model Inference time estimate
-    metrics.append({
-        "label": "Model Inference",
-        "value": round(random.uniform(280.0, 450.0), 1),
-        "unit": "ms",
-        "status": "healthy"
-    })
-    
-    # DB Connections
-    from backend.database import _get_client
-    db_status = "healthy" if _get_client() is not None else "critical"
-    # Make DB connections fluctuate slightly
-    metrics.append({
-        "label": "DB Connections",
-        "value": random.randint(38, 52) if db_status == "healthy" else 0,
-        "unit": "conns",
-        "status": db_status
-    })
-    
-    # Queue Depth (count pending research)
-    try:
-        c = _get_client()
-        if c:
-            res = c.table("research_reports").select("id", count="exact").execute()
-            queue_depth = min(res.count or 0, 50)
-        else:
-            queue_depth = 0
-    except Exception:
-        queue_depth = 0
-    metrics.append({
-        "label": "Queue Depth",
-        "value": queue_depth,
-        "unit": "jobs",
-        "status": "healthy" if queue_depth < 50 else "warning"
-    })
-    
-    # Error Rate
-    # Randomize error rate slightly between 0.01% and 0.5%
-    metrics.append({
-        "label": "Error Rate",
-        "value": round(random.uniform(0.01, 0.5), 2),
-        "unit": "%",
-        "status": "healthy"
-    })
-    
-    # Uptime
-    metrics.append({
-        "label": "Uptime",
-        "value": round(uptime_base, 2),
-        "unit": "%",
-        "status": "healthy"
-    })
-    
-    return metrics
+def get_system_metrics(admin=Depends(get_current_admin)):
+    """
+    Số liệu vận hành THẬT, đo từ chính tiến trình đang chạy.
+
+    Các giá trị này reset mỗi lần service khởi động lại — điều đáng lưu ý trên
+    Render free tier, nơi service ngủ sau 15 phút không có traffic.
+    """
+    snap = metrics.snapshot()
+
+    c = _get_client()
+    db_healthy = c is not None
+
+    pending_evaluations = 0
+    research_reports = 0
+    if db_healthy:
+        try:
+            pending = (
+                c.table("model_accuracy")
+                .select("id", count="exact")
+                .is_("actual_price", "null")
+                .execute()
+            )
+            pending_evaluations = pending.count or 0
+            reports = c.table("research_reports").select("id", count="exact").execute()
+            research_reports = reports.count or 0
+        except Exception as e:
+            print(f"[admin] Lỗi đếm số liệu hệ thống: {e}")
+
+    def status_for(value: float, warn: float, critical: float) -> str:
+        if value >= critical:
+            return "critical"
+        if value >= warn:
+            return "warning"
+        return "healthy"
+
+    return [
+        {
+            "label": "Độ trễ API (p50)",
+            "value": snap["api_latency_p50_ms"],
+            "unit": "ms",
+            "status": status_for(snap["api_latency_p50_ms"], 500, 2000),
+            "hint": f"p95: {snap['api_latency_p95_ms']} ms trên {snap['total_requests']} request",
+        },
+        {
+            "label": "Thời gian inference (p50)",
+            "value": snap["inference_p50_ms"],
+            "unit": "ms",
+            "status": status_for(snap["inference_p50_ms"], 3000, 10000),
+            "hint": (
+                f"{snap['inference_samples']} lượt dự báo đã đo"
+                if snap["inference_samples"]
+                else "Chưa có lượt dự báo nào kể từ khi khởi động"
+            ),
+        },
+        {
+            "label": "Kết nối cơ sở dữ liệu",
+            "value": 1 if db_healthy else 0,
+            "unit": "",
+            "status": "healthy" if db_healthy else "critical",
+            "hint": "Supabase phản hồi bình thường" if db_healthy else "Không kết nối được Supabase",
+        },
+        {
+            "label": "Dự báo chờ đánh giá",
+            "value": pending_evaluations,
+            "unit": "bản ghi",
+            "status": status_for(pending_evaluations, 100, 500),
+            "hint": "Sẽ được đối chiếu tự động khi phiên giao dịch tương ứng có dữ liệu",
+        },
+        {
+            "label": "Tỷ lệ lỗi (5xx)",
+            "value": snap["error_rate_pct"],
+            "unit": "%",
+            "status": status_for(snap["error_rate_pct"], 1, 5),
+            "hint": f"{snap['error_requests']}/{snap['total_requests']} request lỗi",
+        },
+        {
+            # `value` luôn phải là số: type SystemMetric ở frontend khai báo
+            # value: number, và giao diện gọi các hàm định dạng số lên nó.
+            # Chuỗi thân thiện với người đọc được đưa vào `hint`.
+            "label": "Thời gian hoạt động",
+            "value": round(snap["uptime_seconds"] / 3600, 1),
+            "unit": "giờ",
+            "status": "healthy",
+            "hint": (
+                f"{snap['uptime_human']} · {research_reports} báo cáo nghiên cứu đã lưu"
+            ),
+        },
+    ]
 
 
 @router.get("/research-queue")
-def get_research_queue(user=Depends(get_current_admin)):
-    """Get research processing queue status for Admin Dashboard."""
-    from backend.database import _get_client
+def get_research_queue(
+    limit: int = Query(default=20, ge=1, le=50), admin=Depends(get_current_admin)
+):
+    """Các báo cáo nghiên cứu gần nhất do job nền tạo ra."""
     c = _get_client()
     if c is None:
         return []
-    
+
     try:
-        res = (c.table("research_reports")
-               .select("id, ticker, created_at")
-               .order("created_at", desc=True)
-               .limit(20)
-               .execute())
-        
-        queue = []
-        for r in (res.data or []):
-            queue.append({
+        res = (
+            c.table("research_reports")
+            .select("id, ticker, source, created_at")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [
+            {
                 "id": str(r.get("id", "")),
                 "ticker": r.get("ticker", "UNKNOWN"),
                 "status": "completed",
-                "requestedBy": "system",
+                "requestedBy": r.get("source", "system"),
                 "progress": 100,
-                "createdAt": r.get("created_at", "")
-            })
-        return queue
+                "createdAt": r.get("created_at", ""),
+            }
+            for r in res.data or []
+        ]
     except Exception as e:
-        print(f"Error fetching research queue: {e}")
+        print(f"[admin] Lỗi lấy hàng đợi research: {e}")
         return []
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ĐIỂM KÍCH HOẠT JOB NỀN (dành cho cron-job.org, GitHub Actions, ...)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Cách gọi:
+#   curl -X POST https://<api>/admin/trigger-research -H "X-Cron-Secret: <CRON_SECRET_KEY>"
+#
+# Các endpoint này dùng POST (không phải GET) vì chúng thay đổi trạng thái hệ thống,
+# và secret đi trong header thay vì query string để không bị ghi vào access log.
+
+
+def _run_in_background(background_tasks: BackgroundTasks, fn, label: str) -> dict:
+    def task():
+        try:
+            fn()
+        except Exception as e:
+            print(f"[cron:{label}] Lỗi: {e}")
+
+    background_tasks.add_task(task)
+    return {"success": True, "message": f"Đã khởi chạy job '{label}' ở chế độ nền."}
+
+
+@router.post("/trigger-learner", dependencies=[Depends(verify_cron_secret)])
+def trigger_learner(background_tasks: BackgroundTasks):
+    """Đánh giá sai số dự báo cũ rồi fine-tune nhẹ mô hình trên dữ liệu mới."""
+
+    def job():
+        import backend.cron_accuracy_learner as learner
+
+        tickers = learner.run_evaluations()
+        learner.online_learning(tickers)
+
+    return _run_in_background(background_tasks, job, "accuracy-learner")
+
+
+@router.post("/trigger-autotrade", dependencies=[Depends(verify_cron_secret)])
+def trigger_autotrade(background_tasks: BackgroundTasks):
+    from backend.cron_auto_trader import run_auto_trade
+
+    return _run_in_background(background_tasks, run_auto_trade, "auto-trade")
+
+
+@router.post("/trigger-research", dependencies=[Depends(verify_cron_secret)])
+def trigger_research(background_tasks: BackgroundTasks):
+    from backend.cron_researcher import run_research
+
+    return _run_in_background(background_tasks, run_research, "researcher")

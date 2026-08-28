@@ -8,6 +8,7 @@ import { ArrowLeft, Sparkles, Clock, Languages, Loader2, TrendingUp, BarChart3, 
 import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import { Skeleton, ErrorCard, EmptyState } from "@/components/ui/states"
+import { DisclaimerCard } from "@/components/ui/system-banners"
 import { SentimentBadge, ConfidencePill } from "@/components/ui/tags"
 import { Markdown } from "@/components/ui/markdown"
 import { timeAgo } from "@/lib/format"
@@ -59,13 +60,29 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
       {isError ? (
         <ErrorCard onRetry={() => refetch()} />
       ) : isLoading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-96" />
+        <div role="status" aria-label="Đang tải báo cáo" className="space-y-4">
+          <div className="fa-card p-5">
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-6 w-40" />
+              <Skeleton className="h-6 w-24 rounded" />
+            </div>
+            <Skeleton className="mt-3 h-4 w-full" />
+            <Skeleton className="mt-2 h-4 w-3/4" />
+          </div>
+          <div className="fa-card space-y-3 p-5">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className={i % 3 === 0 ? "h-5 w-1/3" : "h-4 w-full"} />
+            ))}
+          </div>
         </div>
       ) : !report ? (
         <EmptyState title={`No research report for ${symbol}.`} icon={Sparkles} />
       ) : (
+        <>
+        {/* Toàn bộ nội dung bên dưới do LLM sinh ra, gồm cả phần "khuyến nghị".
+            Cảnh báo phải đứng TRƯỚC nội dung, không phải sau. */}
+        <DisclaimerCard dismissible className="mb-5" />
+
         <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
           <motion.article
             initial={{ opacity: 0, y: 12 }}
@@ -206,6 +223,7 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
             )}
           </aside>
         </div>
+        </>
       )}
     </div>
   )

@@ -9,7 +9,8 @@ import { useT } from "@/lib/store"
 import { formatCurrency, formatPercent } from "@/lib/format"
 import { PageHeader } from "@/components/ui/page-header"
 import { ForecastChart } from "@/components/charts/forecast-chart"
-import { Skeleton, ErrorCard } from "@/components/ui/states"
+import { ChartSkeleton, ErrorCard, Skeleton, StatCardSkeleton } from "@/components/ui/states"
+import { DisclaimerInline, DisclaimerCard } from "@/components/ui/system-banners"
 import { ConfidencePill } from "@/components/ui/tags"
 import { CountUp } from "@/components/ui/count-up"
 import { cn } from "@/lib/utils"
@@ -38,14 +39,16 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
       {forecastQ.isError ? (
         <ErrorCard onRetry={() => forecastQ.refetch()} />
       ) : !f ? (
-        <div className="space-y-6">
-          <Skeleton className="h-16" />
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-24" />
-            ))}
+        <div role="status" aria-label="Đang tải dự báo" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <Skeleton className="h-7 w-64" />
+              <Skeleton className="mt-2 h-4 w-40" />
+            </div>
+            <Skeleton className="h-11 w-40 rounded-md" />
           </div>
-          <Skeleton className="h-80" />
+          <StatCardSkeleton count={4} />
+          <ChartSkeleton height={320} />
         </div>
       ) : (
         <>
@@ -101,6 +104,9 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
                 {t("technicalAnalysis")}
               </h2>
               <TechnicalChart ticker={ticker} />
+              {/* Bản một dòng đặt ngay dưới biểu đồ — đây là chỗ người dùng
+                  dừng mắt lâu nhất, và cũng là chỗ dễ hiểu nhầm nhất. */}
+              <DisclaimerInline className="mt-3" />
             </section>
             
             <div className="space-y-6">
@@ -117,6 +123,8 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
             <SummaryCard label={t("model")} value={f.model} />
             <SummaryCard label={t("updated")} value={new Date(f.updatedAt).toLocaleString()} />
           </div>
+
+          <DisclaimerCard className="mt-6" />
         </>
       )}
     </div>

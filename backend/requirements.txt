@@ -1,27 +1,39 @@
+# ForecastAI — backend dependencies
+#
+# Đã gỡ khỏi bản trước:
+#   google-generativeai  — không có dòng code nào import; LLM thực tế dùng là Groq
+#                          (gọi qua REST bằng `requests`, không cần SDK riêng)
+#   ccxt                 — chỉ được dùng bởi services/market_data.py, file không ai gọi.
+#                          Riêng gói này nặng ~50MB và kéo dài thời gian build trên Render.
+#   finnhub-python       — cùng lý do trên
+#
+# Việc gỡ ba gói này rút ngắn đáng kể thời gian build và giảm dung lượng image,
+# yếu tố quan trọng với giới hạn bộ nhớ của gói free trên Render.
+
+# ── Web framework ─────────────────────────────────────────────────────────────
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 
-# Database
+# ── Database ──────────────────────────────────────────────────────────────────
 supabase>=2.0.0
 
-# AI
-google-generativeai>=0.8.0
-tensorflow>=2.16.0
+# ── Machine learning ──────────────────────────────────────────────────────────
+# tensorflow-cpu thay vì tensorflow: bản đầy đủ kéo theo các gói CUDA nặng vài GB
+# mà máy chủ không có GPU nên không bao giờ dùng tới.
+tensorflow-cpu>=2.16.0
+scikit-learn>=1.4.0
 
-# Data
+# ── Dữ liệu ───────────────────────────────────────────────────────────────────
 yfinance>=0.2.40
-ccxt
-finnhub-python
 pandas>=2.0.0
 numpy>=1.26.4
-scikit-learn>=1.4.0
 scipy>=1.12.0
 
-# News
+# ── Tin tức ───────────────────────────────────────────────────────────────────
 feedparser>=6.0.11
 
-# Utilities
+# ── Tiện ích ──────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0
 requests>=2.32.0

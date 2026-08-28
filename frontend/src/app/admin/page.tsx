@@ -9,7 +9,7 @@ import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
 import { StatCard } from "@/components/ui/stat-card"
 import { Sparkline } from "@/components/ui/sparkline"
-import { Skeleton, ErrorCard } from "@/components/ui/states"
+import { Skeleton, ErrorCard, StatCardSkeleton, TableSkeleton } from "@/components/ui/states"
 import { StatusDot, ConfidencePill } from "@/components/ui/tags"
 import { formatCurrency, timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -125,7 +125,7 @@ export default function AdminPage() {
           usersQ.isError ? (
             <ErrorCard onRetry={() => usersQ.refetch()} />
           ) : !usersQ.data ? (
-            <Skeleton className="h-80" />
+            <TableSkeleton rows={8} cols={6} />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full min-w-[760px] text-sm">
@@ -221,25 +221,53 @@ export default function AdminPage() {
 
         {tab === "system" && (
           !systemQ.data ? (
-            <Skeleton className="h-48" />
+            <StatCardSkeleton count={6} />
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.isArray(systemQ.data) ? systemQ.data.map((m, i) => (
-                <motion.div
-                  key={m?.label || i}
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="rounded-xl border border-border bg-card p-5"
-                >
-                  <p className="text-sm font-medium text-muted-foreground">{m?.label || "Unknown"}</p>
-                  <p className="mt-2 font-mono text-2xl font-bold text-card-foreground">{m?.value || 0}</p>
-                  <span className="mt-1 flex items-center gap-2 text-xs capitalize text-muted-foreground">
-                    <StatusDot status={m?.status as any || "warning"} /> {m?.status || "warning"}
-                  </span>
-                </motion.div>
-              )) : null}
-            </div>
+            <>
+              {/* Nói rõ số liệu này đến từ đâu. Bản trước hiển thị các giá trị
+                  sinh bằng random.uniform() mà không hề ghi chú gì — người xem
+                  không có cách nào biết mình đang nhìn số thật hay số bịa. */}
+              <p className="mb-4 text-sm text-muted-foreground">
+                Số liệu đo trực tiếp từ tiến trình backend đang chạy. Các giá trị được
+                đặt lại mỗi khi máy chủ khởi động lại — điều thường xuyên xảy ra trên
+                gói miễn phí của Render.
+              </p>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.isArray(systemQ.data) ? systemQ.data.map((m, i) => (
+                  <motion.div
+                    key={m?.label || i}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="fa-card fa-card-interactive p-5"
+                  >
+                    <p className="text-sm font-medium text-muted-foreground">{m?.label || "—"}</p>
+
+                    <p className="mt-2 flex items-baseline gap-1.5">
+                      {/* Dùng ?? thay vì || : giá trị 0 là hợp lệ (ví dụ tỷ lệ lỗi 0%)
+                          và không được hiểu thành "thiếu dữ liệu". */}
+                      <span className="tabular font-mono text-2xl font-bold text-card-foreground">
+                        {m?.value ?? "—"}
+                      </span>
+                      {m?.unit ? (
+                        <span className="text-sm text-muted-foreground">{m.unit}</span>
+                      ) : null}
+                    </p>
+
+                    <span className="mt-1 flex items-center gap-2 text-xs capitalize text-muted-foreground">
+                      <StatusDot status={(m?.status as any) || "warning"} /> {m?.status || "warning"}
+                    </span>
+
+                    {m?.hint ? (
+                      <p className="mt-2 border-t border-border pt-2 text-xs leading-relaxed text-muted-foreground">
+                        {m.hint}
+                      </p>
+                    ) : null}
+                  </motion.div>
+                )) : null}
+              </div>
+            </>
           )
         )}
 

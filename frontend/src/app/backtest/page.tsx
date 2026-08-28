@@ -8,6 +8,7 @@ import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
 import { StatCard } from "@/components/ui/stat-card"
+import { DisclaimerCard } from "@/components/ui/system-banners"
 import { formatCurrency, formatPercent } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { BacktestResult } from "@/lib/types"
@@ -45,6 +46,11 @@ export default function BacktestPage() {
   return (
     <div>
       <PageHeader title={t("backtesting")} subtitle={t("backtestSubtitle")} />
+
+      {/* Backtest trên dữ liệu quá khứ rất dễ tạo cảm giác chắc chắn sai lầm:
+          một chiến lược cho lợi nhuận đẹp trong quá khứ không hề đảm bảo điều
+          tương tự ở tương lai. Đây là chỗ cần cảnh báo rõ. */}
+      <DisclaimerCard dismissible className="mb-5" />
 
       {/* Config Form */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-lg border border-border bg-card p-5">
