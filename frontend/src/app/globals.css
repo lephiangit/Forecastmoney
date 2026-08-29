@@ -133,6 +133,93 @@
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.45);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Chế độ sáng — kích hoạt bằng class "light" trên thẻ <html>.
+
+   Không dùng @media (prefers-color-scheme) làm nguồn sự thật duy nhất, vì
+   người dùng cần TỰ CHỌN được (yêu cầu đồ án), không chỉ theo hệ điều hành.
+   ThemeToggle (navbar) và script chống nháy trong <head> cùng ghi/đọc class
+   này; xem src/lib/store.ts (useThemeStore) và src/app/layout.tsx.
+
+   Màu ngữ nghĩa (positive/negative/info/warning) được làm TỐI hơn bản dark,
+   vì cùng một sắc độ sáng vốn đủ tương phản trên nền đen sẽ KHÔNG đạt WCAG AA
+   khi dùng làm chữ trên nền trắng — ví dụ #0ecb81 trên #0b0e11 tương phản tốt,
+   nhưng trên #ffffff chỉ đạt ~2.1:1, dưới xa ngưỡng 4.5:1 bắt buộc cho chữ. */
+:root.light {
+  color-scheme: light;
+
+  /* ── Nền, theo tầng độ cao ─────────────────────────────────────────────── */
+  --background: #f8fafc;
+  --bg-secondary: #eef2f6;
+  --card: #ffffff;
+  --card-elevated: #ffffff;
+  --popover: #ffffff;
+
+  /* ── Chữ ───────────────────────────────────────────────────────────────── */
+  --foreground: #0f172a;
+  --card-foreground: #0f172a;
+  --popover-foreground: #0f172a;
+  /* #475569 trên #ffffff ~ 7.5:1 — vượt AA cho cả chữ nhỏ */
+  --muted-foreground: #475569;
+  --text-muted: #475569;
+
+  /* ── Màu thương hiệu ───────────────────────────────────────────────────── */
+  /* Giữ nguyên sắc vàng thương hiệu — tự nó đã tương phản đủ với chữ gần đen,
+     không phụ thuộc màu nền trang, nên không cần đổi giữa 2 theme. */
+  --primary: #eab308;
+  --primary-foreground: #0b0e11;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --accent: #e2e8f0;
+  --accent-foreground: #0f172a;
+
+  /* ── Màu ngữ nghĩa (đã tối hơn để đạt AA trên nền trắng) ──────────────── */
+  --positive: #047857;
+  --negative: #dc2626;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --info: #2563eb;
+  --warning: #b45309;
+
+  /* ── Viền ──────────────────────────────────────────────────────────────── */
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --input: #e2e8f0;
+  --ring: #ca8a04;
+
+  /* ── Bảng màu biểu đồ (tối hơn để nét vẫn rõ trên nền trắng) ─────────── */
+  --chart-1: #ca8a04;
+  --chart-2: #059669;
+  --chart-3: #2563eb;
+  --chart-4: #dc2626;
+  --chart-5: #9333ea;
+  --chart-6: #0d9488;
+
+  --sidebar: #f1f5f9;
+  --sidebar-foreground: #0f172a;
+
+  /* ── Đổ bóng (nhạt hơn hẳn — bóng đậm kiểu nền tối sẽ gắt trên nền trắng) */
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.06);
+  --shadow-md: 0 4px 16px rgb(15 23 42 / 0.10);
+  --shadow-lg: 0 16px 40px rgb(15 23 42 / 0.14);
+}
+
+/* Chuyển màu mượt khi đổi theme, thay vì đổi màu giật cục. Loại trừ khỏi phần
+   tử có animation riêng (ticker, shimmer) để không làm chậm chuyển động của
+   chúng, và tự tắt hẳn khi người dùng bật prefers-reduced-motion (xem dưới). */
+body,
+.fa-card,
+header,
+footer,
+nav,
+button,
+input,
+textarea,
+select {
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+
 @layer base {
   * {
     border-color: var(--border);

@@ -22,6 +22,37 @@ export const useLangStore = create<LangState>()(
   ),
 )
 
+export type Theme = "dark" | "light"
+
+interface ThemeState {
+  theme: Theme
+  /** true sau khi đã có một lựa chọn tường minh (người dùng bấm nút, hoặc đã
+   *  dò prefers-color-scheme lần đầu) — phân biệt với giá trị mặc định "dark"
+   *  lúc chưa hydrate, để không dò lại prefers-color-scheme mỗi lần tải trang. */
+  resolved: boolean
+  setTheme: (theme: Theme) => void
+  toggleTheme: () => void
+  markResolved: () => void
+}
+
+/**
+ * Giá trị mặc định phải khớp với CSS mặc định (:root, không có class "light")
+ * để không có khoảng lệch giữa lần render đầu trên server và trước khi
+ * script chống nháy trong <head> kịp chạy (xem app/layout.tsx).
+ */
+export const useThemeStore = create<ThemeState>()(
+  persist(
+    (set) => ({
+      theme: "dark",
+      resolved: false,
+      setTheme: (theme) => set({ theme, resolved: true }),
+      toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark", resolved: true })),
+      markResolved: () => set({ resolved: true }),
+    }),
+    { name: "forecastai-theme" },
+  ),
+)
+
 export type GlobalCurrency = "USD" | "VND"
 
 interface CurrencyState {

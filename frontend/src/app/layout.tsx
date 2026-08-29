@@ -36,13 +36,40 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'dark',
-  themeColor: '#0b0e11',
+  // 'dark light': trang hỗ trợ cả hai theme (người dùng tự chọn qua nút trên
+  // navbar), không chỉ dark như bản gốc.
+  colorScheme: 'dark light',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f8fafc' },
+    { media: '(prefers-color-scheme: dark)', color: '#0b0e11' },
+  ],
   width: 'device-width',
   initialScale: 1,
   // Không đặt maximumScale: chặn người dùng phóng to là rào cản
   // với người khiếm thị một phần, và vi phạm WCAG 1.4.4.
 }
+
+/**
+ * Chống nháy (FOUC) khi đổi theme: chạy TRƯỚC khi React hydrate, đọc thẳng
+ * localStorage (không đợi zustand khởi tạo) để gắn class "light" lên <html>
+ * kịp lúc trình duyệt vẽ khung hình đầu tiên.
+ *
+ * Nếu chưa từng lưu lựa chọn nào (raw rỗng), tạm thời không thêm class gì cả
+ * — mặc định dark của :root đã khớp với đa số người dùng mới; ThemeSync
+ * (components/providers.tsx) sẽ dò prefers-color-scheme ngay sau khi hydrate
+ * xong và cập nhật lại nếu hệ thống người dùng đang ở chế độ sáng.
+ */
+const THEME_ANTI_FLICKER_SCRIPT = `
+(function () {
+  try {
+    var raw = localStorage.getItem('forecastai-theme');
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    var theme = parsed && parsed.state && parsed.state.theme;
+    if (theme === 'light') document.documentElement.classList.add('light');
+  } catch (e) {}
+})();
+`
 
 export default function RootLayout({
   children,
@@ -58,6 +85,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} bg-background`}
       suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_ANTI_FLICKER_SCRIPT }} />
+      </head>
       <body className="font-sans antialiased">
         <Providers>
           <AppShell>{children}</AppShell>

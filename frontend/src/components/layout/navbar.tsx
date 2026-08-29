@@ -3,9 +3,9 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState, useEffect } from "react"
-import { Bell, Menu, X, ChevronDown, LogOut, Settings, Activity } from "lucide-react"
+import { Bell, Menu, X, ChevronDown, LogOut, Settings, Activity, Sun, Moon } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useLangStore, useT, useAuthStore } from "@/lib/store"
+import { useLangStore, useThemeStore, useT, useAuthStore } from "@/lib/store"
 import type { TranslationKey } from "@/lib/i18n"
 import { api } from "@/lib/api"
 import type { Notification } from "@/lib/types"
@@ -182,6 +182,23 @@ function LangSwitch() {
   )
 }
 
+/** Chuyển nền sáng/tối. Icon phản chiếu trạng thái SẮP chuyển tới (nhấn Sun
+ *  khi đang dark để chuyển sang light), quy ước quen thuộc của phần lớn app. */
+function ThemeToggle() {
+  const { theme, toggleTheme } = useThemeStore()
+  const isDark = theme === "dark"
+  return (
+    <button
+      onClick={toggleTheme}
+      className="flex items-center justify-center rounded-md border border-border bg-secondary p-1.5 text-secondary-foreground transition-colors hover:bg-accent"
+      aria-label={isDark ? "Chuyển sang nền sáng" : "Chuyển sang nền tối"}
+      title={isDark ? "Chuyển sang nền sáng" : "Chuyển sang nền tối"}
+    >
+      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  )
+}
+
 function UserMenu() {
   const t = useT()
   const { user, logout } = useAuthStore()
@@ -288,6 +305,7 @@ export function Navbar() {
 
         <div className="flex items-center gap-2 sm:gap-3">
           <NotificationsMenu />
+          <ThemeToggle />
           <LangSwitch />
           <UserMenu />
           <button
