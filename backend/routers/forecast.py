@@ -200,3 +200,32 @@ def forecast_accuracy(
     except Exception as e:
         print(f"[forecast] Lỗi lấy lịch sử sai số: {type(e).__name__}")
         return {"ticker": clean_ticker, "model": model, "records": [], "summary": None, "db_available": True}
+
+
+@router.get("/feature-importance/{ticker}")
+def feature_importance(ticker: str):
+    """
+    Permutation importance cho dự báo T+1 của mã này.
+
+    ĐÍNH CHÍNH: đây KHÔNG phải trọng số của lớp VariableSelectionNetwork —
+    lớp đó tồn tại trong backend/models/tft_model.py nhưng build_tft_model()
+    không hề gọi tới nó, nên nó chưa từng ảnh hưởng dự báo nào. Xem docstring
+    của compute_feature_importance() trong forecaster.py để biết chi tiết
+    phương pháp thực tế đang dùng (permutation importance).
+    """
+    from backend.models.forecaster import compute_feature_importance
+
+    clean_ticker = validate_ticker_format(ticker)
+    result = compute_feature_importance(clean_ticker)
+    if result is None:
+        raise HTTPException(
+            404,
+            f"Không tính được feature importance cho '{clean_ticker}' "
+            "(thiếu dữ liệu lịch sử hoặc model TFT chưa được nạp).",
+        )
+    return {
+        "ticker": clean_ticker,
+        "method": "permutation_importance_next_day",
+        "note": "Đo mức ảnh hưởng thực nghiệm, không phải trọng số Variable Selection Network.",
+        "features": result,
+    }

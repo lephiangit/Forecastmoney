@@ -91,15 +91,34 @@ def _generate_signals(df: pd.DataFrame, params: dict) -> pd.DataFrame:
             score -= 1.0
             reasons.append(f"RSI overbought ({rsi:.0f})")
 
-        # MACD crossover
+        # MACD: TÍNH THEO TRẠNG THÁI (macd so với đường tín hiệu ở ngày hiện tại),
+        # KHÔNG chỉ tính đúng ngày xảy ra crossover.
+        #
+        # Bản cũ chỉ cộng/trừ điểm đúng ngày macd cắt qua signal — đó là một sự
+        # kiện xảy ra đúng 1 ngày trong cả một xu hướng kéo dài nhiều tuần. Kết
+        # hợp với việc RSI quá mua/quá bán và giá chạm dải Bollinger thường rơi
+        # vào GIAI ĐOẠN KHÁC của chu kỳ giá (không phải đúng ngày cắt), nên 3
+        # điều kiện gần như không bao giờ trùng ngày — dẫn tới 0 giao dịch suốt
+        # nhiều tháng dù dữ liệu và code đều chạy đúng, không có lỗi nào cả.
+        #
+        # Sửa: cộng điểm mỗi ngày xu hướng MACD còn đang tăng/giảm (trạng thái),
+        # cộng thêm điểm thưởng đúng ngày vừa cắt (giữ lại ý nghĩa "tín hiệu mới").
         prev_macd = df["MACD"].iloc[i-1] if pd.notna(df["MACD"].iloc[i-1]) else 0
         prev_signal = df["MACD_Signal"].iloc[i-1] if pd.notna(df["MACD_Signal"].iloc[i-1]) else 0
-        if prev_macd <= prev_signal and macd > macd_signal:
+        if macd > macd_signal:
             score += params["macd_weight"]
-            reasons.append("MACD bullish crossover")
-        elif prev_macd >= prev_signal and macd < macd_signal:
+            if prev_macd <= prev_signal:
+                score += 0.2
+                reasons.append("MACD bullish crossover")
+            else:
+                reasons.append("MACD > signal (xu hướng tăng)")
+        elif macd < macd_signal:
             score -= params["macd_weight"]
-            reasons.append("MACD bearish crossover")
+            if prev_macd >= prev_signal:
+                score -= 0.2
+                reasons.append("MACD bearish crossover")
+            else:
+                reasons.append("MACD < signal (xu hướng giảm)")
 
         # Bollinger Band signal
         if close <= bb_lower:

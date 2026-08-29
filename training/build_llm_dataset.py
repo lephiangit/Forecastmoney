@@ -258,7 +258,17 @@ def generate_synthetic(count: int, data_dir: str) -> Iterator[Dict]:
     """
     import pandas as pd
 
-    csv_files = [f for f in os.listdir(data_dir) if f.endswith(".csv")]
+    # Cùng danh sách SKIP_FILES với backend/train_tft.py: đây là 3 file CSV rác
+    # còn sót lại từ một lần gộp dữ liệu lỗi trước đây (xem training/collect_tft_data.py).
+    # Chúng có dòng header kép kiểu yfinance cũ (dòng thứ 2 là "BTC-USD,BTC-USD,..."
+    # thay vì dữ liệu số), khiến pandas đọc cả cột "Close" thành chuỗi và crash ở
+    # phép chia bên dưới. train_tft.py đã biết né 3 file này; hàm sinh mẫu tổng hợp
+    # thì trước đây lại chọn ngẫu nhiên từ TOÀN BỘ *.csv nên vẫn dính phải.
+    SKIP_FILES = {"merged_data", "bitcoin_data", "bitcoin_data_global"}
+
+    csv_files = [
+        f for f in os.listdir(data_dir) if f.endswith(".csv") and f[:-4] not in SKIP_FILES
+    ]
     if not csv_files:
         print(f"Không có file CSV nào trong {data_dir}")
         return
@@ -280,8 +290,13 @@ def generate_synthetic(count: int, data_dir: str) -> Iterator[Dict]:
             csv_files.remove(filename)
             continue
 
-        idx = random.randint(30, len(df) - 2)
-        window = df["Close"].iloc[idx - 20 : idx + 1]
+        close_numeric = pd.to_numeric(df["Close"], errors="coerce").dropna()
+        if len(close_numeric) < 60:
+            csv_files.remove(filename)
+            continue
+
+        idx = random.randint(30, len(close_numeric) - 2)
+        window = close_numeric.iloc[idx - 20 : idx + 1]
         current = float(window.iloc[-1])
         change_pct = float((window.iloc[-1] / window.iloc[-2] - 1) * 100)
         volatility = float(window.pct_change().std() * 100)

@@ -16,6 +16,7 @@ import { CountUp } from "@/components/ui/count-up"
 import { cn } from "@/lib/utils"
 import { TechnicalChart } from "@/components/charts/technical-chart"
 import { PriceAlerts } from "@/components/ui/price-alerts"
+import { FeatureImportanceChart } from "@/components/charts/feature-importance-chart"
 
 
 export default function ForecastPage({ params }: { params: Promise<{ symbol: string }> }) {
@@ -111,6 +112,14 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
             
             <div className="space-y-6">
               <PriceAlerts defaultTicker={ticker} />
+
+              <section className="rounded-lg border border-border bg-card p-4 sm:p-5">
+                <h2 className="mb-4 font-semibold text-card-foreground flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  {t("featureImportance")}
+                </h2>
+                <FeatureImportanceChart ticker={ticker} />
+              </section>
             </div>
           </div>
 

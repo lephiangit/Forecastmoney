@@ -35,7 +35,13 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     groq_api_key: Optional[str] = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    # "llama-3.3-70b-versatile" bị Groq khai tử ngày 16/08/2026 (xem
+    # https://console.groq.com/docs/deprecations) — mọi request tới model này
+    # giờ trả 404, khiến toàn bộ hệ thống (chat Copilot, /research,
+    # cron_researcher, confidence cho bot auto-trade) âm thầm rơi về fallback
+    # keyword-scoring mà không có cảnh báo rõ ràng nào ở log. Đổi sang
+    # "openai/gpt-oss-120b" — model thay thế Groq khuyến nghị chính thức.
+    groq_model: str = "openai/gpt-oss-120b"
 
     # ── Secrets (BẮT BUỘC set qua env ở production) ───────────────────────────
     # Ký JWT đăng nhập. Đổi giá trị này sẽ vô hiệu hoá toàn bộ token đang lưu ở client.

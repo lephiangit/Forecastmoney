@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation"
 import { useCurrencyStore } from "@/lib/store"
 import { useBackendStatusPolling } from "@/lib/use-backend-status"
 import { DemoDataBanner } from "@/components/ui/system-banners"
+import { PwaInstallBanner } from "./pwa-install-banner"
+import { OnboardingTour } from "./onboarding-tour"
 import { AiCopilot } from "./ai-copilot"
 import { Footer } from "./footer"
 import { MarketTicker } from "./market-ticker"
@@ -83,6 +85,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <Footer />
       <AiCopilot />
+      <PwaInstallBanner />
+      <OnboardingTour />
     </div>
   )
 }

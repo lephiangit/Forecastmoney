@@ -621,6 +621,13 @@ export const api = {
     return tryFetch<import("./types").TickerDetail>(`/market/ticker/${ticker}?period=${period}&indicators=true`)
   },
 
+  async getFeatureImportance(ticker: string): Promise<{ feature: string; importance: number }[] | null> {
+    const res = await tryFetch<{ features: { feature: string; importance: number }[] }>(
+      `/forecast/feature-importance/${ticker}`,
+    )
+    return res?.features || null
+  },
+
   // ── Price Alerts ─────────────────────────────────────────────────────────
 
   async getPriceAlerts(): Promise<import("./types").PriceAlert[]> {

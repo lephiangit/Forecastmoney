@@ -56,6 +56,27 @@ export const translations = {
     horizon: "Horizon",
     model: "Model",
     priceForecast: "Price Forecast",
+    featureImportanceNote:
+      "Permutation importance: measured by shuffling each feature and observing how much the forecast shifts. Not attention weights from a Variable Selection Network.",
+    pwaInstallTitle: "Install ForecastAI",
+    pwaInstallDesc: "Add it to your home screen for a native app feel, even offline-ready.",
+    pwaInstallCta: "Install",
+    dismiss: "Dismiss",
+    featureImportance: "Feature Importance",
+    onboardStep1Title: "Welcome to ForecastAI",
+    onboardStep1Body:
+      "An academic project combining a Temporal Fusion Transformer price model with LLM-based news analysis. Everything you see is paper trading — no real money involved.",
+    onboardStep2Title: "Reading a forecast",
+    onboardStep2Body:
+      "Target price is the model's median (p50) estimate. Confidence reflects how strongly recent news and price action agree with that direction — treat it as a signal strength, not a guarantee.",
+    onboardStep3Title: "Technical indicators, in short",
+    onboardStep3Body:
+      "RSI above 70 suggests overbought, below 30 oversold. MACD crossing above its signal line suggests upward momentum. Bollinger Bands widen when volatility rises. These are inputs to the model, not standalone advice.",
+    onboardStep4Title: "Important disclaimer",
+    onboardStep4Body:
+      "All trading here is simulated (paper trading) for demonstration purposes. Forecasts can be wrong, sometimes significantly — never use this as the sole basis for a real financial decision.",
+    onboardNext: "Next",
+    onboardFinish: "Get started",
     historical: "Historical",
     predicted: "Predicted",
     confidenceBand: "Confidence Band",
@@ -147,6 +168,8 @@ export const translations = {
     runBacktest: "Run Backtest",
     backtestResults: "Backtest Results",
     noBacktestResults: "Run a backtest to see results.",
+    noTradesInPeriod:
+      "No BUY/SELL signal matched this period and strategy — the price didn't meet all the required conditions at once. Try a longer period or a different strategy.",
     initialCapital: "Initial Capital",
     period: "Period",
     days30: "30 days",
@@ -228,6 +251,27 @@ export const translations = {
     horizon: "Khung thời gian",
     model: "Mô hình",
     priceForecast: "Dự báo giá",
+    featureImportanceNote:
+      "Permutation importance: đo bằng cách xáo trộn từng đặc trưng và quan sát dự báo lệch bao nhiêu. Không phải trọng số attention của Variable Selection Network.",
+    pwaInstallTitle: "Cài đặt ForecastAI",
+    pwaInstallDesc: "Thêm vào màn hình chính để dùng như app thật, kể cả khi mất mạng tạm thời.",
+    pwaInstallCta: "Cài đặt",
+    dismiss: "Đóng",
+    featureImportance: "Mức độ ảnh hưởng đặc trưng",
+    onboardStep1Title: "Chào mừng đến với ForecastAI",
+    onboardStep1Body:
+      "Đây là đồ án học thuật kết hợp mô hình dự báo giá Temporal Fusion Transformer với phân tích tin tức bằng LLM. Mọi giao dịch trên hệ thống đều là mô phỏng — không dùng tiền thật.",
+    onboardStep2Title: "Cách đọc một dự báo",
+    onboardStep2Body:
+      "Giá mục tiêu là ước lượng trung vị (p50) của mô hình. Độ tin cậy phản ánh mức độ tin tức gần đây và diễn biến giá đồng thuận với chiều dự báo đó — nên hiểu như độ mạnh tín hiệu, không phải sự chắc chắn.",
+    onboardStep3Title: "Chỉ báo kỹ thuật, gói gọn trong 1 dòng",
+    onboardStep3Body:
+      "RSI trên 70 là quá mua, dưới 30 là quá bán. MACD cắt lên trên đường tín hiệu gợi ý đà tăng. Dải Bollinger giãn rộng khi biến động tăng cao. Đây là dữ liệu đầu vào cho mô hình, không phải lời khuyên đứng riêng.",
+    onboardStep4Title: "Lưu ý quan trọng",
+    onboardStep4Body:
+      "Mọi giao dịch trên đây đều là mô phỏng (paper trading) phục vụ demo đồ án. Dự báo có thể sai, đôi khi sai đáng kể — đừng bao giờ dùng đây làm căn cứ duy nhất cho quyết định tài chính thật.",
+    onboardNext: "Tiếp theo",
+    onboardFinish: "Bắt đầu dùng",
     historical: "Lịch sử",
     predicted: "Dự đoán",
     confidenceBand: "Dải tin cậy",
@@ -313,6 +357,8 @@ export const translations = {
     runBacktest: "Chạy kiểm thử",
     backtestResults: "Kết quả kiểm thử",
     noBacktestResults: "Chạy kiểm thử để xem kết quả.",
+    noTradesInPeriod:
+      "Không có tín hiệu MUA/BÁN nào khớp trong khoảng thời gian và chiến lược đã chọn — giá không đáp ứng đủ các điều kiện cùng lúc. Thử khoảng thời gian dài hơn hoặc đổi chiến lược khác.",
     initialCapital: "Vốn ban đầu",
     period: "Khoảng thời gian",
     days30: "30 ngày",

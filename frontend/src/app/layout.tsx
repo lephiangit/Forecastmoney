@@ -33,6 +33,17 @@ export const metadata: Metadata = {
   // Trang có nội dung tài chính do AI sinh ra và giao dịch mô phỏng —
   // không nên xuất hiện trong kết quả tìm kiếm như một dịch vụ tài chính thật.
   robots: { index: false, follow: false },
+  // manifest tự sinh bởi app/manifest.ts (quy ước file của Next.js) — không
+  // cần khai báo lại icons ở đây cho phần PWA, chỉ cần apple-touch-icon vì
+  // iOS Safari không đọc "icons" trong Web App Manifest.
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'ForecastAI',
+  },
+  icons: {
+    apple: '/icons/icon-192.png',
+  },
 }
 
 export const viewport: Viewport = {

@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { FlaskConical, Play, TrendingUp, TrendingDown, Target, BarChart3, Activity, Shield } from "lucide-react"
+import { FlaskConical, Play, TrendingUp, TrendingDown, Target, BarChart3, Activity, Shield, Info } from "lucide-react"
 import { api } from "@/lib/api"
 import { useT } from "@/lib/store"
 import { PageHeader } from "@/components/ui/page-header"
@@ -124,6 +124,17 @@ export default function BacktestPage() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
           >
+            {/* Không có giao dịch nào khớp: kết quả vẫn hợp lệ (API chạy thành công),
+                chỉ là giá trong khoảng thời gian này không đáp ứng đủ điều kiện tín hiệu
+                cùng lúc. Không có dòng này, người dùng dễ tưởng nhầm trang bị lỗi khi
+                nhìn thấy toàn số 0. */}
+            {result.summary.total_trades === 0 && (
+              <div className="mt-6 flex items-start gap-3 rounded-lg border border-info/30 bg-info/10 p-4 text-sm text-foreground">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+                <p>{t("noTradesInPeriod")}</p>
+              </div>
+            )}
+
             {/* Stats Cards */}
             <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
               <StatCard
@@ -228,6 +239,27 @@ export default function BacktestPage() {
                 </table>
               </div>
             </div>
+          </motion.div>
+        ) : mutation.isError ? (
+          // Trước bản này, lỗi API (mất mạng, backend ngủ, 500...) không hiện gì cả —
+          // người dùng chỉ thấy nút xoay xong rồi im lặng quay về màn hình trống,
+          // y hệt cảm giác "không chạy" dù bản chất là request thất bại.
+          <motion.div
+            key="error"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="mt-12 flex flex-col items-center justify-center gap-3 text-center"
+          >
+            <Info className="h-12 w-12 text-negative opacity-70" />
+            <p className="text-sm text-negative">
+              {mutation.error instanceof Error ? mutation.error.message : t("noBacktestResults")}
+            </p>
+            <button
+              onClick={() => mutation.mutate()}
+              className="rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground hover:bg-accent"
+            >
+              {t("runBacktest")}
+            </button>
           </motion.div>
         ) : !mutation.isPending ? (
           <motion.div

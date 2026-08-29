@@ -410,6 +410,111 @@ def run_tft_forecast(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  FEATURE IMPORTANCE (permutation importance — KHÔNG PHẢI trọng số VSN)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_feature_importance(
+    ticker: str, df: Optional[pd.DataFrame] = None, n_repeats: int = 8
+) -> Optional[List[Dict]]:
+    """
+    Đo mức ảnh hưởng của từng đặc trưng đầu vào lên dự báo T+1 (p50).
+
+    ĐÍNH CHÍNH QUAN TRỌNG: đây KHÔNG phải trọng số của lớp
+    `VariableSelectionNetwork` trong tft_model.py. Lớp đó có tồn tại trong code
+    nhưng `build_tft_model()` không hề gọi tới nó trong đồ thị model thực tế
+    (chỉ có `Dense(name="input_projection")` chiếu thẳng input) — nghĩa là nó
+    chưa từng ảnh hưởng tới bất kỳ dự báo nào, dù docstring liệt kê nó như một
+    tính năng. Nếu báo cáo đồ án ghi "TFT có Variable Selection Network cho khả
+    năng diễn giải" thì cần sửa lại cho khớp thực tế, hoặc nêu rõ đây là hướng
+    "future work" chưa hoàn thiện.
+
+    Thay vào đó, hàm này dùng PERMUTATION IMPORTANCE — kỹ thuật diễn giải mô
+    hình chuẩn, không phụ thuộc kiến trúc: xáo trộn thứ tự 60 phiên gần nhất
+    của TỪNG đặc trưng (giữ nguyên các đặc trưng khác), đo dự báo p50 lệch bao
+    nhiêu so với dự báo gốc. Đặc trưng càng quan trọng thì xáo trộn nó càng làm
+    dự báo lệch nhiều. Lặp `n_repeats` lần mỗi đặc trưng để giảm nhiễu ngẫu
+    nhiên, và gộp toàn bộ các lượt xáo trộn thành MỘT lượt gọi model.predict()
+    duy nhất (batch) để không bị chậm bởi overhead gọi hàm nhiều lần.
+
+    Trả về danh sách [{feature, importance, raw_delta}] sắp giảm dần theo
+    importance (đã chuẩn hoá về tổng = 1), hoặc None nếu thiếu dữ liệu/model.
+    """
+    from sklearn.preprocessing import MinMaxScaler
+
+    from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+
+    if df is None:
+        df = fetch_ohlcv(ticker, period="2y")
+    if df is None or len(df) < LOOK_BACK + 30:
+        return None
+
+    model = load_tft_model()
+    if model is None:
+        return None
+
+    try:
+        base_features = add_technical_indicators(df)
+        feature_cols = [c for c in get_feature_columns() if c in base_features.columns]
+        all_cols = ["Close"] + feature_cols
+
+        history_clean = base_features[all_cols].dropna()
+        if len(history_clean) < LOOK_BACK:
+            return None
+
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaler.fit(history_clean.values)
+
+        window = history_clean.tail(LOOK_BACK)
+        scaled = scaler.transform(window.values)
+        n_features = scaled.shape[1]
+
+        rng = np.random.default_rng(42)
+
+        # Hàng 0 = dự báo gốc (không xáo trộn). Các hàng sau: mỗi đặc trưng
+        # được xáo trộn n_repeats lần — gộp hết vào MỘT batch duy nhất.
+        batch_rows = [scaled]
+        row_feature: List[Optional[str]] = [None]
+        for i, col in enumerate(all_cols):
+            for _ in range(n_repeats):
+                permuted = scaled.copy()
+                order = rng.permutation(LOOK_BACK)
+                permuted[:, i] = permuted[order, i]
+                batch_rows.append(permuted)
+                row_feature.append(col)
+
+        batch = np.stack(batch_rows, axis=0)
+
+        with track_inference():
+            preds = model.predict(batch, verbose=0)
+
+        base_q50 = float(preds[0, 1])
+
+        diffs_by_feature: Dict[str, List[float]] = {c: [] for c in all_cols}
+        for row_idx in range(1, len(row_feature)):
+            col = row_feature[row_idx]
+            diffs_by_feature[col].append(abs(float(preds[row_idx, 1]) - base_q50))
+
+        deltas = {c: float(np.mean(v)) if v else 0.0 for c, v in diffs_by_feature.items()}
+        total = sum(deltas.values())
+
+        if total <= 0:
+            # Không đặc trưng nào ảnh hưởng đo được (hiếm, nhưng tránh chia 0).
+            share = 1.0 / len(deltas)
+            results = [{"feature": c, "importance": share, "raw_delta": 0.0} for c in deltas]
+        else:
+            results = [
+                {"feature": c, "importance": v / total, "raw_delta": v} for c, v in deltas.items()
+            ]
+
+        results.sort(key=lambda r: r["importance"], reverse=True)
+        return results
+
+    except Exception as e:
+        print(f"[feature-importance] Lỗi khi tính cho {ticker}: {type(e).__name__}: {e}")
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SENTIMENT FUSION
 # ══════════════════════════════════════════════════════════════════════════════
 
