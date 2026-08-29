@@ -204,6 +204,20 @@ def main() -> None:
         metric_for_best_model="eval_loss",
     )
 
+    # Vá lỗi tương thích của trl: các bản trl mới có thêm tối ưu "chunked
+    # cross-entropy" cho lớp LM head, nhưng nó giả định model.forward là một
+    # bound method thường — với model đã qua PEFT/4-bit quantize, forward lại
+    # là functools.partial, khiến SFTTrainer crash ngay lúc khởi tạo với lỗi
+    # "'functools.partial' object has no attribute '__func__'". Tắt hẳn tối ưu
+    # này (không cần thiết — QLoRA + LoRA đã đủ tiết kiệm bộ nhớ cho T4).
+    try:
+        import trl.trainer.sft_trainer as _sft_mod
+
+        if hasattr(_sft_mod, "_patch_chunked_ce_lm_head"):
+            _sft_mod._patch_chunked_ce_lm_head = lambda *a, **k: None
+    except Exception:
+        pass
+
     trainer = SFTTrainer(
         model=model,
         args=training_args,
