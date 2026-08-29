@@ -92,10 +92,30 @@ def hash_password(password: str) -> str:
     return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${digest}"
 
 
-def _legacy_hash(password: str) -> str:
-    """Tái tạo hash theo định dạng cũ để xác thực tài khoản tạo trước bản này."""
-    salt = hashlib.sha256(SECRET_KEY + b"_password_salt").digest()
+def _legacy_hash(password: str, secret: bytes) -> str:
+    """Tái tạo hash theo định dạng cũ để xác thực tài khoản tạo trước bản 2.0."""
+    salt = hashlib.sha256(secret + b"_password_salt").digest()
     return _pbkdf2(password, salt, 100_000)
+
+
+def _legacy_secrets() -> list[bytes]:
+    """
+    Các khoá dùng để thử xác thực hash theo định dạng cũ, theo thứ tự ưu tiên.
+
+    Ở định dạng cũ, salt mật khẩu được suy ra từ ADMIN_SECRET_KEY. Nghĩa là khi
+    luân chuyển khoá đó, mọi hash cũ trở thành không xác thực được — người dùng gõ
+    đúng mật khẩu vẫn bị từ chối.
+
+    Đặt LEGACY_PASSWORD_SECRET bằng giá trị ADMIN_SECRET_KEY cũ để giữ các tài khoản
+    đó đăng nhập được. Hash sẽ tự nâng cấp sang định dạng mới ngay sau lần đăng nhập
+    thành công đầu tiên, nên biến này chỉ cần tồn tại trong giai đoạn chuyển tiếp.
+    """
+    secrets_to_try = [SECRET_KEY]
+    if settings.legacy_password_secret:
+        legacy = settings.legacy_password_secret.encode()
+        if legacy != SECRET_KEY:
+            secrets_to_try.append(legacy)
+    return secrets_to_try
 
 
 def verify_password(password: str, stored: str) -> Tuple[bool, bool]:
@@ -116,9 +136,13 @@ def verify_password(password: str, stored: str) -> Tuple[bool, bool]:
         except (ValueError, TypeError):
             return False, False
 
-    # Định dạng cũ: hex thuần, salt suy ra từ SECRET_KEY.
-    is_valid = hmac.compare_digest(_legacy_hash(password), stored)
-    return is_valid, is_valid
+    # Định dạng cũ: hex thuần, salt suy ra từ khoá bí mật.
+    # Thử lần lượt khoá hiện tại rồi tới khoá cũ (nếu đang trong giai đoạn luân chuyển).
+    for secret in _legacy_secrets():
+        if hmac.compare_digest(_legacy_hash(password, secret), stored):
+            # Xác thực được bằng định dạng cũ → luôn cần nâng cấp sang định dạng mới.
+            return True, True
+    return False, False
 
 
 def _validate_password_strength(password: str) -> None:

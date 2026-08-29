@@ -288,6 +288,12 @@ async def _run_periodically(fn, interval: int, label: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"ForecastAI API khởi động (environment={settings.environment})...")
+    print(f"CORS cho phép các origin: {', '.join(settings.origin_list)}")
+
+    # Các vấn đề không chặn khởi động nhưng làm hỏng chức năng. In rõ ở đây để
+    # không phải mò trong lúc demo — triệu chứng của chúng thường rất dễ gây hiểu lầm.
+    for warning in settings.startup_warnings():
+        print(f"  [CẢNH BÁO] {warning}")
 
     # Nạp sẵn TFT vào RAM để request đầu tiên không phải chờ load model.
     try:

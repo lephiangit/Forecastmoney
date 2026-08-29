@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     # Secret riêng cho các job nền (/admin/trigger-*). Gửi qua header X-Cron-Secret.
     cron_secret_key: str = "dev-only-insecure-secret"
 
+    # Giá trị CŨ của ADMIN_SECRET_KEY, chỉ dùng để xác thực các mật khẩu chưa được
+    # nâng cấp định dạng hash.
+    #
+    # Vì sao cần: trước bản 2.0, salt mật khẩu được suy ra từ ADMIN_SECRET_KEY.
+    # Nếu chỉ đơn giản đổi khoá đó, MỌI tài khoản đang lưu hash theo định dạng cũ
+    # sẽ không đăng nhập được nữa — kể cả khi người dùng gõ đúng mật khẩu.
+    #
+    # Đặt biến này bằng giá trị ADMIN_SECRET_KEY CŨ khi luân chuyển khoá. Mỗi lần
+    # người dùng đăng nhập thành công, hash của họ tự động được nâng cấp sang định
+    # dạng mới (salt ngẫu nhiên, độc lập hoàn toàn với mọi khoá). Khi tất cả người
+    # dùng đã đăng nhập lại ít nhất một lần, có thể xoá biến này đi.
+    legacy_password_secret: Optional[str] = None
+
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Danh sách origin, phân tách bằng dấu phẩy.
     allowed_origins: str = "http://localhost:3000"
@@ -121,7 +134,53 @@ class Settings(BaseSettings):
         if not self.origin_list:
             problems.append("ALLOWED_ORIGINS đang rỗng.")
 
+        # Quên set ALLOWED_ORIGINS ở production là lỗi rất khó truy vết: app khởi động
+        # bình thường, /health trả 200 trong log server, nhưng trình duyệt chặn sạch
+        # mọi request vì thiếu header CORS. Nhìn từ phía người dùng thì giống hệt
+        # "backend chết", còn log server thì lại nói mọi thứ đều ổn.
+        #
+        # Nếu TOÀN BỘ origin đều là localhost thì chắc chắn là cấu hình sót, vì không
+        # có trình duyệt nào của người dùng thật chạy ở localhost của máy chủ.
+        elif all(
+            o.startswith(("http://localhost", "http://127.0.0.1", "https://localhost"))
+            for o in self.origin_list
+        ):
+            problems.append(
+                f"ALLOWED_ORIGINS chỉ chứa localhost ({', '.join(self.origin_list)}). "
+                "Ở production biến này phải là domain thật của frontend, ví dụ "
+                "https://ten-mien-cua-ban.com — nếu không, trình duyệt sẽ chặn toàn bộ "
+                "request và giao diện chỉ hiển thị dữ liệu mẫu."
+            )
+
         return problems
+
+    def startup_warnings(self) -> List[str]:
+        """
+        Các vấn đề KHÔNG chặn khởi động nhưng làm hỏng chức năng.
+
+        Tách khỏi `validate_for_production()` vì đây không phải lỗ hổng bảo mật —
+        app vẫn chạy được, chỉ là một phần tính năng im lặng ngừng hoạt động.
+        In ra lúc khởi động để không phải mò trong lúc demo.
+        """
+        warnings: List[str] = []
+
+        if not self.groq_api_key:
+            warnings.append(
+                "GROQ_API_KEY chưa được đặt. Trợ lý AI Copilot sẽ không trả lời, và phần "
+                "phân tích tin tức tự động lùi về chấm điểm từ khoá thay vì dùng mô hình ngôn ngữ."
+            )
+
+        if self.supabase_key and "publishable" in self.supabase_key:
+            warnings.append(
+                "SUPABASE_KEY trông giống khoá publishable (anon). Backend cần khoá "
+                "service_role — nếu không, Row Level Security sẽ chặn mọi truy vấn với lỗi "
+                "'permission denied for table ...'."
+            )
+
+        if not self.supabase_url or not self.supabase_key:
+            warnings.append("Thiếu SUPABASE_URL hoặc SUPABASE_KEY — toàn bộ tính năng cần dữ liệu sẽ hỏng.")
+
+        return warnings
 
 
 settings = Settings()
