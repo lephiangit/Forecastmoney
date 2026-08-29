@@ -359,22 +359,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
-# allow_credentials=True không hợp lệ khi kết hợp với origin "*" (trình duyệt sẽ
-# chặn). Ở dev ta cho phép "*" nhưng phải tắt credentials để cấu hình nhất quán.
-_origins = settings.origin_list
-_allow_credentials = "*" not in _origins
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_origins,
-    allow_credentials=_allow_credentials,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Cron-Secret"],
-    max_age=86400,
-)
-
-
 # ── Rate limiting toàn cục ────────────────────────────────────────────────────
 
 # Các nhóm endpoint có chi phí khác nhau nên có hạn mức khác nhau.
@@ -436,6 +420,36 @@ async def observability_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-Response-Time-Ms"] = f"{duration_ms:.1f}"
     return response
+
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# QUAN TRỌNG: middleware này phải được add_middleware() SAU CÙNG (không phải đầu
+# tiên như trực giác thông thường).
+#
+# Starlette dựng middleware stack theo thứ tự NGƯỢC với thứ tự add_middleware():
+# middleware add SAU sẽ bọc NGOÀI middleware add TRƯỚC. Nếu CORSMiddleware được
+# add trước rate_limit_middleware/observability_middleware (như bản cũ), nó sẽ
+# nằm ở lớp TRONG CÙNG — khi rate_limit_middleware trả thẳng response 429 mà
+# không gọi call_next(), response đó không bao giờ đi qua CORSMiddleware, nên
+# thiếu hẳn header Access-Control-Allow-Origin.
+#
+# Hậu quả nhìn thấy trên trình duyệt: Chrome báo "CORS request blocked / missing
+# header" — nhìn giống lỗi cấu hình CORS, nhưng bản chất là request bị rate-limit
+# (429) và mất header vì thứ tự middleware sai. Đặt CORSMiddleware add_middleware()
+# ở đây (sau hai middleware kia) để nó luôn là lớp NGOÀI CÙNG, đảm bảo mọi response
+# — kể cả 429 từ rate limiter, kể cả 500 từ exception handler — đều được gắn đúng
+# header CORS trước khi trả về trình duyệt.
+_origins = settings.origin_list
+_allow_credentials = "*" not in _origins
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Cron-Secret"],
+    max_age=86400,
+)
 
 
 # ── Exception handlers ────────────────────────────────────────────────────────
