@@ -1,0 +1,9 @@
+HOAN TAT HUAN LUYEN - TFT (Model 1)
+=====================================
+Mo hinh:            models/global_tft.keras
+Val loss tot nhat:  0.262734
+Epoch tot nhat:     44 (EarlyStopping dung o epoch 59)
+So ma:              104
+Mau train:          507,613
+Mau validation:     78,256
+Ngay backup:        2026-08-31 02:25:43
