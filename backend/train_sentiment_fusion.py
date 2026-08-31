@@ -74,7 +74,11 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
 FORECAST_DAYS = 7
-MAX_ADJUSTMENT = 0.05  # phải khớp với biên độ tanh*0.05 trong build_sentiment_fusion_model
+
+# Ngưỡng clip nhãn lấy TRỰC TIẾP từ sentiment_fusion.py thay vì viết lại hằng số
+# ở đây — nếu hai nơi lệch nhau, model sẽ được dạy những nhãn nằm ngoài biên độ mà
+# lớp đầu ra có thể biểu diễn (tanh * MAX_ADJUSTMENT), gây bão hoà âm thầm.
+from backend.models.sentiment_fusion import MAX_ADJUSTMENT, normalize_price_sequence
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -217,7 +221,9 @@ def build_dataset(
 
             target = np.clip((future_closes - tft_prices) / tft_prices, -MAX_ADJUSTMENT, MAX_ADJUSTMENT)
 
-            X_prices.append(tft_prices.astype(np.float32))
+            # Đầu vào phải chuẩn hoá y hệt lúc suy luận — dùng chung hàm với
+            # SentimentFusionEngine.predict() để hai bên không bao giờ lệch nhau.
+            X_prices.append(normalize_price_sequence(tft_prices))
             X_signals.append(signals)
             Y_adjust.append(target.astype(np.float32))
             ticker_used = True
@@ -226,8 +232,11 @@ def build_dataset(
             n_used_tickers += 1
             print(f"  {ticker}: OK")
 
+    # Chú ý: phải trả về ĐÚNG 2 giá trị ở mọi nhánh, vì hàm gọi unpack thành
+    # `data, n_tickers`. Trả về (None, None, None) ở nhánh lỗi sẽ gây
+    # ValueError: too many values to unpack — crash ngay khi không dựng được mẫu nào.
     if not X_prices:
-        return None, None, None
+        return None, 0
 
     return (
         np.array(X_prices, dtype=np.float32),

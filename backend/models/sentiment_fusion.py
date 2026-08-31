@@ -18,6 +18,12 @@ import pickle
 from typing import Optional, Tuple, Dict
 import pandas as pd
 
+# Biên độ điều chỉnh tối đa mà tầng fusion được phép áp lên dự báo của TFT (±5%).
+# Cố ý giới hạn: sentiment chỉ "nghiêng" dự báo, không được lấn át tín hiệu kỹ thuật.
+# Hằng số này dùng chung cho cả lúc dựng model, lúc train (làm ngưỡng clip nhãn) và
+# lúc suy luận — không được để ba nơi lệch nhau.
+MAX_ADJUSTMENT = 0.05
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import tensorflow as tf
 from tensorflow.keras.models import Model, load_model, Sequential
@@ -73,9 +79,16 @@ def build_sentiment_fusion_model(
     # Using tanh to bound adjustments to [-1, 1] then scale to small adjustments
     raw_adj = Dense(forecast_days, activation="tanh")(fused)
 
-    # Bound to [-0.05, 0.05] — max ±5% sentiment-driven adjustment
-    adjustments = tf.keras.layers.Lambda(
-        lambda x: x * 0.05, name="adjustments"
+    # Bound to [-0.05, 0.05] — max ±5% sentiment-driven adjustment.
+    #
+    # Dùng `Rescaling` chứ KHÔNG dùng `Lambda`: từ Keras 3 trở đi, `load_model()`
+    # từ chối deserialize lớp Lambda (vì nó thực thi bytecode Python tuỳ ý) trừ khi
+    # truyền safe_mode=False. Model chứa Lambda vẫn SAVE bình thường nhưng sẽ NẠP
+    # LỖI ở `SentimentFusionEngine._load_or_create()` — và vì chỗ đó bắt exception
+    # rồi âm thầm rơi về công thức heuristic, toàn bộ công sức huấn luyện sẽ mất
+    # trắng mà không có thông báo lỗi nào. `Rescaling` là lớp chuẩn, serialize được.
+    adjustments = tf.keras.layers.Rescaling(
+        scale=MAX_ADJUSTMENT, name="adjustments"
     )(raw_adj)
 
     model = Model(
@@ -91,6 +104,36 @@ def build_sentiment_fusion_model(
     )
 
     return model
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  CHUẨN HOÁ CHUỖI GIÁ ĐẦU VÀO
+# ──────────────────────────────────────────────────────────────────────────────
+
+def normalize_price_sequence(tft_prices: np.ndarray) -> np.ndarray:
+    """
+    Đưa chuỗi giá dự báo của TFT về dạng % thay đổi so với ngày dự báo đầu tiên.
+
+    VÌ SAO CẦN: nếu đưa GIÁ THÔ vào lớp Dense, đầu vào của mạng trải dài 5 bậc độ
+    lớn giữa các mã (ADA-USD ~0.5 USD, FPT.VN ~100.000 VND, BTC-USD ~95.000 USD).
+    Mạng sẽ bị chi phối hoàn toàn bởi các mã có giá lớn và không tổng quát hoá được
+    sang mã giá nhỏ — đúng loại lỗi lệch thang đo đã phát hiện ở TFT (xem
+    models/danh_gia_ket_qua.md), không nên lặp lại ở tầng fusion.
+
+    Chuyển sang % thay đổi tương đối làm đầu vào trở nên PHI THANG ĐO (scale-free):
+    một chuỗi dự báo "tăng dần 1% mỗi ngày" trông giống hệt nhau ở mọi mã, bất kể
+    giá tuyệt đối. Thông tin bị mất (mức giá tuyệt đối) không liên quan đến việc
+    quyết định "nên điều chỉnh dự báo này bao nhiêu PHẦN TRĂM theo sentiment".
+
+    Hàm này được dùng CHUNG bởi cả lúc train (backend/train_sentiment_fusion.py)
+    và lúc suy luận (`SentimentFusionEngine.predict`) — bắt buộc phải khớp nhau,
+    nếu lệch thì model sẽ nhận đầu vào khác hẳn lúc học.
+    """
+    prices = np.asarray(tft_prices, dtype=np.float64)
+    base = prices[0]
+    if not np.isfinite(base) or base == 0:
+        return np.zeros_like(prices, dtype=np.float32)
+    return ((prices / base - 1.0) * 100.0).astype(np.float32)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -221,9 +264,13 @@ class SentimentFusionEngine:
             # Use trained model
             model = self._load_or_create(days)
             try:
-                prices_input = tft_prices[:days].reshape(1, -1)
+                # Chuẩn hoá y hệt lúc train: đưa chuỗi giá về % thay đổi tương đối
+                # (xem normalize_price_sequence). Đưa giá thô vào đây sẽ khiến model
+                # nhận đầu vào khác hẳn phân phối lúc học.
+                prices_input = normalize_price_sequence(tft_prices[:days]).reshape(1, -1)
                 signals_input = market_signals.reshape(1, -1)
                 adjustments = model.predict([prices_input, signals_input], verbose=0)[0]
+                # Điều chỉnh vẫn được áp lên GIÁ THÔ — chỉ đầu vào mới chuẩn hoá.
                 return tft_prices[:days] * (1 + adjustments)
             except Exception as e:
                 print(f"⚠️ SentimentFusion inference error: {e}")
