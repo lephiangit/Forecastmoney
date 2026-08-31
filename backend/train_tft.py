@@ -39,6 +39,38 @@ từ nhãn khác nhau.
 [p10, p90] lẽ ra phải bao phủ khoảng 80% số quan sát thực tế. Phép đo đó nằm ở
 `backend/evaluate_tft.py`.
 ────────────────────────────────────────────────────────────────────────────────
+LỖI PHƯƠNG PHÁP ĐÃ SỬA (lần 2): DỰ ĐOÁN MỨC GIÁ TUYỆT ĐỐI THAY VÌ % THAY ĐỔI
+
+Bản trước huấn luyện model dự đoán GIÁ ĐÃ CHUẨN HOÁ (Close sau MinMaxScaler) của
+phiên kế tiếp. `MinMaxScaler` chỉ được fit MỘT LẦN trên 85% dữ liệu đầu (train).
+Với các mã có xu hướng tăng giá dài hạn mạnh — đặc biệt cổ phiếu Mỹ có lịch sử
+giá nhiều thập kỷ, đã qua nhiều lần tách cổ phiếu — phần lớn giai đoạn validation/
+test có giá VƯỢT quá giá lớn nhất model từng thấy lúc train. Giá trị sau chuẩn hoá
+khi đó vượt ngưỡng [0,1], buộc model phải ngoại suy ra ngoài vùng đã học.
+
+Đo thực nghiệm trên 104 mã (xem `models/danh_gia_ket_qua.md`): 42/104 mã có >50%
+điểm test vượt giá max lúc train, nhóm này có MAPE gấp 23 lần naive forecast và
+Coverage dải tin cậy chỉ ~20% (đáng lẽ phải ~80%). Vấn đề tập trung nặng nhất ở
+cổ phiếu Mỹ (US Stock/ETF): trung bình 58% điểm test bị lệch phạm vi.
+
+Bản này đổi biến mục tiêu (target) sang TỶ LỆ % THAY ĐỔI GIÁ (return) so với phiên
+cuối cùng trong cửa sổ đầu vào, thay vì mức giá tuyệt đối:
+
+    return[i] = (Close[i+look_back] - Close[i+look_back-1]) / Close[i+look_back-1] * 100
+
+Return luôn dao động trong biên độ ổn định (thường vài % mỗi phiên) bất kể mức giá
+tuyệt đối của tài sản là bao nhiêu — loại bỏ tận gốc vấn đề lệch scale ở trên. Đầu
+ra của model giờ là quantile của % thay đổi giá, không phải quantile của giá.
+
+QUAN TRỌNG: đây là thay đổi về Ý NGHĨA của target, không phải kiến trúc mạng hay
+số chiều đầu vào — nên `train_tft()` KHÔNG tự phát hiện được qua so sánh
+`num_features` như với thay đổi tập đặc trưng. Nếu tiếp tục huấn luyện từ
+checkpoint cũ (vốn học để dự đoán giá tuyệt đối đã chuẩn hoá), model sẽ bị trộn
+lẫn hai loại nhãn hoàn toàn khác nhau. Vì vậy hàm `train_tft()` kiểm tra field
+`target_type` trong `tft_meta.json` của checkpoint cũ và TỰ ĐỘNG ép `fresh=True`
+nếu không khớp — không cần nhớ truyền `--fresh` bằng tay, nhưng vẫn nên truyền để
+rõ ràng.
+────────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -82,17 +114,32 @@ VALIDATION_GAP = LOOK_BACK
 # Các file dữ liệu tổng hợp / trùng lặp — bỏ qua khi build dataset.
 SKIP_FILES = {"merged_data", "bitcoin_data", "bitcoin_data_global"}
 
+# Đánh dấu phiên bản ý nghĩa của target — dùng để tự động phát hiện checkpoint cũ
+# (huấn luyện với target khác) và ép train mới thay vì tiếp tục huấn luyện nhầm.
+TARGET_TYPE = "return_pct_1step"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DỰNG DATASET
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_sequences(scaled: np.ndarray, look_back: int):
-    """Cắt chuỗi đã chuẩn hoá thành các cặp (cửa sổ đầu vào, giá trị kế tiếp)."""
+def _build_sequences(scaled: np.ndarray, raw_close: np.ndarray, look_back: int):
+    """
+    Cắt chuỗi đã chuẩn hoá thành các cặp (cửa sổ đầu vào, % thay đổi giá kế tiếp).
+
+    Đầu vào X vẫn dùng dữ liệu đã qua MinMaxScaler như trước (ổn định cho việc học
+    của mạng). Nhãn Y giờ là % THAY ĐỔI GIÁ tính từ giá THẬT (raw_close, chưa
+    chuẩn hoá) — không đi qua scaler — để tránh việc nhãn bị bó buộc vào phạm vi
+    [0,1] của giai đoạn train, vốn là nguyên nhân gây lệch scale nghiêm trọng khi
+    giá tương lai vượt ngưỡng đã học (xem ghi chú ở đầu file).
+    """
     X, Y = [], []
     for i in range(len(scaled) - look_back):
+        last_close = raw_close[i + look_back - 1]
+        next_close = raw_close[i + look_back]
+        pct_change = (next_close - last_close) / last_close * 100.0
         X.append(scaled[i : i + look_back])
-        Y.append(scaled[i + look_back, 0])  # Cột 0 là Close
+        Y.append(pct_change)
     return X, Y
 
 
@@ -176,8 +223,12 @@ def create_tft_dataset(verbose: bool = True):
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaler.fit(train_slice.values)
 
-        tx, ty = _build_sequences(scaler.transform(train_slice.values), LOOK_BACK)
-        vx, vy = _build_sequences(scaler.transform(val_slice.values), LOOK_BACK)
+        tx, ty = _build_sequences(
+            scaler.transform(train_slice.values), train_slice["Close"].values, LOOK_BACK
+        )
+        vx, vy = _build_sequences(
+            scaler.transform(val_slice.values), val_slice["Close"].values, LOOK_BACK
+        )
 
         train_X.extend(tx)
         train_Y.extend(ty)
@@ -247,8 +298,10 @@ def train_tft(fresh: bool = False) -> None:
     Huấn luyện mô hình.
 
     `fresh=True` bỏ qua checkpoint cũ và khởi tạo lại từ đầu — nên dùng khi
-    tập đặc trưng hoặc cách chia dữ liệu thay đổi, vì lúc đó tiếp tục huấn luyện
-    từ trọng số cũ sẽ trộn lẫn hai chế độ dữ liệu khác nhau.
+    tập đặc trưng, cách chia dữ liệu, hoặc Ý NGHĨA của target thay đổi, vì lúc đó
+    tiếp tục huấn luyện từ trọng số cũ sẽ trộn lẫn hai chế độ dữ liệu khác nhau.
+    Hàm này cũng tự động phát hiện trường hợp target_type đổi (xem bên dưới) và
+    tự ép fresh=True, nhưng truyền cờ `--fresh` bằng tay vẫn là thói quen tốt.
     """
     os.makedirs(MODELS_DIR, exist_ok=True)
 
@@ -262,6 +315,25 @@ def train_tft(fresh: bool = False) -> None:
         return
 
     model_path = os.path.join(MODELS_DIR, "global_tft.keras")
+    meta_path = os.path.join(MODELS_DIR, "tft_meta.json")
+
+    # Checkpoint cũ có thể được huấn luyện với Ý NGHĨA target khác (giá tuyệt đối
+    # thay vì % thay đổi) — điều này không thể phát hiện qua num_features vì kiến
+    # trúc/số chiều đầu vào không đổi. Đọc meta cũ để kiểm tra, ép fresh nếu lệch.
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                old_meta = json.load(f)
+            old_target_type = old_meta.get("target_type", "close_price_scaled")
+        except Exception:
+            old_target_type = None
+        if not fresh and old_target_type != TARGET_TYPE:
+            print(
+                f"Checkpoint cũ có target_type='{old_target_type}', khác với target hiện "
+                f"tại ('{TARGET_TYPE}'). Tự động chuyển sang huấn luyện MỚI để tránh trộn "
+                "lẫn hai loại nhãn khác nhau."
+            )
+            fresh = True
 
     if os.path.exists(model_path) and not fresh:
         print("Nạp lại checkpoint đã có để huấn luyện tiếp...")
@@ -317,6 +389,7 @@ def train_tft(fresh: bool = False) -> None:
         "train_ratio": TRAIN_RATIO,
         "validation_gap": VALIDATION_GAP,
         "split_strategy": "chronological-per-ticker",
+        "target_type": TARGET_TYPE,
         "train_samples": int(len(X_train)),
         "val_samples": int(len(X_val)),
         "tickers_used": [t["ticker"] for t in report["tickers_used"]],

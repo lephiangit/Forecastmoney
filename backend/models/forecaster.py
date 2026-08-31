@@ -358,14 +358,17 @@ def run_tft_forecast(
         working_df = df.copy()
         forecast_dates = build_forecast_dates(ticker, df.index[-1], days)
 
-        preds_q10: List[float] = []
-        preds_q50: List[float] = []
-        preds_q90: List[float] = []
+        preds_price_q10: List[float] = []
+        preds_price_q50: List[float] = []
+        preds_price_q90: List[float] = []
 
-        def inverse_close(scaled_values: np.ndarray) -> np.ndarray:
-            dummy = np.zeros((len(scaled_values), scaler.n_features_in_))
-            dummy[:, 0] = scaled_values
-            return scaler.inverse_transform(dummy)[:, 0]
+        def return_to_price(pct_return: float, last_close: float) -> float:
+            """Model dự đoán % thay đổi giá (return), không phải mức giá tuyệt đối —
+            xem ghi chú TARGET_TYPE trong backend/train_tft.py. Tái tạo lại giá bằng
+            cách áp % thay đổi lên giá cuối cùng đã biết, thay vì inverse_transform
+            qua scaler (cách cũ này là nguyên nhân gây lệch scale nghiêm trọng khi
+            giá vượt phạm vi scaler từng thấy)."""
+            return last_close * (1.0 + pct_return / 100.0)
 
         with track_inference():
             for step in range(days):
@@ -374,34 +377,42 @@ def run_tft_forecast(
                 if len(window) < LOOK_BACK:
                     break
 
+                # Giá cuối cùng đã biết trong cửa sổ — mốc để quy đổi % return -> giá.
+                last_close = float(window["Close"].iloc[-1])
+
                 scaled = scaler.transform(window.values)
                 model_input = scaled.reshape(1, LOOK_BACK, scaled.shape[1])
 
                 pred = model.predict(model_input, verbose=0)
-                q10, q50, q90 = float(pred[0, 0]), float(pred[0, 1]), float(pred[0, 2])
+                r10, r50, r90 = float(pred[0, 0]), float(pred[0, 1]), float(pred[0, 2])
 
                 # Quantile phải không giảm dần: p10 <= p50 <= p90. Mạng có thể vi phạm
                 # ràng buộc này (quantile crossing) nên ta sắp lại cho chắc chắn.
-                q10, q50, q90 = sorted((q10, q50, q90))
+                # (Sắp xếp trên % return tương đương sắp xếp trên giá vì quy đổi là
+                # hàm đơn điệu tăng theo return.)
+                r10, r50, r90 = sorted((r10, r50, r90))
 
-                preds_q10.append(q10)
-                preds_q50.append(q50)
-                preds_q90.append(q90)
+                price_q10 = return_to_price(r10, last_close)
+                price_q50 = return_to_price(r50, last_close)
+                price_q90 = return_to_price(r90, last_close)
+
+                preds_price_q10.append(price_q10)
+                preds_price_q50.append(price_q50)
+                preds_price_q90.append(price_q90)
 
                 # Nạp giá vừa dự báo vào chuỗi để bước sau tính lại toàn bộ chỉ báo.
-                next_close = float(inverse_close(np.array([q50]))[0])
-                working_df = _append_synthetic_bar(working_df, next_close, forecast_dates[step])
+                working_df = _append_synthetic_bar(working_df, price_q50, forecast_dates[step])
 
-        if not preds_q50:
+        if not preds_price_q50:
             return None, None, None
 
-        actual_days = len(preds_q50)
+        actual_days = len(preds_price_q50)
         dates = forecast_dates[:actual_days]
 
         return (
-            pd.Series(inverse_close(np.array(preds_q50)), index=dates, name="tft_median"),
-            pd.Series(inverse_close(np.array(preds_q10)), index=dates, name="tft_lower"),
-            pd.Series(inverse_close(np.array(preds_q90)), index=dates, name="tft_upper"),
+            pd.Series(preds_price_q50, index=dates, name="tft_median"),
+            pd.Series(preds_price_q10, index=dates, name="tft_lower"),
+            pd.Series(preds_price_q90, index=dates, name="tft_upper"),
         )
 
     except Exception as e:

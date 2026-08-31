@@ -196,18 +196,20 @@ def evaluate_ticker(model, ticker: str, horizon: int = 1) -> Optional[Dict]:
     y_true = closes[origin_idx + horizon]
     last_known = closes[origin_idx]
 
-    preds_scaled = model.predict(X, verbose=0, batch_size=256)
-
-    def inverse_close(values: np.ndarray) -> np.ndarray:
-        dummy = np.zeros((len(values), scaler.n_features_in_))
-        dummy[:, 0] = values
-        return scaler.inverse_transform(dummy)[:, 0]
+    preds_return = model.predict(X, verbose=0, batch_size=256)
 
     # Ràng buộc quantile không giảm dần, phòng trường hợp mạng cho ra thứ tự sai.
-    q_sorted = np.sort(preds_scaled[:, :3], axis=1)
-    tft_lower = inverse_close(q_sorted[:, 0])
-    tft_median = inverse_close(q_sorted[:, 1])
-    tft_upper = inverse_close(q_sorted[:, 2])
+    q_sorted = np.sort(preds_return[:, :3], axis=1)
+
+    # Model dự đoán % THAY ĐỔI GIÁ (return) so với phiên cuối cùng trong cửa sổ,
+    # KHÔNG phải mức giá tuyệt đối — xem TARGET_TYPE trong backend/train_tft.py.
+    # Tái tạo giá bằng last_known * (1 + return/100) thay vì inverse_transform qua
+    # scaler như bản cũ — cách cũ là nguyên nhân gây lệch scale nghiêm trọng khi
+    # giá thực tế vượt phạm vi scaler từng thấy lúc train (xem
+    # models/danh_gia_ket_qua.md).
+    tft_lower = last_known * (1.0 + q_sorted[:, 0] / 100.0)
+    tft_median = last_known * (1.0 + q_sorted[:, 1] / 100.0)
+    tft_upper = last_known * (1.0 + q_sorted[:, 2] / 100.0)
 
     results = {
         "ticker": ticker,
@@ -420,6 +422,24 @@ def main() -> None:
     model = tf.keras.models.load_model(
         model_path, custom_objects={"loss_fn": quantile_loss([0.1, 0.5, 0.9])}
     )
+
+    # Script này diễn giải output của model là % THAY ĐỔI GIÁ (return), không phải
+    # mức giá tuyệt đối — cảnh báo nếu checkpoint đang nạp được huấn luyện trước
+    # khi đổi sang target này, để không đọc nhầm kết quả.
+    meta_path = os.path.join(MODELS_DIR, "tft_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            target_type = meta.get("target_type", "close_price_scaled")
+            if target_type != "return_pct_1step":
+                print(
+                    f"CẢNH BÁO: checkpoint có target_type='{target_type}', script này đang "
+                    "diễn giải output là % return. Kết quả sẽ SAI nếu model thực ra dự đoán "
+                    "giá tuyệt đối. Train lại với `python -m backend.train_tft --fresh`."
+                )
+        except Exception:
+            pass
 
     if args.tickers:
         tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
