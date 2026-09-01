@@ -55,6 +55,15 @@ from sklearn.preprocessing import MinMaxScaler
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
+# Khi stdout được redirect ra file (vd: `python -m ... *> log.txt` trong PowerShell),
+# Python KHÔNG dùng UTF-8 nữa mà rơi về bảng mã mặc định của hệ thống (cp1258 trên
+# Windows tiếng Việt) — bảng mã này thiếu một số ký tự có dấu, khiến script crash
+# ngay dòng print() đầu tiên có tiếng Việt. Ép UTF-8 tường minh để in ra màn hình
+# lẫn ghi ra file đều hoạt động như nhau.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 if PROJECT_ROOT not in sys.path:
