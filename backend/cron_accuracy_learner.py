@@ -154,11 +154,20 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
 
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaled = scaler.fit_transform(df_clean.values)
+        # Nhãn phải cùng ngữ nghĩa với target hiện tại của TFT: % thay đổi giá (return),
+        # KHÔNG PHẢI giá tuyệt đối đã scale như trước. Dùng lại đúng công thức trong
+        # backend/train_tft.py::_build_sequences — tính trên giá THÔ (raw_close), không
+        # phải giá đã qua scaler. Nếu giữ nhãn cũ, fine-tune sẽ kéo model quay lại dự
+        # đoán "giá tuyệt đối" và phá hỏng model đã sửa lỗi lệch scale.
+        raw_close = df_clean["Close"].values
 
         start = max(0, len(scaled) - look_back - RECENT_WINDOWS_PER_TICKER)
         for i in range(start, len(scaled) - look_back):
+            last_close = raw_close[i + look_back - 1]
+            next_close = raw_close[i + look_back]
+            pct_change = (next_close - last_close) / last_close * 100.0
             all_X.append(scaled[i : i + look_back])
-            all_Y.append(scaled[i + look_back, 0])
+            all_Y.append(pct_change)
 
     if not all_X:
         return None, None
@@ -181,6 +190,32 @@ def online_learning(tickers: List[str]) -> bool:
 
     if not os.path.exists(MODEL_PATH):
         print("Chưa có mô hình đã huấn luyện. Chạy backend/train_tft.py trước.")
+        return False
+
+    # Chốt an toàn: model hiện tại phải đúng target_type "return_pct_1step" (% return)
+    # thì nhãn fine-tune ở trên mới có cùng ngữ nghĩa. Nếu model đang chạy vẫn là bản
+    # cũ (dự đoán giá tuyệt đối) hoặc target_type nào khác, TỪ CHỐI fine-tune thay vì
+    # âm thầm học sai — tránh lặp lại đúng lớp lỗi đã sửa ở train_tft.py.
+    meta_path = os.path.join(MODELS_DIR, "tft_meta.json")
+    try:
+        import json
+
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        current_target_type = meta.get("target_type")
+        if current_target_type != "return_pct_1step":
+            print(
+                f"TỪ CHỐI fine-tune: model hiện tại có target_type='{current_target_type}', "
+                "khác với nhãn %return mà script này sinh ra ('return_pct_1step'). "
+                "Chạy lại backend/train_tft.py để đưa model về đúng phiên bản trước khi bật "
+                "online-learning."
+            )
+            return False
+    except Exception as e:
+        print(
+            f"Cảnh báo: không đọc được tft_meta.json để kiểm tra target_type ({e}). "
+            "TỪ CHỐI fine-tune để an toàn."
+        )
         return False
 
     import tensorflow as tf
@@ -217,7 +252,10 @@ def online_learning(tickers: List[str]) -> bool:
     print(f"Loss trước khi học: {loss_before:.6f} (trên {len(X_holdout)} mẫu giữ lại)")
 
     print(f"Fine-tune trên {len(X_train)} mẫu mới...")
-    tf.keras.backend.set_value(model.optimizer.learning_rate, FINE_TUNE_LR)
+    # tf.keras.backend.set_value() la API kieu TF1, khong tuong thich voi optimizer
+    # cua Keras 3 (loi "'str' object has no attribute 'name'" — da kiem chung thuc te).
+    # Gan truc tiep thuoc tinh la cach chuan trong Keras 3.
+    model.optimizer.learning_rate = FINE_TUNE_LR
     model.fit(
         X_train,
         Y_train,

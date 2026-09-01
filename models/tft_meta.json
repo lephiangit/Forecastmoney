@@ -28,6 +28,7 @@
   "train_ratio": 0.85,
   "validation_gap": 60,
   "split_strategy": "chronological-per-ticker",
+  "target_type": "return_pct_1step",
   "train_samples": 507613,
   "val_samples": 78256,
   "tickers_used": [
@@ -136,6 +137,6 @@
     "XRP-USD",
     "ZM"
   ],
-  "trained_at": "2026-08-31T02:55:36.500266",
-  "best_val_loss": 0.2627335488796234
+  "trained_at": "2026-09-01T00:43:46.636723",
+  "best_val_loss": 0.46530652046203613
 }
