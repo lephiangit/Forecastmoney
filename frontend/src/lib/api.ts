@@ -462,23 +462,28 @@ export const api = {
     return real || ADMIN_USERS
   },
 
+  // Bốn thao tác quản trị dưới đây dùng `apiFetch` (NÉM lỗi) chứ không phải
+  // `tryFetch`. Backend có chốt `_guard_not_self()` chặn admin tự khoá / tự hạ
+  // quyền chính mình và trả 400 kèm lý do rõ ràng — nhưng với `tryFetch`, lỗi đó
+  // bị nuốt và nút trông y như "bấm không ăn": không đổi trạng thái, không thông
+  // báo, không có gì. Cơ chế bảo vệ chạy đúng mà người dùng không hề biết.
   async updateUserBalance(userId: string, amount: number) {
-    return tryFetch(`/admin/users/${userId}/balance`, {
+    return apiFetch(`/admin/users/${userId}/balance`, {
       method: "PUT",
       body: JSON.stringify({ amount })
     })
   },
 
   async updateUserStatus(userId: string) {
-    return tryFetch(`/admin/users/${userId}/status`, { method: "PUT" })
+    return apiFetch(`/admin/users/${userId}/status`, { method: "PUT" })
   },
 
   async updateUserRole(userId: string) {
-    return tryFetch(`/admin/users/${userId}/role`, { method: "PUT" })
+    return apiFetch(`/admin/users/${userId}/role`, { method: "PUT" })
   },
 
   async deleteUser(userId: string) {
-    return tryFetch(`/admin/users/${userId}`, { method: "DELETE" })
+    return apiFetch(`/admin/users/${userId}`, { method: "DELETE" })
   },
 
   async getModelAccuracy(): Promise<ModelAccuracy[]> {

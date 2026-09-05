@@ -81,6 +81,17 @@ export default function AdminPage() {
     }
   }
 
+  // Backend chặn admin tự khoá / tự hạ quyền chính mình (`_guard_not_self`) và trả
+  // 400 kèm lý do. Trước đây lớp api nuốt lỗi nên nút trông như "bấm không ăn":
+  // không đổi trạng thái, không thông báo. Nay gom lỗi của cả 4 thao tác quản trị
+  // để hiển thị cho người dùng biết chính xác vì sao thao tác bị từ chối.
+  const actionError =
+    (statusMut.error as Error | null)?.message ||
+    (roleMut.error as Error | null)?.message ||
+    (deleteMut.error as Error | null)?.message ||
+    (balanceMut.error as Error | null)?.message ||
+    null
+
   const isOnline = (lastActive?: string) => {
     if (!lastActive) return false
     const diff = new Date().getTime() - new Date(lastActive).getTime()
@@ -90,6 +101,16 @@ export default function AdminPage() {
   return (
     <div>
       <PageHeader title={t("adminDashboard")} subtitle={t("howIsSystem")} />
+
+      {actionError && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative"
+        >
+          <span className="font-semibold">{t("actionFailed")}: </span>
+          {actionError}
+        </div>
+      )}
 
       {/* KPI overview */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
