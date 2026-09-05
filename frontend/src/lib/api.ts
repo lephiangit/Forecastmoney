@@ -7,9 +7,6 @@ import {
   TRANSACTIONS,
   AUTO_TRADE_CONFIG,
   AUTO_TRADE_STATS,
-  ADMIN_USERS,
-  SYSTEM_METRICS,
-  RESEARCH_QUEUE,
 } from "./data"
 import type {
   MarketAsset,
@@ -310,15 +307,10 @@ export const api = {
       { method: "POST" },
     )
     if (real) return real
-    await delay(600)
-    const report = RESEARCH.find((r) => r.id === id)
-    return {
-      content_vi:
-        report?.content_vi ??
-        "## Bản dịch tự động\n\nNội dung báo cáo đã được dịch sang tiếng Việt bởi Gemini AI. " +
-          (report?.summary ?? ""),
-      translated_at: new Date().toISOString(),
-    }
+    // KHÔNG bịa nội dung dịch. Bản cũ trả về một đoạn văn mẫu ghép sẵn rồi giao
+    // diện gắn nhãn "✓ Translated by Gemini" lên đó — tức là trình bày văn bản
+    // tự chế như thể là kết quả dịch thật của LLM. Thà báo lỗi còn hơn.
+    throw new ApiError("Không dịch được báo cáo này. Vui lòng thử lại sau.", 0)
   },
 
   async getPortfolioHistory(days: number = 90): Promise<any[]> {
@@ -379,6 +371,13 @@ export const api = {
       }
 
       // mapping backend shape to frontend Portfolio
+      //
+      // `is_running` / `started_at` BẮT BUỘC phải được chuyển tiếp. Bản cũ dựng một
+      // object hoàn toàn mới và bỏ quên hai trường này, nên `portfolio.is_running`
+      // luôn undefined → trang Giao dịch tự động luôn hiện "Trading Bot Stopped"
+      // và nút luôn là "Start Bot", KỂ CẢ khi bot đang chạy thật ở backend.
+      // Đây chính là lý do bấm Start Bot trông như "không có gì xảy ra": lệnh bật
+      // bot thành công nhưng giao diện không bao giờ phản ánh trạng thái mới.
       return {
         cash: real.current_balance,
         totalValue: (real.current_balance || 0) + investedValue,
@@ -388,7 +387,9 @@ export const api = {
         dayPnl: 0,
         dayPnlPercent: 0,
         holdings: holdings,
-        history: history
+        history: history,
+        is_running: !!real.is_running,
+        started_at: real.started_at ?? null,
       }
     }
     return buildPortfolio()
@@ -411,9 +412,32 @@ export const api = {
     return TRANSACTIONS
   },
 
-  async getBotConfig(): Promise<{ amount: number; end_time: string | null }> {
+  async getBotConfig(): Promise<{
+    amount: number
+    end_time: string | null
+    assets?: string[]
+    strategy?: string
+    stop_loss?: number
+    take_profit?: number
+    min_confidence?: number
+  }> {
     const real = await tryFetch<any>("/admin/trading/config")
     return real || { amount: 500, end_time: null }
+  },
+
+  /** Lưu cấu hình bot mà không bật bot. Ném lỗi để giao diện báo được thất bại. */
+  async saveBotConfig(params: {
+    amount: number
+    assets: string[]
+    strategy: string
+    stop_loss: number
+    take_profit: number
+    min_confidence: number
+  }) {
+    return apiFetch<{ success: boolean; message: string }>("/admin/trading/config", {
+      method: "PUT",
+      body: JSON.stringify(params),
+    })
   },
 
   async startBot(amount: number, durationHours: number, assets: string[]) {
@@ -457,9 +481,15 @@ export const api = {
 
 
 
+  // Ba hàm dưới đây KHÔNG còn rơi về dữ liệu mẫu khi gọi API thất bại.
+  // Trang Quản trị ghi rõ với người xem rằng "Số liệu đo trực tiếp từ tiến trình
+  // backend đang chạy" — nếu API hỏng (ví dụ token hết quyền → 403) mà ta lặng lẽ
+  // đưa số liệu bịa từ lib/data.ts vào, câu khẳng định đó thành sai sự thật và
+  // người xem không có cách nào biết. Trả mảng rỗng để giao diện hiện trạng thái
+  // trống thay vì số liệu giả.
   async getAdminUsers(): Promise<AdminUser[]> {
     const real = await tryFetch<AdminUser[]>("/admin/users")
-    return real || ADMIN_USERS
+    return real || []
   },
 
   // Bốn thao tác quản trị dưới đây dùng `apiFetch` (NÉM lỗi) chứ không phải
@@ -545,16 +575,12 @@ export const api = {
 
   async getSystemMetrics(): Promise<SystemMetric[]> {
     const real = await tryFetch<SystemMetric[]>("/admin/system")
-    if (real) return real
-    await delay()
-    return SYSTEM_METRICS
+    return real || []
   },
 
   async getResearchQueue(): Promise<ResearchQueueItem[]> {
     const real = await tryFetch<ResearchQueueItem[]>("/admin/research-queue")
-    if (real) return real
-    await delay()
-    return RESEARCH_QUEUE
+    return real || []
   },
 
   async getWatchlist(): Promise<string[]> {
@@ -647,12 +673,13 @@ export const api = {
   },
 
   async changePassword(oldPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
-    const res = await tryFetch<{ success: boolean; message: string }>("/auth/change-password", {
+    // Dùng `apiFetch` để giữ nguyên `detail` của backend. Bản cũ nuốt lỗi rồi ném
+    // ra câu cố định "kiểm tra kết nối", nên người nhập sai mật khẩu hiện tại
+    // (backend trả 400 "Mật khẩu hiện tại không đúng.") lại bị báo là lỗi mạng.
+    return apiFetch<{ success: boolean; message: string }>("/auth/change-password", {
       method: "PUT",
       body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
     })
-    if (!res) throw new Error("Failed to change password. Please check your connection.")
-    return res
   },
 
   async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
@@ -713,7 +740,7 @@ export const api = {
     initial_balance: number
     trade_amount: number
   }): Promise<import("./types").BacktestResult | null> {
-    return tryFetch<import("./types").BacktestResult>("/backtest/run", {
+    return apiFetch<import("./types").BacktestResult>("/backtest/run", {
       method: "POST",
       body: JSON.stringify(params),
     })

@@ -355,6 +355,24 @@ def google_auth(req: GoogleAuthRequest):
         if not existing_user:
             create_user(email, "GOOGLE_OAUTH_USER")
             existing_user = get_user_by_username(email)
+        elif existing_user.get("password_hash") != "GOOGLE_OAUTH_USER":
+            # CHỐT CHẶN CHIẾM TÀI KHOẢN TRƯỚC (pre-account-takeover).
+            #
+            # `register` không giới hạn username phải là email chưa ai dùng theo
+            # nghĩa sở hữu — kẻ tấn công có thể đăng ký trước bằng chính địa chỉ
+            # Gmail của nạn nhân, với mật khẩu do hắn đặt. Bản cũ ở đây chỉ tra
+            # theo chuỗi username: khi nạn nhân bấm "Đăng nhập với Google", hệ
+            # thống tìm thấy đúng bản ghi đó và cấp token cho nó — nạn nhân bước
+            # vào tài khoản mà kẻ tấn công đã biết mật khẩu, rồi dùng nó, được cấp
+            # vốn, giao dịch trên đó. Kẻ tấn công đăng nhập bằng mật khẩu bất cứ
+            # lúc nào để xem và chiếm toàn bộ.
+            #
+            # Vì vậy: chỉ cho đăng nhập Google vào tài khoản ĐƯỢC TẠO BẰNG GOOGLE.
+            raise HTTPException(
+                409,
+                "Địa chỉ email này đã được đăng ký bằng mật khẩu. Vui lòng đăng nhập "
+                "bằng mật khẩu thay vì Google.",
+            )
         if not existing_user:
             raise HTTPException(500, "Không tạo được tài khoản.")
 

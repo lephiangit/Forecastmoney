@@ -26,6 +26,7 @@ Bốn thay đổi đáng kể:
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -180,8 +181,24 @@ def validate_ticker(ticker: str) -> bool:
     return get_live_quote(ticker) is not None
 
 
+# Cùng bộ quy tắc định dạng mã với backend/security.py::validate_ticker_format.
+_TICKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$")
+
+
 def search_tickers(query: str) -> List[Dict]:
-    """Tìm mã theo từ khoá. Trả về danh sách gợi ý phổ biến nếu yfinance lỗi."""
+    """
+    Tìm mã theo từ khoá.
+
+    Vì sao có nhiều tầng dự phòng: API tìm kiếm của Yahoo (`yf.Search`) rất hay bị
+    chặn khi gọi từ IP trung tâm dữ liệu (Render, Vercel...) — trả 403/429 hoặc
+    timeout. Bản cũ khi đó rơi thẳng xuống một danh sách CỨNG 9 mã, nên gõ bất kỳ
+    mã nào ngoài 9 mã đó (MSFT, GOOGL, TSM, VIC.VN...) đều ra "không tìm thấy",
+    dù mã đó hoàn toàn hợp lệ và hệ thống vẫn tải được dữ liệu giá của nó.
+
+    Nay khi API tìm kiếm hỏng, ta thử coi chính từ khoá là mã chứng khoán và xác
+    minh bằng một lượt lấy giá thật. Cách này không cần API tìm kiếm nên vẫn chạy
+    được ngay cả khi Yahoo chặn tra cứu.
+    """
     try:
         search = yf.Search(query, max_results=10, enable_fuzzy_query=True)
         results = [
@@ -198,6 +215,28 @@ def search_tickers(query: str) -> List[Dict]:
     except Exception as e:
         print(f"[yfinance] Lỗi tìm kiếm: {type(e).__name__}")
 
+    # ── Dự phòng 1: coi từ khoá là mã và kiểm chứng bằng dữ liệu giá thật ──
+    # Bao gồm cả các biến thể thường gặp: người dùng gõ "BTC" thay vì "BTC-USD",
+    # "FPT" thay vì "FPT.VN".
+    raw = query.strip().upper()
+    if _TICKER_RE.match(raw):
+        candidates = [raw]
+        if "-" not in raw and "." not in raw:
+            candidates += [f"{raw}-USD", f"{raw}.VN"]
+        for symbol in candidates:
+            try:
+                quote = get_live_quote(symbol)
+            except Exception:
+                quote = None
+            if quote:
+                return [{
+                    "symbol": symbol,
+                    "name": symbol,
+                    "exchange": "",
+                    "type": "CRYPTOCURRENCY" if symbol.endswith("-USD") else "EQUITY",
+                }]
+
+    # ── Dự phòng 2: danh sách gợi ý phổ biến (chỉ khi cả hai cách trên đều hỏng) ──
     query_lower = query.lower()
     fallback = [
         {"symbol": "BTC-USD", "name": "Bitcoin", "exchange": "CCC", "type": "CRYPTOCURRENCY"},
@@ -368,7 +407,12 @@ def run_tft_forecast(
             cách áp % thay đổi lên giá cuối cùng đã biết, thay vì inverse_transform
             qua scaler (cách cũ này là nguyên nhân gây lệch scale nghiêm trọng khi
             giá vượt phạm vi scaler từng thấy)."""
-            return last_close * (1.0 + pct_return / 100.0)
+            price = last_close * (1.0 + pct_return / 100.0)
+            # Đầu ra phân vị đến từ một lớp Dense tuyến tính không bị chặn, nên về
+            # lý thuyết có thể trả về return <= -100%, cho ra giá 0 hoặc ÂM. Giá đó
+            # lại được nạp ngược vào chuỗi làm nến giả cho bước sau, phá hỏng mọi
+            # chỉ báo kỹ thuật của phần còn lại trong vòng lặp. Chặn ở một sàn dương.
+            return max(price, last_close * 0.01)
 
         with track_inference():
             for step in range(days):

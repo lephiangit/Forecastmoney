@@ -16,8 +16,11 @@ export function ResearchChart({ sentiment, confidence }: ResearchChartProps) {
   // Bullish: green, Bearish: red, Neutral: gray
   const data = useMemo(() => {
     let color = "#888888" // Neutral
-    if (sentiment === "BULLISH") color = "#10b981" // Emerald 500
-    if (sentiment === "BEARISH") color = "#ef4444" // Red 500
+    // `report.sentiment` luôn ở dạng chữ thường ("bullish"/"bearish"/"neutral"),
+    // nên so sánh với chuỗi VIẾT HOA không bao giờ đúng — đồng hồ đo luôn bị tô
+    // màu xám trung tính bất kể tâm lý thị trường thực tế là gì.
+    if (sentiment?.toUpperCase() === "BULLISH") color = "#10b981" // Emerald 500
+    if (sentiment?.toUpperCase() === "BEARISH") color = "#ef4444" // Red 500
 
     // To make a semi-circle gauge, we need two data points: 
     // 1 for the confidence fill, 1 for the remaining empty space.

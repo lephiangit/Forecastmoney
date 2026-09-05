@@ -69,6 +69,17 @@ class StartTradingRequest(BaseModel):
     min_confidence: float = Field(default=70.0, ge=0, le=100)
 
 
+class BotConfigRequest(BaseModel):
+    """Cấu hình bot, không kèm thời lượng chạy — dùng cho nút "Lưu cấu hình"."""
+
+    amount: float = Field(gt=0, le=100_000_000)
+    assets: List[str] = Field(default_factory=list, max_length=MAX_WATCHLIST_SIZE)
+    strategy: str = Field(default="balanced", pattern="^(conservative|balanced|aggressive)$")
+    stop_loss: float = Field(default=5.0, ge=0, le=100)
+    take_profit: float = Field(default=15.0, ge=0, le=1000)
+    min_confidence: float = Field(default=70.0, ge=0, le=100)
+
+
 class BalanceRequest(BaseModel):
     amount: float = Field(ge=0, le=1_000_000_000)
 
@@ -200,8 +211,22 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
             )
         new_balance = balance + total
 
-    update_admin_config(user_id, {"current_balance": new_balance})
-    save_trade(
+    # Ghi số dư theo kiểu so-sánh-rồi-ghi: chỉ thành công nếu số dư dưới DB vẫn
+    # đúng bằng giá trị ta vừa đọc. Nếu có request khác chen vào giữa lúc kiểm tra
+    # và lúc ghi, phép ghi này thất bại và ta báo lỗi thay vì đè lên thay đổi của
+    # họ — nếu không, hai lệnh mua đồng thời đều qua được cửa kiểm tra số dư và
+    # người dùng nhận nhiều cổ phiếu hơn số tiền thực bị trừ.
+    from backend.database import update_balance_cas
+
+    if not update_balance_cas(user_id, balance, new_balance):
+        raise HTTPException(
+            409,
+            "Số dư vừa thay đổi bởi một giao dịch khác. Vui lòng tải lại và thử lại.",
+        )
+
+    # Sổ lệnh phải ghi được, nếu không số dư đã trừ mà vị thế không tồn tại —
+    # vị thế được tính từ chính bảng paper_trades này.
+    if not save_trade(
         user_id=user_id,
         ticker=ticker,
         action=req.action,
@@ -209,7 +234,10 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
         price=price,
         total_value=total,
         model_signal="MANUAL",
-    )
+    ):
+        # Hoàn lại số dư về đúng giá trị trước giao dịch.
+        update_balance_cas(user_id, new_balance, balance)
+        raise HTTPException(503, "Không ghi được giao dịch. Số dư đã được hoàn lại.")
 
     return {
         "success": True,
@@ -338,6 +366,45 @@ def get_auto_trading_config(user=Depends(get_current_user)):
     from backend.database import get_bot_config
 
     return get_bot_config(user["user_id"]) or {"amount": 0, "end_time": None}
+
+
+@router.put("/trading/config")
+def save_auto_trading_config(req: BotConfigRequest, user=Depends(get_current_user)):
+    """
+    Lưu cấu hình bot mà KHÔNG bật bot.
+
+    Trước đây không có endpoint này: nút "Lưu cấu hình" trên giao diện chỉ đổi một
+    biến state cục bộ rồi hiện dòng "Configuration saved" — không hề gửi gì lên
+    máy chủ. Người dùng chỉnh chiến lược, cắt lỗ, chốt lời, thấy báo đã lưu, tải
+    lại trang là mất sạch, quay về giá trị mặc định. Cấu hình chỉ thực sự được ghi
+    khi bấm "Start Bot", nên hai nút cạnh nhau có hành vi hoàn toàn khác nhau mà
+    giao diện không hề nói ra.
+
+    Endpoint này KHÔNG đụng tới số dư, không bật/tắt bot, và giữ nguyên thời hạn
+    chạy hiện có (nếu bot đang chạy thì cấu hình mới áp dụng cho các lượt kế tiếp).
+    """
+    from backend.database import get_bot_config, save_bot_config
+
+    user_id = user["user_id"]
+    assets = [validate_ticker_format(a) for a in req.assets]
+    existing = get_bot_config(user_id) or {}
+
+    ok = save_bot_config(
+        user_id,
+        {
+            "amount": req.amount,
+            "end_time": existing.get("end_time"),
+            "assets": assets,
+            "strategy": req.strategy,
+            "stop_loss": req.stop_loss,
+            "take_profit": req.take_profit,
+            "min_confidence": req.min_confidence,
+        },
+    )
+    if not ok:
+        raise HTTPException(503, "Không lưu được cấu hình. Vui lòng thử lại.")
+
+    return {"success": True, "message": "Đã lưu cấu hình bot."}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -501,11 +568,35 @@ def update_user_balance(user_id: int, req: BalanceRequest, admin=Depends(get_cur
         raise HTTPException(503, "Không kết nối được cơ sở dữ liệu.")
 
     get_admin_config(user_id)  # Đảm bảo bản ghi tồn tại trước khi update
+
+    # Đây là thao tác ĐẶT LẠI VỐN, không phải nạp thêm: nó ghi đè cả
+    # `initial_balance` và đưa `total_pnl` về 0. Vì vậy sổ lệnh cũ BẮT BUỘC phải
+    # được dọn cùng lúc.
+    #
+    # Nếu không: vị thế đang mở được tính từ bảng `paper_trades` và hoàn toàn
+    # không biết gì về việc đặt lại số dư. Người dùng mua 10 cổ phiếu hết sạch
+    # 10.000$ (số dư còn 0, vị thế còn 10 cổ). Quản trị viên đặt lại số dư về 0
+    # để phạt. Người dùng bán 10 cổ đó — hệ thống thấy vị thế vẫn còn nên cộng
+    # thẳng tiền bán vào số dư. Khoản phạt biến thành tiền mặt cho không, đúng
+    # bằng giá trị thị trường của số cổ phiếu họ đã mua trước khi bị đặt lại.
+    from backend.database import clear_trading_history
+
+    clear_trading_history(user_id)
     c.table("admin_config").update(
-        {"current_balance": req.amount, "initial_balance": req.amount, "total_pnl": 0.0}
+        {
+            "current_balance": req.amount,
+            "initial_balance": req.amount,
+            "total_pnl": 0.0,
+            "win_trades": 0,
+            "loss_trades": 0,
+        }
     ).eq("user_id", user_id).execute()
 
-    return {"success": True, "new_balance": req.amount}
+    return {
+        "success": True,
+        "new_balance": req.amount,
+        "message": "Đã đặt lại vốn và dọn sổ lệnh mô phỏng của tài khoản này.",
+    }
 
 
 @router.put("/users/{user_id}/status")

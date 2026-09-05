@@ -26,8 +26,15 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     loss = -delta.clip(upper=0)
     avg_gain = gain.ewm(com=13, adjust=False).mean()
     avg_loss = loss.ewm(com=13, adjust=False).mean()
-    rs = avg_gain / avg_loss
+    # Khi giá đứng yên hoàn toàn trong cả cửa sổ (hay gặp ở cổ phiếu VN thanh
+    # khoản thấp và altcoin ít giao dịch), cả avg_gain lẫn avg_loss đều bằng 0 →
+    # 0/0 = NaN, RSI thành NaN và những dòng đó bị dropna() loại bỏ âm thầm.
+    # Mã có ít lịch sử vì thế có thể bị rơi khỏi báo cáo mà không ai biết lý do.
+    rs = avg_gain / avg_loss.replace(0, np.nan)
     df["RSI"] = 100 - (100 / (1 + rs))
+    # avg_loss == 0: không có phiên giảm nào. Nếu cũng không có phiên tăng thì
+    # coi như trung tính (50); nếu chỉ toàn tăng thì RSI đạt trần 100.
+    df["RSI"] = df["RSI"].fillna(pd.Series(np.where(avg_gain > 0, 100.0, 50.0), index=df.index))
 
     # ── MACD ──────────────────────────────────────────────────────────────
     ema12 = close.ewm(span=12, adjust=False).mean()

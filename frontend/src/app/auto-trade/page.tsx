@@ -49,11 +49,39 @@ export default function AutoTradePage() {
 
   const isBotRunning = portfolioQ.data?.is_running || false
 
+  // Khôi phục TOÀN BỘ cấu hình đã lưu, không chỉ mỗi cỡ lệnh. Bản cũ chỉ nạp lại
+  // `amount`, nên chiến lược / cắt lỗ / chốt lời / danh mục luôn quay về mặc định
+  // sau mỗi lần tải trang dù người dùng đã chỉnh và thấy báo "đã lưu".
   useEffect(() => {
-    if (botConfigQ.data) {
-      setTradeAmount(botConfigQ.data.amount || 500)
-    }
+    const cfg = botConfigQ.data
+    if (!cfg) return
+    setTradeAmount(cfg.amount || 500)
+    setConfig((prev) => ({
+      ...prev,
+      strategy: (cfg.strategy as AutoTradeConfig["strategy"]) ?? prev.strategy,
+      stopLoss: cfg.stop_loss ?? prev.stopLoss,
+      takeProfit: cfg.take_profit ?? prev.takeProfit,
+      minConfidence: cfg.min_confidence ?? prev.minConfidence,
+      assets: cfg.assets?.length ? cfg.assets : prev.assets,
+    }))
   }, [botConfigQ.data])
+
+  // Nút "Lưu cấu hình" trước đây chỉ `setSaved(true)` — hiện chữ "đã lưu" mà
+  // không gửi gì lên máy chủ, tải lại trang là mất sạch. Nay lưu thật.
+  const saveMut = useMutation({
+    mutationFn: () => api.saveBotConfig({
+      amount: Number(tradeAmount) || 0,
+      assets: config.assets,
+      strategy: config.strategy,
+      stop_loss: config.stopLoss,
+      take_profit: config.takeProfit,
+      min_confidence: config.minConfidence,
+    }),
+    onSuccess: () => {
+      setSaved(true)
+      queryClient.invalidateQueries({ queryKey: ["botConfig"] })
+    },
+  })
 
   // `api.startBotAdvanced` NÉM lỗi khi backend từ chối (số dư bằng 0, cỡ lệnh vượt
   // số dư, rate limit...). Trước đây lớp api nuốt lỗi và trả null, nên react-query
@@ -184,13 +212,15 @@ export default function AutoTradePage() {
             </button>
           </motion.div>
 
-          {(startMut.isError || stopMut.isError) && (
+          {(startMut.isError || stopMut.isError || saveMut.isError) && (
             <div
               role="alert"
               className="mt-3 rounded-md border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative"
             >
               <span className="font-semibold">{t("botStartFailed")}: </span>
-              {(startMut.error as Error)?.message || (stopMut.error as Error)?.message}
+              {(startMut.error as Error)?.message ||
+                (stopMut.error as Error)?.message ||
+                (saveMut.error as Error)?.message}
             </div>
           )}
 
@@ -346,7 +376,8 @@ export default function AutoTradePage() {
               )}
             </AnimatePresence>
             <button
-              onClick={() => setSaved(true)}
+              onClick={() => saveMut.mutate()}
+              disabled={saveMut.isPending}
               className="flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
             >
               <Save className="h-4 w-4" /> {t("saveConfig")}

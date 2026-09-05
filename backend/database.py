@@ -178,6 +178,58 @@ def get_admin_config(user_id: int) -> Dict[str, Any]:
         return default
 
 
+def update_balance_cas(
+    user_id: int, expected_balance: float, new_balance: float, extra: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    Cập nhật số dư theo kiểu so-sánh-rồi-ghi (compare-and-swap).
+
+    Chỉ ghi khi số dư dưới DB vẫn đúng bằng `expected_balance` — tức là chưa ai
+    thay đổi kể từ lúc ta đọc ra. Trả False nếu có người khác đã ghi chen vào.
+
+    Vì sao cần: `update_admin_config` ghi đè vô điều kiện, nên luồng
+    đọc-số-dư → kiểm-tra-đủ-tiền → ghi-số-dư-mới ở `POST /trade` có lỗ hổng
+    thời-điểm-kiểm-tra-khác-thời-điểm-dùng (TOCTOU). Gửi đồng thời hai lệnh MUA
+    900$ và 600$ trên số dư 1000$: cả hai cùng đọc thấy 1000, cả hai cùng qua cửa
+    kiểm tra, cả hai cùng ghi lệnh vào sổ, nhưng lệnh ghi số dư sau đè lên lệnh
+    trước — người dùng nhận đủ 1500$ cổ phiếu mà chỉ bị trừ 600$. Tiền được tạo
+    ra từ hư không, đúng lớp lỗi đã sửa ở `/trading/start` nhưng qua đường đua.
+    """
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        updates: Dict[str, Any] = {"current_balance": float(new_balance),
+                                   "updated_at": datetime.now().isoformat()}
+        if extra:
+            updates.update(extra)
+        res = (
+            c.table("admin_config")
+            .update(updates)
+            .eq("user_id", user_id)
+            .eq("current_balance", float(expected_balance))
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as e:
+        print(f"DB update_balance_cas error: {e}")
+        return False
+
+
+def clear_trading_history(user_id: int) -> bool:
+    """Xoá sổ lệnh mô phỏng và ảnh chụp danh mục của một user."""
+    c = _get_client()
+    if c is None:
+        return False
+    try:
+        c.table("paper_trades").delete().eq("user_id", user_id).execute()
+        c.table("portfolio_snapshots").delete().eq("user_id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"DB clear_trading_history error: {e}")
+        return False
+
+
 def update_admin_config(user_id: int, updates: Dict[str, Any]) -> bool:
     c = _get_client()
     if c is None:

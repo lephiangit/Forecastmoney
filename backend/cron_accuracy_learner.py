@@ -99,8 +99,20 @@ def run_evaluations() -> List[str]:
                 # Phiên chưa diễn ra, hoặc là ngày nghỉ — để lại đánh giá lần sau.
                 continue
 
-            actual = float(df.loc[target_date, "Close"])
-            predicted = float(record["predicted_price"])
+            # Bọc riêng phần này: chỉ một bản ghi hỏng (predicted_price là None, hay
+            # chỉ số ngày bị trùng khiến .loc trả về Series thay vì một số) cũng đủ
+            # ném ngoại lệ và giết cả vòng lặp — mọi mã đứng sau bị bỏ qua im lặng
+            # cho tới lần chạy sau.
+            try:
+                close_val = df.loc[target_date, "Close"]
+                if isinstance(close_val, pd.Series):
+                    close_val = close_val.iloc[-1]
+                actual = float(close_val)
+                predicted = float(record["predicted_price"])
+            except (TypeError, ValueError, KeyError, IndexError) as e:
+                print(f"  {ticker} {record.get('forecast_date')}: bỏ qua bản ghi lỗi ({type(e).__name__})")
+                continue
+
             if actual <= 0:
                 continue
 

@@ -34,7 +34,7 @@ CÁCH DÙNG
 
     python -m backend.evaluate_tft                    # đánh giá toàn bộ data/
     python -m backend.evaluate_tft --tickers BTC-USD,AAPL,FPT.VN
-    python -m backend.evaluate_tft --horizon 5        # đánh giá dự báo 5 bước
+    (chỉ hỗ trợ horizon = 1 — xem chốt chặn trong main())
 
 Kết quả được ghi ra models/evaluation_report.md (dán thẳng vào báo cáo được)
 kèm models/evaluation_results.csv để vẽ biểu đồ.
@@ -458,6 +458,22 @@ def main() -> None:
         )
     if args.limit:
         tickers = tickers[: args.limit]
+
+    # CHỐT CHẶN: mô hình được huấn luyện với target "return_pct_1step" — % thay đổi
+    # giá từ phiên cuối cửa sổ sang ĐÚNG PHIÊN KẾ TIẾP. Hàm evaluate_ticker() chỉ
+    # gọi model đúng MỘT lần rồi áp % đó lên `last_known`, nhưng lại so với
+    # `closes[i + horizon]`. Với horizon > 1, đó là đem dự báo 1 phiên so với biến
+    # động thật của nhiều phiên — mọi chỉ số MAPE/DirAcc thu được đều vô nghĩa và
+    # sẽ làm mô hình trông tệ hơn thực tế. Dự báo nhiều bước phải đi qua
+    # run_tft_forecast() (tự hồi quy), không phải hàm này.
+    if args.horizon != 1:
+        print(
+            f"LỖI: --horizon {args.horizon} không hợp lệ với script này.\n"
+            "Mô hình dự đoán % thay đổi giá cho ĐÚNG MỘT phiên kế tiếp, nên chỉ đánh giá\n"
+            "được ở horizon = 1. Muốn đánh giá nhiều bước, dùng dự báo tự hồi quy qua\n"
+            "backend.models.forecaster.run_tft_forecast()."
+        )
+        return
 
     print(f"Đánh giá {len(tickers)} mã, horizon = {args.horizon} phiên\n")
 
