@@ -67,6 +67,7 @@ models/loss_*.png
 
 # Dữ liệu giá được tải lúc chạy hoặc trên Kaggle — không đưa vào repo
 data/
+data_backup*/
 *.zip
 
 # Kết quả đánh giá (sinh lại được bằng backend/evaluate_tft.py)
