@@ -90,6 +90,7 @@ Thumbs.db
 scratch/
 tmp/
 .cache/
+_to_delete/
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Tài liệu nội bộ (không public)
