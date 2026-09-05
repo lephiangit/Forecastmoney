@@ -235,15 +235,52 @@ def start_auto_trading(
     """
     Bật bot auto-trade cho người dùng hiện tại.
 
-    Lưu ý: thao tác này XOÁ toàn bộ lịch sử giao dịch mô phỏng cũ để bắt đầu
-    một phiên chạy sạch với số vốn mới. Frontend cần cảnh báo rõ điều này.
+    LỖI BẢO MẬT ĐÃ SỬA — leo thang đặc quyền qua cấu hình bot
+    ---------------------------------------------------------
+    Bản cũ ghi thẳng `req.amount` vào `initial_balance` và `current_balance`:
+
+        update_admin_config(user_id, {..., "initial_balance": req.amount,
+                                           "current_balance": req.amount, ...})
+
+    `req.amount` là "Số tiền mỗi lệnh giao dịch" do CHÍNH NGƯỜI DÙNG nhập trên
+    giao diện, và endpoint này chỉ yêu cầu `get_current_user` (user thường).
+    Trong khi đó, việc đặt số dư là đặc quyền riêng của quản trị viên, nằm sau
+    `PUT /users/{user_id}/balance` với `Depends(get_current_admin)`.
+
+    Hệ quả: bất kỳ user nào cũng có thể tự nạp tiền cho mình tới mức trần
+    validate (100 triệu) chỉ bằng cách bật bot — vô hiệu hoá hoàn toàn cổng
+    kiểm soát của admin. Chiều ngược lại cũng sai: user nhập 500 để đặt cỡ lệnh
+    thì bị XOÁ TRẮNG số dư thật admin đã cấp, kèm toàn bộ lịch sử giao dịch.
+
+    Nay: `amount` chỉ còn đúng một nghĩa là cỡ lệnh (khớp với nhãn trên UI).
+    Số dư là tài sản do admin cấp — bật bot KHÔNG được tạo, sửa hay xoá nó.
+
+    Vì số dư nay được giữ nguyên, lịch sử giao dịch cũng KHÔNG bị xoá nữa: số dư
+    hiện tại là kết quả của chính các lệnh trong lịch sử đó. Xoá lệnh mà giữ số
+    dư sẽ làm vị thế (tính từ `paper_trades`) lệch khỏi số dư — user hiện ra như
+    không nắm giữ gì dù tiền đã bị trừ để mua.
     """
     from backend.database import save_bot_config
 
     user_id = user["user_id"]
     assets = [validate_ticker_format(a) for a in req.assets]
 
-    get_admin_config(user_id)  # Đảm bảo bản ghi cấu hình đã tồn tại
+    config = get_admin_config(user_id)  # Đảm bảo bản ghi cấu hình đã tồn tại
+    balance = float(config.get("current_balance", 0.0) or 0.0)
+
+    if balance <= 0:
+        raise HTTPException(
+            400,
+            "Tài khoản chưa có số dư để giao dịch. Vui lòng liên hệ quản trị viên "
+            "để được cấp vốn trước khi bật bot.",
+        )
+    if req.amount > balance:
+        raise HTTPException(
+            400,
+            f"Số tiền mỗi lệnh ({req.amount:,.2f}) vượt quá số dư hiện có "
+            f"({balance:,.2f}). Hãy giảm cỡ lệnh xuống.",
+        )
+
     end_time = (datetime.now() + timedelta(hours=req.duration_hours)).isoformat()
 
     save_bot_config(
@@ -259,32 +296,28 @@ def start_auto_trading(
         },
     )
 
+    # Chỉ bật cờ chạy. Không đụng tới initial_balance / current_balance / total_pnl /
+    # win_trades / loss_trades — đó là sổ sách kế toán của tài khoản, không phải
+    # trạng thái của bot.
     update_admin_config(
         user_id,
         {
             "is_running": True,
             "started_at": datetime.now().isoformat(),
-            "initial_balance": req.amount,
-            "current_balance": req.amount,
-            "total_pnl": 0.0,
-            "win_trades": 0,
-            "loss_trades": 0,
         },
     )
-
-    c = _get_client()
-    if c:
-        try:
-            c.table("paper_trades").delete().eq("user_id", user_id).execute()
-            c.table("portfolio_snapshots").delete().eq("user_id", user_id).execute()
-        except Exception as e:
-            print(f"[admin] Lỗi khi reset dữ liệu giao dịch của user {user_id}: {e}")
 
     from backend.cron_auto_trader import run_auto_trade
 
     background_tasks.add_task(run_auto_trade)
 
-    return {"message": "Đã bật bot auto-trade", "is_running": True, "end_time": end_time}
+    return {
+        "message": "Đã bật bot auto-trade",
+        "is_running": True,
+        "end_time": end_time,
+        "current_balance": balance,
+        "amount_per_trade": req.amount,
+    }
 
 
 @router.post("/trading/stop")
