@@ -1,10 +1,19 @@
 """
 tft_model.py – Temporal Fusion Transformer implementation using TensorFlow/Keras.
 A lightweight TFT architecture suitable for financial time series with:
-  - Variable Selection Network (feature importance)
   - Multi-Head Attention for temporal patterns
   - Gated Residual Networks
   - Quantile outputs for confidence intervals
+
+LƯU Ý QUAN TRỌNG khi viết phần kiến trúc trong báo cáo:
+  Lớp `VariableSelectionNetwork` CÓ được định nghĩa trong file này nhưng
+  `build_tft_model()` KHÔNG hề gọi tới — đầu vào đi thẳng qua `Dense(hidden_size,
+  name="input_projection")`. Đây là mã chết còn sót lại. Không được mô tả mô hình
+  là "có Variable Selection Network" trong báo cáo.
+
+  Mức độ ảnh hưởng đặc trưng hiển thị trên giao diện KHÔNG lấy từ lớp này, mà là
+  permutation importance đo trên chính mô hình đang chạy — xem
+  `forecaster.compute_feature_importance()`.
 """
 
 import numpy as np

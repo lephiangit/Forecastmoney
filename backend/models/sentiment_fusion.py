@@ -229,8 +229,20 @@ class SentimentFusionEngine:
             cls._instance = cls(model_dir)
         return cls._instance
 
-    def _load_or_create(self, days: int) -> Model:
-        """Load existing SentimentFusion model or create a new one."""
+    def _load_or_create(self, days: int) -> Optional[Model]:
+        """
+        Nạp model SentimentFusion đã huấn luyện. Trả None nếu KHÔNG nạp được.
+
+        Vì sao trả None thay vì dựng model mới: bản cũ khi nạp thất bại sẽ dựng một
+        model MỚI TINH, TRỌNG SỐ NGẪU NHIÊN rồi trả về, kèm chú thích "sẽ dùng
+        rule-based fallback" — nhưng điều đó không xảy ra. `model.predict()` trên
+        model random chạy trót lọt, không ném ngoại lệ, nên nhánh `except` ở
+        `predict()` không bao giờ chạy và công thức heuristic an toàn không bao giờ
+        được dùng. Kết quả: dự báo "sentiment_fusion" trở thành nhiễu từ trọng số
+        ngẫu nhiên (chỉ bị chặn trong ±5%), và không có tín hiệu nào phân biệt nó
+        với một model đã huấn luyện thật. Model hỏng đó còn bị cache lại cho tới
+        khi tiến trình khởi động lại.
+        """
         if days in self._models:
             return self._models[days]
 
@@ -241,12 +253,11 @@ class SentimentFusionEngine:
                 print(f"✅ SentimentFusion {days}d loaded.")
                 return self._models[days]
             except Exception as e:
-                print(f"⚠️ Failed to load SentimentFusion {days}d: {e}")
-
-        # Create a new untrained model (will use rule-based fallback)
-        model = build_sentiment_fusion_model(forecast_days=days)
-        self._models[days] = model
-        return model
+                print(
+                    f"⚠️ Không nạp được SentimentFusion {days}d: {e}\n"
+                    "   → Chuyển sang công thức heuristic (KHÔNG dùng model chưa huấn luyện)."
+                )
+        return None
 
     def predict(
         self,
@@ -260,9 +271,8 @@ class SentimentFusionEngine:
         """
         model_path = os.path.join(self.model_dir, f"sentiment_fusion_{days}d.keras")
 
-        if os.path.exists(model_path):
-            # Use trained model
-            model = self._load_or_create(days)
+        model = self._load_or_create(days) if os.path.exists(model_path) else None
+        if model is not None:
             try:
                 # Chuẩn hoá y hệt lúc train: đưa chuỗi giá về % thay đổi tương đối
                 # (xem normalize_price_sequence). Đưa giá thô vào đây sẽ khiến model

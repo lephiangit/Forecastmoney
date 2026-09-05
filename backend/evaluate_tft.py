@@ -96,7 +96,21 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, last_known: np.ndarr
     true_direction = np.sign(y_true - last_known)
     # Bỏ các phiên giá đứng yên — không có hướng nào để đoán đúng hay sai.
     moved = true_direction != 0
-    dir_acc = float(np.mean(pred_direction[moved] == true_direction[moved]) * 100) if moved.any() else float("nan")
+
+    if np.all(pred_direction == 0):
+        # Baseline naive dự báo "giá ngày mai = giá hôm nay", nên hiệu số luôn bằng 0
+        # và dấu luôn bằng 0 — KHÔNG BAO GIỜ khớp với hướng thật. Công thức trên vì
+        # thế ép DirAcc của naive về đúng 0% bằng định nghĩa, chứ không phải vì nó
+        # đoán sai. Đặt cạnh DirAcc của TFT trong bảng, con số 0% đó khiến mô hình
+        # trông vượt trội hơn thực tế rất nhiều. Trả NaN để bảng hiển thị "—":
+        # mốc so sánh đúng cho dự báo hướng là 50% (đoán ngẫu nhiên), không phải 0%.
+        dir_acc = float("nan")
+    else:
+        dir_acc = (
+            float(np.mean(pred_direction[moved] == true_direction[moved]) * 100)
+            if moved.any()
+            else float("nan")
+        )
 
     return {
         "mae": float(np.mean(abs_errors)),
@@ -216,9 +230,16 @@ def evaluate_ticker(model, ticker: str, horizon: int = 1) -> Optional[Dict]:
     # scaler như bản cũ — cách cũ là nguyên nhân gây lệch scale nghiêm trọng khi
     # giá thực tế vượt phạm vi scaler từng thấy lúc train (xem
     # models/danh_gia_ket_qua.md).
-    tft_lower = last_known * (1.0 + q_sorted[:, 0] / 100.0)
-    tft_median = last_known * (1.0 + q_sorted[:, 1] / 100.0)
-    tft_upper = last_known * (1.0 + q_sorted[:, 2] / 100.0)
+    # Chặn sàn dương GIỐNG HỆT forecaster.py::return_to_price. Đầu ra quantile đến
+    # từ một lớp Dense tuyến tính không bị chặn nên có thể cho return <= -100%, kéo
+    # `tft_lower` xuống 0 hoặc ÂM. Vì compute_coverage() chỉ kiểm tra
+    # `y_true >= lower`, một cận dưới âm luôn luôn thoả mãn — coverage báo cáo bị
+    # THỔI PHỒNG một cách âm thầm. Trước đây sàn này chỉ có ở forecaster.py, tức là
+    # thiếu đúng ở file sinh ra số liệu cho báo cáo.
+    floor = last_known * 0.01
+    tft_lower = np.maximum(last_known * (1.0 + q_sorted[:, 0] / 100.0), floor)
+    tft_median = np.maximum(last_known * (1.0 + q_sorted[:, 1] / 100.0), floor)
+    tft_upper = np.maximum(last_known * (1.0 + q_sorted[:, 2] / 100.0), floor)
 
     results = {
         "ticker": ticker,
