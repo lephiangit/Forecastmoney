@@ -88,6 +88,17 @@ def combined_forecast(
 
     save_forecast_cache(clean_ticker, days, result)
 
+    # Ghi lai dự báo T+1 của CẢ HAI mô hình. Bản cũ chỉ ghi "sentiment_fusion",
+    # nên bảng "Độ chính xác mô hình" không bao giờ có dòng nào của TFT — trong khi
+    # TFT mới là mô hình chính của đồ án. Ghi cả hai trên cùng một ngày dự báo cho
+    # phép so sánh trực tiếp: sentiment fusion có thực sự cải thiện được TFT không.
+    tft = result.get("tft") or {}
+    if tft.get("median"):
+        first = tft["median"][0]
+        background_tasks.add_task(
+            _log_prediction, clean_ticker, "tft", first["date"], first["price"]
+        )
+
     sf = result.get("sentiment_fusion") or {}
     if sf.get("median"):
         first = sf["median"][0]

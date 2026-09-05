@@ -534,14 +534,27 @@ def run_sentiment_fusion_forecast(
     days: int = 7,
     research_analysis: Optional[Dict] = None,
     df: Optional[pd.DataFrame] = None,
+    tft_result: Optional[Tuple] = None,
 ) -> Tuple[Optional[pd.Series], Optional[pd.Series], Optional[pd.Series]]:
-    """Điều chỉnh dự báo TFT theo tín hiệu tâm lý thị trường."""
+    """
+    Điều chỉnh dự báo TFT theo tín hiệu tâm lý thị trường.
+
+    `tft_result` cho phép truyền vào kết quả TFT đã tính sẵn. Không có tham số này,
+    `run_combined_forecast()` chạy TFT HAI LẦN cho cùng một request: một lần cho khối
+    kết quả "tft", một lần nữa ở đây làm nền cho sentiment fusion — trong khi cả hai
+    dùng chung `df` và cho ra kết quả y hệt nhau (mô hình tất định). Dự báo tự hồi quy
+    là phần tốn thời gian nhất của toàn pipeline nên đây là lãng phí gấp đôi vô ích,
+    và cũng làm chỉ số "thời gian inference" trên trang Giám sát bị đội lên gấp đôi.
+    """
     from backend.models.sentiment_fusion import SentimentFusionEngine, extract_market_signals
 
     if df is None:
         df = fetch_ohlcv(ticker, period="2y")
 
-    tft_m, tft_l, tft_u = run_tft_forecast(ticker, days, df)
+    if tft_result is not None:
+        tft_m, tft_l, tft_u = tft_result
+    else:
+        tft_m, tft_l, tft_u = run_tft_forecast(ticker, days, df)
     if tft_m is None:
         return None, None, None
     if df is None:
@@ -628,7 +641,11 @@ def run_combined_forecast(
     df = fetch_ohlcv(ticker, period="2y")
 
     tft_m, tft_l, tft_u = run_tft_forecast(ticker, days, df)
-    sf_m, sf_l, sf_u = run_sentiment_fusion_forecast(ticker, days, research_analysis, df)
+    # Truyen lai ket qua TFT vua tinh — neu khong, ham duoi se chay lai toan bo
+    # du bao tu hoi quy lan thu hai cho cung mot request.
+    sf_m, sf_l, sf_u = run_sentiment_fusion_forecast(
+        ticker, days, research_analysis, df, tft_result=(tft_m, tft_l, tft_u)
+    )
 
     current_price = float(df["Close"].iloc[-1]) if df is not None and len(df) else None
 

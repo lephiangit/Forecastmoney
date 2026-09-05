@@ -8,7 +8,6 @@ import {
   AUTO_TRADE_CONFIG,
   AUTO_TRADE_STATS,
   ADMIN_USERS,
-  MODEL_ACCURACY,
   SYSTEM_METRICS,
   RESEARCH_QUEUE,
 } from "./data"
@@ -422,21 +421,60 @@ export const api = {
   },
 
   async getModelAccuracy(): Promise<ModelAccuracy[]> {
-    const real = await tryFetch<any>("/admin/system/accuracy")
-    if (real && Array.isArray(real.records) && real.records.length > 0) {
-      return real.records.map((r: any) => ({
-        model: r.model_name || "TFT-v3",
-        ticker: r.ticker || "UNKNOWN",
-        accuracy: r.error_pct ? 1 - (r.error_pct / 100) : 0.85,
-        mae: 0,
-        rmse: 0,
-        directionAccuracy: 0,
-        predictions: 1,
-        trend: []
-      }))
+    // Ba lỗi của bản cũ, đều khiến bảng này hiển thị số liệu vô nghĩa:
+    //
+    // 1. `accuracy` được trả ở thang 0–1 (`1 - error_pct/100` ≈ 0.99) nhưng
+    //    <ConfidencePill> hiển thị theo thang 0–100 (`v.toFixed(0)%`) — nên mọi
+    //    dòng luôn hiện đúng "1%", trong khi độ chính xác thật là ~99%.
+    // 2. `mae`, `rmse`, `predictions` bị GÁN CỨNG 0/0/1 — số liệu bịa trên trang
+    //    quản trị. Trong khi bản ghi từ API đã có `predicted_price` và
+    //    `actual_price`, đủ để tính MAE/RMSE thật.
+    // 3. Mỗi bản ghi thành một dòng riêng, nên cùng một mã hiện lặp nhiều lần và
+    //    cột "Predictions" luôn bằng 1. Nay gom theo (mô hình, mã) để các cột
+    //    tổng hợp đúng nghĩa.
+    const real = await tryFetch<any>("/admin/system/accuracy?limit=100")
+    if (!real || !Array.isArray(real.records)) return []
+
+    const groups = new Map<string, any[]>()
+    for (const r of real.records) {
+      const key = `${r.model_name || "unknown"}|${r.ticker || "UNKNOWN"}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(r)
     }
-    await delay()
-    return MODEL_ACCURACY
+
+    return Array.from(groups.entries())
+      .map(([key, rows]) => {
+        const [model, ticker] = key.split("|")
+        const diffs = rows
+          .filter((r) => r.actual_price != null && r.predicted_price != null)
+          .map((r) => Number(r.predicted_price) - Number(r.actual_price))
+        const errs = rows
+          .filter((r) => r.error_pct != null)
+          .map((r) => Number(r.error_pct))
+
+        const mae = diffs.length ? diffs.reduce((s, d) => s + Math.abs(d), 0) / diffs.length : 0
+        const rmse = diffs.length ? Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length) : 0
+        const mape = errs.length ? errs.reduce((s, e) => s + e, 0) / errs.length : 0
+
+        return {
+          model,
+          ticker,
+          // Quy ước "độ chính xác = 100 − MAPE", ở thang 0–100 đúng như ConfidencePill mong đợi.
+          accuracy: errs.length ? Math.max(0, 100 - mape) : 0,
+          mae: Number(mae.toFixed(4)),
+          rmse: Number(rmse.toFixed(4)),
+          // Không tính được từ dữ liệu hiện có: bảng model_accuracy chỉ lưu giá dự
+          // báo và giá thực tế của ĐÚNG phiên đó, không lưu giá phiên liền trước
+          // nên không suy ra được chiều tăng/giảm. Để null thay vì bịa số 0.
+          directionAccuracy: null,
+          predictions: rows.length,
+          trend: rows
+            .slice()
+            .reverse()
+            .map((r) => ({ time: r.forecast_date, value: Number(r.error_pct) || 0 })),
+        }
+      })
+      .sort((a, b) => b.predictions - a.predictions)
   },
 
   async getSystemMetrics(): Promise<SystemMetric[]> {

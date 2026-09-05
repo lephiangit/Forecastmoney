@@ -289,6 +289,14 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {Array.isArray(accuracyQ.data) && accuracyQ.data.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                        Chưa có dự báo nào được đối chiếu với giá thực tế. Số liệu sẽ xuất hiện
+                        sau khi phiên được dự báo kết thúc và job đánh giá chạy.
+                      </td>
+                    </tr>
+                  ) : null}
                   {Array.isArray(accuracyQ.data) ? accuracyQ.data.map((m, i) => (
                     <motion.tr
                       key={m?.ticker || i}

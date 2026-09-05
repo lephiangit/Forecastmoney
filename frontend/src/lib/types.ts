@@ -139,7 +139,7 @@ export interface ModelAccuracy {
   accuracy: number
   mae: number
   rmse: number
-  directionAccuracy: number
+  directionAccuracy: number | null
   predictions: number
   trend: { time: string; value: number }[]
 }
