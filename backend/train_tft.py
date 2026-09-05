@@ -208,6 +208,59 @@ TARGET_TYPE = "return_pct_1step"
 #  DỰNG DATASET
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Ngưỡng % thay đổi giá trong MỘT phiên mà không tài sản thật nào đạt tới. Dùng để
+# phát hiện file dữ liệu hỏng, KHÔNG phải để lọc biến động mạnh nhưng có thật:
+# DOGE-USD từng tăng 355% một phiên (tháng 1/2021) và MS tăng 87% (13/10/2008) —
+# cả hai đều là biến động thật và phải được giữ lại. Đặt ở 1000% (gấp 10 lần chỉ
+# trong một phiên) nên chỉ bắt được dữ liệu sai thật sự.
+MAX_PLAUSIBLE_DAILY_RETURN = 1000.0
+
+
+def clean_price_history(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Loại dữ liệu giá không hợp lệ TRƯỚC khi tính chỉ báo và dựng nhãn.
+
+    VÌ SAO CẦN: lượt mở rộng lên 309 mã kéo theo vài file dữ liệu hỏng mà nhìn
+    tổng quan không thấy được. Cụ thể đã gặp:
+
+      - UNI-USD  : Yahoo ghép HAI tài sản khác nhau vào cùng một ký hiệu. Giá đứng
+                   ở 0,000038 USD (volume 3) suốt nhiều tháng rồi nhảy thẳng lên
+                   0,598 USD — tức 1.573.987% trong một phiên.
+      - COMP-USD : 306 phiên giá bằng 0.
+      - AAVE-USD : một dòng đầu rác (0,52 USD, volume 0) trước khi dữ liệu thật bắt
+                   đầu ở 53 USD.
+
+    Chỉ MỘT nhãn 1,5 triệu phần trăm cũng đủ khống chế hàm mất mát: lượt chạy thử
+    cho loss tập train 9,43 trong khi tập validation chỉ 0,45 — chênh 20 lần theo
+    chiều vô lý. Loại các mã hỏng đưa độ lệch chuẩn của nhãn từ 1330,95% xuống
+    2,75%.
+
+    Cách xử lý: bỏ dòng có giá không dương/không hữu hạn, rồi nếu vẫn còn bước nhảy
+    bất khả thi thì GIỮ LẠI ĐOẠN LIÊN TỤC DÀI NHẤT không chứa bước nhảy nào — cách
+    này xử được cả rác ở đầu file lẫn trường hợp file ghép hai tài sản ở giữa.
+    """
+    if "Close" not in df.columns:
+        return df.iloc[0:0]
+
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    df = df[np.isfinite(close) & (close > 0)]
+    if len(df) < 2:
+        return df
+
+    close = pd.to_numeric(df["Close"], errors="coerce").values
+    returns = np.abs((close[1:] - close[:-1]) / close[:-1] * 100.0)
+    breaks = np.flatnonzero(returns > MAX_PLAUSIBLE_DAILY_RETURN)
+    if len(breaks) == 0:
+        return df
+
+    # `breaks[k]` nghĩa là bước nhảy nằm giữa dòng breaks[k] và breaks[k]+1, nên các
+    # đoạn liên tục là [0, b0], [b0+1, b1], ... [b_last+1, hết].
+    bounds = [0] + [int(b) + 1 for b in breaks] + [len(df)]
+    segments = [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
+    start, end = max(segments, key=lambda s: s[1] - s[0])
+    return df.iloc[start:end]
+
+
 def _build_sequences(scaled: np.ndarray, raw_close: np.ndarray, look_back: int):
     """
     Cắt chuỗi đã chuẩn hoá thành các cặp (cửa sổ đầu vào, % thay đổi giá kế tiếp).
@@ -366,6 +419,19 @@ def create_tft_dataset(verbose: bool = True, max_tickers: int | None = None):
             continue
 
         df = df.sort_index()
+
+        n_before = len(df)
+        df = clean_price_history(df)
+        if len(df) < n_before:
+            report.setdefault("rows_dropped", []).append(
+                {"ticker": ticker, "dropped": n_before - len(df), "kept": len(df)}
+            )
+            if verbose:
+                print(f"  {ticker}: loại {n_before - len(df)} dòng dữ liệu hỏng, giữ {len(df)}")
+        if df.empty:
+            report["tickers_skipped"].append({"ticker": ticker, "reason": "không còn dòng hợp lệ"})
+            continue
+
         df = add_technical_indicators(df)
 
         available = [c for c in get_feature_columns() if c in df.columns]

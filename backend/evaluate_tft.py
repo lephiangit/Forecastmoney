@@ -75,6 +75,7 @@ from backend.train_tft import (
     SKIP_FILES,
     SPLIT_GAP,
     TRAIN_RATIO,
+    clean_price_history,
     VAL_RATIO,
     split_indices,
 )
@@ -188,6 +189,12 @@ def evaluate_ticker(model, ticker: str, horizon: int = 1) -> Optional[Dict]:
         return None
 
     if df.empty or "Close" not in df.columns:
+        return None
+
+    # Dùng CHUNG hàm làm sạch với train_tft.py: nếu chỉ huấn luyện mới lọc dữ liệu
+    # hỏng còn đánh giá thì không, các dòng rác sẽ chui thẳng vào số liệu báo cáo.
+    df = clean_price_history(df)
+    if df.empty:
         return None
 
     df = add_technical_indicators(df)

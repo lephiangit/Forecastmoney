@@ -124,8 +124,14 @@ _CRYPTO = [
     "TRX-USD", "EOS-USD", "XTZ-USD", "NEO-USD", "IOTA-USD", "QTUM-USD",
     "ZIL-USD", "ENJ-USD", "BAT-USD", "ZEC-USD", "DASH-USD", "WAVES-USD",
     "ONT-USD", "ICX-USD", "OMG-USD", "DGB-USD", "RVN-USD", "HBAR-USD",
-    "FIL-USD", "GRT-USD", "AAVE-USD", "UNI-USD", "SNX-USD", "CRV-USD",
-    "COMP-USD", "MKR-USD", "YFI-USD", "SUSHI-USD", "EGLD-USD", "NEAR-USD",
+    "FIL-USD", "GRT-USD", "AAVE-USD", "SNX-USD", "CRV-USD",
+    # UNI-USD và COMP-USD ĐÃ BỊ LOẠI: ký hiệu này trên Yahoo không trỏ tới Uniswap
+    # và Compound như tên gọi. UNI-USD là hai tài sản khác nhau ghép lại (một token
+    # chết giá $0.000038 volume 3, rồi nhảy thẳng lên $0.598 ngày 2022-10-21 — gấp
+    # 15.700 lần trong một phiên). COMP-USD có 306 phiên giá bằng 0, giá quanh
+    # 1e-6 và dừng cập nhật từ 2022. Cả hai đều là dữ liệu rác, không phải biến
+    # động thị trường thật.
+    "MKR-USD", "YFI-USD", "SUSHI-USD", "EGLD-USD", "NEAR-USD",
     "FTM-USD", "RUNE-USD", "KAVA-USD", "CHZ-USD",
 ]
 
@@ -146,6 +152,16 @@ _VN_STOCKS = [
 EXTRA_TICKERS: list = _US_STOCKS + _ETFS + _CRYPTO + _VN_STOCKS
 
 TICKERS = sorted(set(EXISTING_TICKERS + EXTRA_TICKERS))
+
+# Cho phép tải lại CHỈ một vài mã thay vì cả danh sách:
+#     python training/collect_tft_data.py --only XLK,FRT.VN
+# Dùng khi một mã lẻ bị hỏng file và không muốn chạy lại cả 307 mã.
+if "--only" in sys.argv:
+    _i = sys.argv.index("--only")
+    if _i + 1 < len(sys.argv):
+        _wanted = {t.strip().upper() for t in sys.argv[_i + 1].split(",") if t.strip()}
+        TICKERS = sorted(_wanted)
+        print(f"Chế độ --only: chỉ tải {len(TICKERS)} mã: {', '.join(TICKERS)}")
 
 # yfinance hỗ trợ tối đa "max" cho hầu hết mã — lấy toàn bộ lịch sử có sẵn thay vì
 # giới hạn 1-2 năm như trước, để model có nhiều dữ liệu train hơn.
@@ -192,6 +208,48 @@ def fetch_one(ticker: str) -> "pd.DataFrame | None":
     return df
 
 
+def _write_csv_atomic(df, out_path) -> bool:
+    """
+    Ghi CSV theo kiểu nguyên tử rồi ĐỌC LẠI để kiểm chứng.
+
+    LỖI ĐÃ SỬA — file CSV bị hỏng ngay trong lúc tải.
+    Bản cũ gọi thẳng `df.to_csv(out_path)`, ghi trực tiếp đè lên file đích. Ở lượt
+    tải 309 mã, hai file (XLK.csv, FRT.VN.csv) ra kết quả hỏng với văn bản của dòng
+    sau bị chèn vào giữa dòng trước, ví dụ:
+
+        2018-09-05,27225.62018-09-05,27225.61328125,...
+
+    tức "27225.6" dính liền "2018-09-05". Thư mục Documents trên Windows thường
+    được OneDrive đồng bộ, và trình quét virus cũng hay mở file ngay khi nó vừa
+    được tạo — một tiến trình khác chạm vào file giữa lúc pandas đang ghi là ra
+    đúng kiểu hỏng này. File hỏng KHÔNG được phát hiện lúc tải: nó chỉ nổ ra sau
+    đó khi train_tft.py đọc và báo "Error tokenizing data".
+
+    Cách sửa: ghi ra file tạm rồi đổi tên đè lên file đích bằng `os.replace()` —
+    thao tác nguyên tử ở tầng hệ điều hành, nên tiến trình khác chỉ nhìn thấy file
+    cũ hoặc file mới hoàn chỉnh, không bao giờ thấy trạng thái dở dang. Sau đó đọc
+    lại để chắc chắn file phân tích được và đủ số dòng.
+    """
+    tmp_path = out_path.with_suffix(".csv.tmp")
+    try:
+        df.to_csv(tmp_path)
+        # Đọc lại từ file TẠM trước khi thay thế file thật.
+        check = pd.read_csv(tmp_path, index_col="Date", parse_dates=True)
+        if len(check) != len(df):
+            print(f"    [!] {out_path.name}: đọc lại được {len(check)}/{len(df)} dòng — bỏ qua")
+            tmp_path.unlink(missing_ok=True)
+            return False
+        os.replace(tmp_path, out_path)
+        return True
+    except Exception as e:
+        print(f"    [!] {out_path.name}: ghi/kiểm chứng lỗi ({type(e).__name__}: {e})")
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+
 def main():
     if not DATA_DIR.exists():
         print(f"Không tìm thấy thư mục '{DATA_DIR}' — chạy script từ đúng thư mục gốc dự án.")
@@ -216,7 +274,9 @@ def main():
             continue
 
         out_path = DATA_DIR / f"{ticker}.csv"
-        df.to_csv(out_path)
+        if not _write_csv_atomic(df, out_path):
+            failed.append(f"{ticker} (ghi file lỗi)")
+            continue
 
         date_range = f"{df.index[0].date()} → {df.index[-1].date()}"
         flag = ""
