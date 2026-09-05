@@ -26,7 +26,7 @@ export function TechnicalChart({ ticker, period = "1y" }: TechnicalChartProps) {
   const t = useT()
   const [activeIndicators, setActiveIndicators] = useState<Set<string>>(new Set(["ma"]))
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["ticker-indicators", ticker, period],
     queryFn: () => api.getTickerWithIndicators(ticker, period),
     staleTime: 60_000,
@@ -41,8 +41,30 @@ export function TechnicalChart({ ticker, period = "1y" }: TechnicalChartProps) {
     })
   }
 
-  if (isLoading || !data?.ohlcv) {
-    return <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">Loading...</div>
+  if (isLoading) {
+    return <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">{t("loading")}</div>
+  }
+
+  // Trước đây mọi trường hợp không có dữ liệu đều rơi vào nhánh "Loading..." ở trên,
+  // nên khi backend trả 429/503 thì biểu đồ kẹt chữ "Loading..." vĩnh viễn mà người
+  // dùng không hề biết đã có lỗi. Nay tách riêng lỗi và cho phép thử lại.
+  if (isError || !data?.ohlcv) {
+    return (
+      <div className="flex h-80 flex-col items-center justify-center gap-3 text-center">
+        <p className="max-w-sm text-sm text-muted-foreground">
+          {isError
+            ? (error as Error)?.message || t("chartLoadFailed")
+            : t("chartNoData")}
+        </p>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-card-foreground transition-opacity hover:opacity-80 disabled:opacity-50"
+        >
+          {isFetching ? t("loading") : t("retry")}
+        </button>
+      </div>
+    )
   }
 
   const ohlcv = data.ohlcv

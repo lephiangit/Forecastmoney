@@ -55,6 +55,10 @@ export default function AutoTradePage() {
     }
   }, [botConfigQ.data])
 
+  // `api.startBotAdvanced` NÉM lỗi khi backend từ chối (số dư bằng 0, cỡ lệnh vượt
+  // số dư, rate limit...). Trước đây lớp api nuốt lỗi và trả null, nên react-query
+  // coi như thành công: bấm "Start Bot" thì tuyệt đối không có gì xảy ra và cũng
+  // không có thông báo nào — người dùng không thể biết vì sao.
   const startMut = useMutation({
     mutationFn: () => api.startBotAdvanced({
       amount: Number(tradeAmount) || 0,
@@ -179,6 +183,16 @@ export default function AutoTradePage() {
               )}
             </button>
           </motion.div>
+
+          {(startMut.isError || stopMut.isError) && (
+            <div
+              role="alert"
+              className="mt-3 rounded-md border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative"
+            >
+              <span className="font-semibold">{t("botStartFailed")}: </span>
+              {(startMut.error as Error)?.message || (stopMut.error as Error)?.message}
+            </div>
+          )}
 
           {/* Trade Settings */}
           <div className="mt-6 grid gap-6 lg:grid-cols-2">

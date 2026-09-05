@@ -44,34 +44,95 @@ function jitter<T extends { price: number; change: number; changePercent: number
   }
 }
 
-async function tryFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
-  if (!BASE_URL) return null
-  try {
-    const headers: any = { "Content-Type": "application/json", ...options?.headers }
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("forecast_ai_token")
-      if (token) headers["Authorization"] = `Bearer ${token}`
-    }
-    const res = await fetch(`${BASE_URL}${path}`, {
-      cache: "no-store",
-      ...options,
-      headers,
-    })
-    if (res.status === 401 && typeof window !== "undefined") {
-      const hadToken = !!localStorage.getItem("forecast_ai_token")
-      // Token missing or expired – clear stale auth state
-      const { useAuthStore } = require("./store")
-      useAuthStore.getState().logout()
+/** Lỗi API có giữ lại mã trạng thái và thông báo `detail` do backend trả về. */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
 
-      // Only redirect if we're not already on login/register/callback pages AND they actually had a token
-      const p = window.location.pathname
-      if (hadToken && !p.startsWith("/login") && !p.startsWith("/register") && !p.startsWith("/auth/")) {
-        window.location.href = "/login?reason=session_expired"
-      }
-      throw new Error("Unauthorized")
+/**
+ * Gọi API và NÉM lỗi khi thất bại — dùng cho mọi thao tác mà người dùng cần biết
+ * kết quả (bấm nút, gửi form) và cho các màn hình cần phân biệt "lỗi" với "rỗng".
+ *
+ * Vì sao phải tách khỏi `tryFetch`: `tryFetch` nuốt mọi lỗi bằng `catch {}` rỗng
+ * rồi trả `null`. Với truy vấn chỉ-đọc có fallback dữ liệu mẫu thì chấp nhận được,
+ * nhưng nó phá hai chỗ quan trọng:
+ *
+ *   1. Nút "Start Bot": react-query thấy promise resolve (giá trị `null`) nên coi
+ *      là THÀNH CÔNG, `onError` không bao giờ chạy, không có toast nào hiện ra —
+ *      người dùng bấm nút và tuyệt đối không có gì xảy ra, kể cả khi backend đã
+ *      trả 400 kèm lý do rõ ràng (số dư không đủ, cỡ lệnh vượt số dư...).
+ *   2. Thẻ "Phân tích kỹ thuật" và "Mức độ ảnh hưởng đặc trưng": khi backend trả
+ *      429, `tryFetch` biến nó thành `null`, `isError` luôn false, nên component
+ *      rơi vào nhánh `!data` và kẹt ở trạng thái "Loading..." vĩnh viễn thay vì
+ *      báo lỗi cho người dùng và cho phép thử lại.
+ */
+export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  if (!BASE_URL) throw new ApiError("Chưa cấu hình địa chỉ máy chủ.", 0)
+
+  const headers: any = { "Content-Type": "application/json", ...options?.headers }
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("forecast_ai_token")
+    if (token) headers["Authorization"] = `Bearer ${token}`
+  }
+
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { cache: "no-store", ...options, headers })
+  } catch {
+    throw new ApiError("Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.", 0)
+  }
+
+  if (res.status === 401 && typeof window !== "undefined") {
+    const hadToken = !!localStorage.getItem("forecast_ai_token")
+    // Token missing or expired – clear stale auth state
+    const { useAuthStore } = require("./store")
+    useAuthStore.getState().logout()
+
+    // Only redirect if we're not already on login/register/callback pages AND they actually had a token
+    const p = window.location.pathname
+    if (hadToken && !p.startsWith("/login") && !p.startsWith("/register") && !p.startsWith("/auth/")) {
+      window.location.href = "/login?reason=session_expired"
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    return (await res.json()) as T
+    throw new ApiError("Phiên đăng nhập đã hết hạn.", 401)
+  }
+
+  if (!res.ok) {
+    // FastAPI trả lỗi dạng {"detail": "..."} — giữ nguyên câu chữ đó cho người dùng.
+    let detail = ""
+    try {
+      const body = await res.json()
+      detail = typeof body?.detail === "string" ? body.detail : ""
+    } catch {
+      /* body không phải JSON — dùng thông báo mặc định bên dưới */
+    }
+    if (!detail) {
+      detail =
+        res.status === 429
+          ? "Bạn thao tác hơi nhanh, máy chủ đang giới hạn tần suất. Chờ một lát rồi thử lại."
+          : res.status >= 500
+            ? "Máy chủ đang bận hoặc vừa khởi động lại. Vui lòng thử lại sau ít phút."
+            : `Yêu cầu thất bại (HTTP ${res.status}).`
+    }
+    throw new ApiError(detail, res.status)
+  }
+
+  return (await res.json()) as T
+}
+
+/**
+ * Bản "im lặng" của `apiFetch`: trả `null` thay vì ném lỗi.
+ *
+ * CHỈ dùng cho truy vấn chỉ-đọc có sẵn đường lùi (dữ liệu mẫu, banner "máy chủ
+ * đang khởi động"). Với thao tác ghi hoặc màn hình cần báo lỗi, dùng `apiFetch`.
+ */
+async function tryFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
+  try {
+    return await apiFetch<T>(path, options)
   } catch {
     return null
   }
@@ -356,14 +417,14 @@ export const api = {
   },
 
   async startBot(amount: number, durationHours: number, assets: string[]) {
-    return tryFetch("/admin/trading/start", {
+    return apiFetch("/admin/trading/start", {
       method: "POST",
       body: JSON.stringify({ amount, duration_hours: durationHours, assets })
     })
   },
 
   async stopBot() {
-    return tryFetch("/admin/trading/stop", { method: "POST" })
+    return apiFetch("/admin/trading/stop", { method: "POST" })
   },
 
   async getAutoTradeStats(): Promise<AutoTradeStats> {
@@ -655,15 +716,19 @@ export const api = {
 
   // ── Technical Data ───────────────────────────────────────────────────────
 
-  async getTickerWithIndicators(ticker: string, period: string = "1y"): Promise<import("./types").TickerDetail | null> {
-    return tryFetch<import("./types").TickerDetail>(`/market/ticker/${ticker}?period=${period}&indicators=true`)
+  async getTickerWithIndicators(ticker: string, period: string = "1y"): Promise<import("./types").TickerDetail> {
+    // Ném lỗi (không nuốt) để <TechnicalChart> phân biệt được lỗi với "chưa có dữ
+    // liệu" — trước đây 429/503 bị biến thành null và biểu đồ kẹt "Loading..." mãi.
+    return apiFetch<import("./types").TickerDetail>(`/market/ticker/${ticker}?period=${period}&indicators=true`)
   },
 
-  async getFeatureImportance(ticker: string): Promise<{ feature: string; importance: number }[] | null> {
-    const res = await tryFetch<{ features: { feature: string; importance: number }[] }>(
+  async getFeatureImportance(ticker: string): Promise<{ feature: string; importance: number }[]> {
+    // Ném lỗi để component hiện được nút "Thử lại" khi bị rate limit (429),
+    // thay vì kẹt skeleton vĩnh viễn.
+    const res = await apiFetch<{ features: { feature: string; importance: number }[] }>(
       `/forecast/feature-importance/${ticker}`,
     )
-    return res?.features || null
+    return res?.features || []
   },
 
   // ── Price Alerts ─────────────────────────────────────────────────────────
@@ -697,7 +762,7 @@ export const api = {
     take_profit: number
     min_confidence: number
   }) {
-    return tryFetch("/admin/trading/start", {
+    return apiFetch("/admin/trading/start", {
       method: "POST",
       body: JSON.stringify(params),
     })

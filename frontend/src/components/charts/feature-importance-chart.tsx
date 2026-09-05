@@ -23,7 +23,7 @@ interface FeatureImportanceChartProps {
  */
 export function FeatureImportanceChart({ ticker }: FeatureImportanceChartProps) {
   const t = useT()
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["feature-importance", ticker],
     queryFn: () => api.getFeatureImportance(ticker),
     staleTime: 6 * 60 * 60 * 1000, // khớp thời hạn cache 6h của forecast/combined
@@ -40,8 +40,28 @@ export function FeatureImportanceChart({ ticker }: FeatureImportanceChartProps) 
     )
   }
 
-  if (isError || !data || data.length === 0) {
-    return null
+  // Endpoint này tính permutation importance nên khá nặng và hay dính rate limit
+  // (429) khi người dùng chuyển mã nhanh. Trước đây lỗi bị nuốt và card im lặng
+  // biến mất — nay báo rõ và cho bấm thử lại.
+  if (isError) {
+    return (
+      <div className="flex flex-col items-start gap-3">
+        <p className="text-xs text-muted-foreground">
+          {(error as Error)?.message || t("chartLoadFailed")}
+        </p>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-card-foreground transition-opacity hover:opacity-80 disabled:opacity-50"
+        >
+          {isFetching ? t("loading") : t("retry")}
+        </button>
+      </div>
+    )
+  }
+
+  if (!data || data.length === 0) {
+    return <p className="text-xs text-muted-foreground">{t("chartNoData")}</p>
   }
 
   const top = data.slice(0, 8)
