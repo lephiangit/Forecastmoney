@@ -79,8 +79,71 @@ EXISTING_TICKERS = [
     "VTI", "VWO", "WMT", "XLM-USD", "XRP-USD", "ZM",
 ]
 
-# Thêm mã mới ở đây nếu muốn mở rộng độ phủ ngoài danh sách sẵn có.
-EXTRA_TICKERS: list = []
+# ══════════════════════════════════════════════════════════════════════════════
+#  MỞ RỘNG DỮ LIỆU HUẤN LUYỆN
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Vì sao mở rộng: mô hình TFT là GLOBAL (một bộ trọng số dùng chung cho mọi mã), nên
+# thêm mã là thêm mẫu huấn luyện thật chứ không phải thêm nhiễu — mô hình học được
+# các dạng vận động giá phổ biến trên nhiều loại tài sản, nhiều mức biến động và
+# nhiều chế độ thị trường khác nhau.
+#
+# Ưu tiên chọn mã có LỊCH SỬ DÀI (blue-chip Mỹ và ETF chỉ số có hàng chục năm dữ
+# liệu) vì mỗi mã như vậy đóng góp vài nghìn phiên, trong khi một mã mới niêm yết
+# chỉ đóng góp vài trăm. Sau khi chuyển sang chia ba tập, mỗi mã cần tối thiểu
+# ~1.224 phiên (~5 năm) mới dùng được — xem MIN_ROWS_FOR_SPLIT trong train_tft.py.
+#
+# Mã nào yfinance không trả về dữ liệu sẽ được báo ở cuối và bỏ qua, không làm hỏng
+# lượt chạy. Danh sách .VN có rủi ro cao nhất vì Yahoo phủ thị trường Việt Nam
+# không đầy đủ.
+
+# ── Cổ phiếu Mỹ vốn hoá lớn, lịch sử dài (mỗi mã thường 5.000-15.000 phiên) ──
+_US_STOCKS = [
+    "ORCL", "IBM", "GE", "F", "GM", "T", "VZ", "XOM", "COP", "SLB",
+    "CAT", "DE", "BA", "LMT", "RTX", "HON", "MMM", "UPS", "FDX", "NKE",
+    "SBUX", "TGT", "LOW", "CVS", "ABT", "DHR", "BMY", "AMGN", "GILD", "ISRG",
+    "SYK", "MDT", "BLK", "GS", "MS", "C", "WFC", "AXP", "SCHW", "SPGI",
+    "ADP", "INTU", "MU", "ADI", "AMAT", "LRCX", "KLAC", "NOW", "SNPS", "CDNS",
+    "EA", "TTWO", "MAR", "BKNG", "ORLY", "AZO", "DG", "DLTR", "KR", "SYY",
+    "MDLZ", "GIS", "HSY", "CL", "KMB", "STZ", "MO", "PM", "DUK", "SO",
+    "NEE", "D", "AEP", "PLD", "AMT", "CCI", "SPG", "O", "WM", "EMR",
+    "ITW", "GD", "NOC", "TRV", "ALL", "PGR", "MET", "PRU", "AIG", "USB",
+    "PNC", "TFC", "COF",
+]
+
+# ── ETF theo ngành và lớp tài sản: bổ sung chế độ thị trường mà cổ phiếu đơn lẻ
+#    không có (trái phiếu, hàng hoá, bất động sản) ──
+_ETFS = [
+    "EFA", "EEM", "AGG", "BND", "TLT", "LQD", "HYG", "XLK", "XLF", "XLE",
+    "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "SMH", "VNQ", "SLV", "IJH",
+    "IJR", "MDY", "RSP", "VUG", "VTV", "VIG", "SCHD", "VYM",
+]
+
+# ── Crypto: biến động cao, giao dịch 7 ngày/tuần — chế độ hoàn toàn khác cổ phiếu ──
+_CRYPTO = [
+    "TRX-USD", "EOS-USD", "XTZ-USD", "NEO-USD", "IOTA-USD", "QTUM-USD",
+    "ZIL-USD", "ENJ-USD", "BAT-USD", "ZEC-USD", "DASH-USD", "WAVES-USD",
+    "ONT-USD", "ICX-USD", "OMG-USD", "DGB-USD", "RVN-USD", "HBAR-USD",
+    "FIL-USD", "GRT-USD", "AAVE-USD", "UNI-USD", "SNX-USD", "CRV-USD",
+    "COMP-USD", "MKR-USD", "YFI-USD", "SUSHI-USD", "EGLD-USD", "NEAR-USD",
+    "FTM-USD", "RUNE-USD", "KAVA-USD", "CHZ-USD",
+]
+
+# ── Cổ phiếu Việt Nam: quan trọng cho phần liên hệ thị trường trong nước của đồ án.
+#    Yahoo phủ thị trường VN không đầy đủ nên nhóm này dễ tải hỏng nhất — mã nào
+#    không có dữ liệu sẽ tự bị bỏ qua. ──
+_VN_STOCKS = [
+    "HDB.VN", "TPB.VN", "SHB.VN", "LPB.VN", "EIB.VN", "MSB.VN", "VIB.VN",
+    "OCB.VN", "NVL.VN", "PDR.VN", "DXG.VN", "KDH.VN", "DIG.VN", "CII.VN",
+    "REE.VN", "PC1.VN", "NT2.VN", "PPC.VN", "BSR.VN", "PVD.VN", "PVS.VN",
+    "PVT.VN", "DCM.VN", "DPM.VN", "DGC.VN", "HSG.VN", "NKG.VN", "HT1.VN",
+    "KDC.VN", "DBC.VN", "ANV.VN", "VHC.VN", "PTB.VN", "TCM.VN", "TNG.VN",
+    "GMD.VN", "VSC.VN", "HAH.VN", "HVN.VN", "SCS.VN", "DGW.VN", "FRT.VN",
+    "PET.VN", "VGC.VN", "VCI.VN", "HCM.VN", "VND.VN", "SHS.VN", "MBS.VN",
+    "VIX.VN",
+]
+
+EXTRA_TICKERS: list = _US_STOCKS + _ETFS + _CRYPTO + _VN_STOCKS
 
 TICKERS = sorted(set(EXISTING_TICKERS + EXTRA_TICKERS))
 

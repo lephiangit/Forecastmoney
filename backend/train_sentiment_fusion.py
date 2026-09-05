@@ -77,7 +77,7 @@ PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from backend.train_tft import LOOK_BACK, SKIP_FILES, TRAIN_RATIO
+from backend.train_tft import LOOK_BACK, SKIP_FILES, TRAIN_RATIO, split_indices
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
@@ -182,6 +182,7 @@ def build_dataset(
     rng = np.random.default_rng(seed)
 
     X_prices, X_signals, Y_adjust = [], [], []
+    sample_tickers: list = []
     n_used_tickers = 0
 
     for ticker in tickers:
@@ -195,16 +196,27 @@ def build_dataset(
         if df.empty or "Close" not in df.columns:
             continue
 
-        # Chỉ lấy mốc thời gian nằm trong phần dữ liệu "chưa từng dùng để train TFT"
-        # (giống VALIDATION_GAP+15% cuối) để cách đánh giá nhất quán với evaluate_tft.py,
-        # đồng thời để lại đủ `days` phiên phía sau mỗi anchor để biết giá thật.
-        split_idx = int(len(df) * TRAIN_RATIO)
+        # Anchor chỉ được lấy trong vùng TFT chưa từng thấy khi huấn luyện — dùng
+        # đúng hàm chia tập của train_tft.py để không tự tính lệch.
+        #
+        # LỖI ĐÃ SỬA — cửa sổ tương lai chồng lấn giữa train và validation.
+        # Bản cũ bốc anchor ngẫu nhiên KHÔNG ràng buộc khoảng cách, rồi ở dưới lại
+        # chia train/val bằng `train_test_split` có XÁO TRỘN. Hai anchor cách nhau
+        # 1-3 phiên của cùng một mã có thể rơi về hai phía của lằn chia, trong khi
+        # cửa sổ giá tương lai `days` phiên của chúng chồng lên nhau gần hết — đúng
+        # kiểu rò rỉ đã sửa cho TFT, tái xuất hiện ở mô hình phụ. Val MSE/MAE báo
+        # cáo vì thế đẹp hơn thực tế.
+        #
+        # Nay: (1) hai anchor liền kề của cùng một mã cách nhau tối thiểu `days`
+        # phiên nên cửa sổ tương lai không chồng nhau; (2) chia train/val THEO MÃ
+        # (xem dưới) chứ không trộn ngẫu nhiên.
+        _, _, _, test_start = split_indices(len(df))
         usable_end = len(df) - days - 1
-        usable_start = split_idx + LOOK_BACK
+        usable_start = max(test_start, LOOK_BACK)
         if usable_start >= usable_end:
             continue
 
-        candidate_positions = np.arange(usable_start, usable_end)
+        candidate_positions = np.arange(usable_start, usable_end, days)
         if len(candidate_positions) == 0:
             continue
         n_pick = min(anchors_per_ticker, len(candidate_positions))
@@ -245,6 +257,8 @@ def build_dataset(
             X_prices.append(normalize_price_sequence(tft_prices))
             X_signals.append(signals)
             Y_adjust.append(target.astype(np.float32))
+            # Ghi lại mã của từng mẫu để chia train/val THEO MÃ, không trộn ngẫu nhiên.
+            sample_tickers.append(ticker)
             ticker_used = True
 
         if ticker_used:
@@ -261,6 +275,7 @@ def build_dataset(
         np.array(X_prices, dtype=np.float32),
         np.array(X_signals, dtype=np.float32),
         np.array(Y_adjust, dtype=np.float32),
+        np.array(sample_tickers),
     ), n_used_tickers
 
 
@@ -275,7 +290,6 @@ def train_sentiment_fusion(
     epochs: int = 60,
 ) -> None:
     import tensorflow as tf
-    from sklearn.model_selection import train_test_split
     from tensorflow.keras.callbacks import EarlyStopping
 
     from backend.models.sentiment_fusion import build_sentiment_fusion_model
@@ -303,16 +317,35 @@ def train_sentiment_fusion(
         print("Không dựng được mẫu nào — kiểm tra lại models/global_tft.keras đã tồn tại chưa.")
         return
 
-    X_prices, X_signals, Y = data
+    X_prices, X_signals, Y, sample_tickers = data
     print(f"\nTổng số mẫu: {len(X_prices)} (từ {n_tickers} mã)")
 
     if len(X_prices) < 30:
         print("Quá ít mẫu để train một cách ổn định — tăng --anchors-per-ticker hoặc --max-tickers.")
         return
 
-    Xp_train, Xp_val, Xs_train, Xs_val, Y_train, Y_val = train_test_split(
-        X_prices, X_signals, Y, test_size=0.15, random_state=42
-    )
+    # Chia train/val THEO MÃ, không dùng train_test_split trộn ngẫu nhiên.
+    #
+    # Trộn ngẫu nhiên cho phép hai mẫu của CÙNG một mã, cách nhau vài phiên, rơi về
+    # hai phía của lằn chia. Cửa sổ giá tương lai của chúng chồng lấn, nên tập
+    # validation không còn độc lập với tập train và Val MSE/MAE báo cáo bị đẹp giả
+    # tạo. Tách theo mã đảm bảo model được đánh giá trên những mã nó CHƯA HỀ thấy —
+    # đúng tình huống thật khi người dùng dự báo một mã mới.
+    uniq = np.array(sorted(set(sample_tickers.tolist())))
+    rng = np.random.default_rng(42)
+    rng.shuffle(uniq)
+    n_val_tickers = max(1, int(round(len(uniq) * 0.15)))
+    val_tickers = set(uniq[:n_val_tickers].tolist())
+    is_val = np.array([t in val_tickers for t in sample_tickers])
+
+    if is_val.all() or (~is_val).all():
+        print("Không tách được train/val theo mã (quá ít mã) — cần thêm mã hoặc anchor.")
+        return
+
+    Xp_train, Xs_train, Y_train = X_prices[~is_val], X_signals[~is_val], Y[~is_val]
+    Xp_val, Xs_val, Y_val = X_prices[is_val], X_signals[is_val], Y[is_val]
+    print(f"  Chia theo mã: {len(uniq) - n_val_tickers} mã train / {n_val_tickers} mã validation")
+    print(f"  Mã dùng để validation: {', '.join(sorted(val_tickers))}")
 
     model = build_sentiment_fusion_model(forecast_days=days)
     model.summary()

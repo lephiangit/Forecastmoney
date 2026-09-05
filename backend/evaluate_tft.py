@@ -70,7 +70,14 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
-from backend.train_tft import LOOK_BACK, SKIP_FILES, TRAIN_RATIO, VALIDATION_GAP
+from backend.train_tft import (
+    LOOK_BACK,
+    SKIP_FILES,
+    SPLIT_GAP,
+    TRAIN_RATIO,
+    VAL_RATIO,
+    split_indices,
+)
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
@@ -188,9 +195,18 @@ def evaluate_ticker(model, ticker: str, horizon: int = 1) -> Optional[Dict]:
     all_cols = ["Close"] + available
     df_clean = df[all_cols].dropna()
 
-    split_idx = int(len(df_clean) * TRAIN_RATIO)
-    train_slice = df_clean.iloc[:split_idx]
-    test_slice = df_clean.iloc[split_idx + VALIDATION_GAP :]
+    # Dùng CHÍNH hàm chia tập của train_tft.py, không tự tính lại.
+    #
+    # Bản cũ tự tính `split_idx = int(len * TRAIN_RATIO)` rồi lấy phần sau khoảng
+    # trống làm "tập kiểm thử" — nhưng đó đúng là lát cắt mà train_tft.py dùng làm
+    # tập VALIDATION, tức là tập mà EarlyStopping/ModelCheckpoint đã dựa vào để chọn
+    # bộ trọng số. Đo trên đó không phải đo ngoài mẫu.
+    #
+    # Nay lấy tập TEST thật: phần cuối cùng, cách tập validation một khoảng trống, và
+    # chưa từng được chạm tới trong suốt quá trình huấn luyện.
+    train_end, val_start, val_end, test_start = split_indices(len(df_clean))
+    train_slice = df_clean.iloc[:train_end]
+    test_slice = df_clean.iloc[test_start:]
 
     if len(test_slice) < LOOK_BACK + horizon + MIN_TEST_SAMPLES:
         return None
@@ -304,8 +320,12 @@ def build_markdown_report(all_results: List[Dict], horizon: int) -> str:
         "",
         f"- **Horizon đánh giá:** {horizon} phiên",
         f"- **Số mã được đánh giá:** {len(all_results)}",
-        f"- **Cách chia dữ liệu:** theo thời gian, {TRAIN_RATIO:.0%} đầu để huấn luyện, "
-        f"phần cuối để kiểm thử, cách nhau {VALIDATION_GAP} phiên",
+        f"- **Cách chia dữ liệu:** theo thời gian, ba tập tách rời — "
+        f"{TRAIN_RATIO:.0%} huấn luyện / {VAL_RATIO:.0%} validation (chỉ dùng để dừng sớm "
+        f"và chọn checkpoint) / {1 - TRAIN_RATIO - VAL_RATIO:.0%} cuối để kiểm thử, "
+        f"mỗi ranh giới cách nhau {SPLIT_GAP} phiên",
+        "- **Tập kiểm thử chưa từng được dùng trong huấn luyện** — kể cả để chọn epoch "
+        "dừng hay chọn bộ trọng số tốt nhất.",
         "",
         "## 1. Kết quả tổng hợp (trung bình trên tất cả các mã)",
         "",
