@@ -7,7 +7,7 @@ performance metrics: Win Rate, Total PnL, Max Drawdown, Sharpe Ratio.
 """
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import pandas as pd
 import numpy as np
@@ -16,11 +16,17 @@ router = APIRouter()
 
 
 class BacktestRequest(BaseModel):
-    ticker: str
-    days_back: int = 90               # 30 | 60 | 90 | 180 | 365
-    strategy: str = "balanced"         # conservative | balanced | aggressive
-    initial_balance: float = 10000.0
-    trade_amount: float = 500.0
+    # `trade_amount` ÂM từng làm hỏng cả phiên mô phỏng mà không báo lỗi: điều kiện
+    # `balance >= trade_amount` luôn đúng, `qty` thành số âm, `balance -= total` lại
+    # LÀM TĂNG số dư, và `position_qty` âm vĩnh viễn nên hai chốt chặn
+    # `position_qty == 0` / `> 0` đều không bao giờ đúng nữa — vị thế ma đó không
+    # bao giờ được đóng và làm sai lệch đường vốn cho tới hết phiên. API vẫn trả về
+    # một báo cáo trông rất hợp lý.
+    ticker: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$")
+    days_back: int = Field(default=90, ge=7, le=3650)
+    strategy: str = Field(default="balanced", pattern="^(conservative|balanced|aggressive)$")
+    initial_balance: float = Field(default=10000.0, gt=0, le=100_000_000)
+    trade_amount: float = Field(default=500.0, gt=0, le=100_000_000)
 
 
 class BacktestTrade(BaseModel):

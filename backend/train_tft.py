@@ -98,6 +98,9 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import tensorflow as tf
 
+# Seed dùng chung cho numpy và TensorFlow để kết quả huấn luyện tái lập được.
+RANDOM_SEED = 42
+
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 if PROJECT_ROOT not in sys.path:
@@ -313,6 +316,13 @@ def train_tft(fresh: bool = False) -> None:
     Hàm này cũng tự động phát hiện trường hợp target_type đổi (xem bên dưới) và
     tự ép fresh=True, nhưng truyền cờ `--fresh` bằng tay vẫn là thói quen tốt.
     """
+    # Cố định seed cho TensorFlow/Keras. Trước đây chỉ numpy được seed, còn khởi tạo
+    # trọng số của các lớp Dense/GRN và mặt nạ Dropout lấy từ RNG toàn cục CHƯA seed
+    # của TF — nghĩa là chạy lại đúng script trên đúng dữ liệu vẫn ra bộ trọng số
+    # khác, và do đó ra MAPE/DirAcc/Coverage khác. Số liệu trong báo cáo vì thế
+    # không tái lập được, một điểm rất dễ bị hỏi khi bảo vệ.
+    tf.keras.utils.set_random_seed(RANDOM_SEED)
+
     os.makedirs(MODELS_DIR, exist_ok=True)
 
     print("=" * 70)

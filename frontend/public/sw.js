@@ -12,7 +12,12 @@
  * tĩnh có hash trong tên file (bất biến, an toàn để cache dài hạn).
  */
 
-const CACHE_VERSION = "forecastai-v1"
+// Tăng số này MỖI KHI thay asset tĩnh (icon, ảnh...). Service worker cache
+// /icons/ nên nếu giữ nguyên version, trình duyệt của người đã từng vào site sẽ
+// tiếp tục phục vụ icon CŨ từ cache và bản icon mới không bao giờ tới được họ.
+// Dòng dọn cache ở sự kiện "activate" chỉ xoá các cache khác STATIC_CACHE hiện tại.
+// v2: đồng bộ bộ icon PWA với favicon (src/app/icon.svg).
+const CACHE_VERSION = "forecastai-v2"
 const STATIC_CACHE = `${CACHE_VERSION}-static`
 
 self.addEventListener("install", (event) => {

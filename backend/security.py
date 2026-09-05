@@ -85,17 +85,35 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
+# Số hop proxy tin cậy đứng trước ứng dụng (Render = 1). Đổi nếu triển khai
+# sau nhiều lớp proxy/CDN khác.
+TRUSTED_PROXY_HOPS = 1
+
+
 def get_client_ip(request: Request) -> str:
     """
-    Lấy IP thật của client. Render/Netlify đứng sau proxy nên IP trực tiếp luôn là
-    IP của proxy — phải đọc X-Forwarded-For (phần tử đầu tiên là client gốc).
+    Địa chỉ IP của client, dùng làm khoá cho bộ giới hạn tần suất.
+
+    LỖI ĐÃ SỬA — vượt rate limit bằng header tự đặt.
+    Bản cũ lấy phần TRÁI NHẤT của `X-Forwarded-For`. Đó lại đúng là phần mà client
+    tự điền được: header này là một chuỗi các hop, mỗi proxy nối thêm vào bên phải,
+    nên phần trái nhất không hề được xác thực. Kẻ tấn công chỉ cần gửi mỗi request
+    kèm một `X-Forwarded-For` ngẫu nhiên là mỗi lần lại rơi vào một "xô" đếm khác
+    nhau — hạn mức 10 lần/phút cho /auth/login không bao giờ chạm tới, tức là dò
+    mật khẩu không giới hạn.
+
+    Nay lấy hop do CHÍNH hạ tầng của mình nối thêm: phần PHẢI NHẤT, trừ đi số hop
+    proxy tin cậy (Render đứng trước app đúng 1 hop). Nếu header không hợp lệ thì
+    quay về `request.client.host`.
     """
-    forwarded = request.headers.get("x-forwarded-for")
+    forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
+        hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+        if hops:
+            # TRUSTED_PROXY_HOPS = 1: Render nối thêm đúng một hop (IP thật của client
+            # nhìn từ phía Render). Mọi thứ bên trái hop đó đều do client bịa ra được.
+            idx = max(0, len(hops) - TRUSTED_PROXY_HOPS)
+            return hops[idx]
     return request.client.host if request.client else "unknown"
 
 

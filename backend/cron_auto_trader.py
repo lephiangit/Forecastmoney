@@ -176,6 +176,9 @@ class _UserSession:
         self.user_id = config["user_id"]
         self.initial_balance = float(config.get("initial_balance") or 0.0)
         self.balance = float(config.get("current_balance") or 0.0)
+        # Số dư đọc được lúc bắt đầu lượt chạy — dùng làm mốc so sánh khi ghi xuống
+        # DB ở flush(), để phát hiện có lượt chạy khác ghi chen vào hay không.
+        self.balance_at_start = self.balance
         self.win_trades = int(config.get("win_trades") or 0)
         self.loss_trades = int(config.get("loss_trades") or 0)
         self.dirty = False
@@ -192,18 +195,47 @@ class _UserSession:
             self.loss_trades += 1
         self.dirty = True
 
-    def flush(self) -> None:
+    def flush(self) -> bool:
+        """
+        Ghi số dư và bộ đếm thắng/thua xuống DB.
+
+        LỖI ĐÃ SỬA — mất cập nhật do hai lượt chạy chồng nhau.
+        `run_auto_trade()` được kích hoạt theo HAI đường và chúng có thể chạy đè lên
+        nhau: bộ đếm giờ 60 giây trong main.py, và endpoint /admin/trigger-autotrade.
+        Mỗi lượt chụp số dư MỘT LẦN lúc bắt đầu, cộng dồn toàn bộ mua bán trong bộ
+        nhớ, rồi cuối lượt ghi đè VÔ ĐIỀU KIỆN.
+
+        Số dư 1.000$: lượt A mua 400$ (còn 600) và ghi lúc t=45s; lượt B vốn cũng đọc
+        thấy 1.000$ mua tiếp 700$ (còn 300) rồi ghi lúc t=50s. Thực chi 1.100$ trên
+        số dư 1.000$, và lượt ghi sau còn xoá luôn bộ đếm thắng/thua của lượt trước.
+        Đây đúng là lỗi đã được sửa cho lệnh tay ở /trade bằng update_balance_cas,
+        nhưng bot thì chưa được cập nhật theo.
+
+        Nay chỉ ghi khi số dư dưới DB vẫn đúng bằng giá trị đọc lúc bắt đầu lượt.
+        Trả False nếu bị từ chối — lượt chạy đó coi như bỏ, lượt sau sẽ tính lại trên
+        số dư mới nhất.
+        """
         if not self.dirty:
-            return
-        update_admin_config(
+            return True
+
+        from backend.database import update_balance_cas
+
+        ok = update_balance_cas(
             self.user_id,
-            {
-                "current_balance": self.balance,
+            expected_balance=self.balance_at_start,
+            new_balance=self.balance,
+            extra={
                 "total_pnl": self.balance - self.initial_balance,
                 "win_trades": self.win_trades,
                 "loss_trades": self.loss_trades,
             },
         )
+        if not ok:
+            print(
+                f"  [!] User {self.user_id}: số dư đã bị một lượt chạy khác thay đổi "
+                "giữa chừng — bỏ qua ghi để không đè mất cập nhật của lượt đó."
+            )
+        return ok
 
 
 def _check_risk_exit(

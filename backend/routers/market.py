@@ -11,6 +11,11 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 from backend.models.forecaster import fetch_ohlcv, get_live_quote, validate_ticker, search_tickers
+# Ba endpoint dưới đây nhận mã trực tiếp từ URL và đưa thẳng vào yfinance cùng
+# hai bộ nhớ đệm không giới hạn kích thước (_ohlcv_cache/_quote_cache). Không kiểm
+# tra định dạng thì mỗi chuỗi rác lại thành một khoá cache tồn tại vĩnh viễn —
+# đủ để làm cạn RAM của tiến trình worker duy nhất trên gói free.
+from backend.security import validate_ticker_format
 from backend.config import settings, TICKER_LABELS
 
 router = APIRouter()
@@ -35,7 +40,7 @@ def search(q: str = Query(..., min_length=1, description="Ticker or name to sear
 @router.get("/validate/{ticker}")
 def validate(ticker: str):
     """Check if a ticker is valid and fetchable."""
-    ticker = ticker.upper()
+    ticker = validate_ticker_format(ticker)
     valid = validate_ticker(ticker)
     return {"ticker": ticker, "valid": valid}
 
@@ -97,7 +102,7 @@ def get_ticker_detail(
     Fetch full OHLCV + technical indicators for any ticker.
     Always real-time from yfinance — no DB lookup.
     """
-    ticker = ticker.upper()
+    ticker = validate_ticker_format(ticker)
 
     df = fetch_ohlcv(ticker, period=period)
     if df is None or df.empty:
@@ -147,7 +152,7 @@ def get_ticker_detail(
 @router.get("/live/{ticker}")
 def get_live(ticker: str):
     """Get single live quote for any ticker."""
-    ticker = ticker.upper()
+    ticker = validate_ticker_format(ticker)
     quote = get_live_quote(ticker)
     if quote is None:
         raise HTTPException(404, f"Cannot fetch live price for '{ticker}'")

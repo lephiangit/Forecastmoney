@@ -665,7 +665,7 @@ def delete_user(user_id: int, admin=Depends(get_current_admin)):
 
 @router.get("/system/accuracy")
 def get_system_accuracy(
-    limit: int = Query(default=20, ge=1, le=100), user=Depends(get_current_user)
+    limit: int = Query(default=20, ge=1, le=100), admin=Depends(get_current_admin)
 ):
     """Các bản ghi đánh giá sai số mô hình gần nhất (đã có giá thực tế để đối chiếu)."""
     c = _get_client()

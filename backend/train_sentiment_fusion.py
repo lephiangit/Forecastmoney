@@ -129,8 +129,18 @@ def compute_technical_signals(df: pd.DataFrame) -> np.ndarray:
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
-    rs = gain / (loss + 1e-8)
-    rsi = (100 - 100 / (1 + rs)).iloc[-1]
+    # Ưu tiên dùng lại cột RSI đã tính sẵn bởi add_technical_indicators() — ĐÚNG như
+    # đường suy luận làm (extract_market_signals đọc df["RSI"] nếu có). Nếu tự tính
+    # lại ở đây bằng công thức cũ, mã có giai đoạn giá đứng yên sẽ cho rs = 0 → RSI = 0
+    # → rsi_z = -1.0 ("quá bán tối đa"), trong khi lúc chạy thật cùng mã đó lại nhận
+    # RSI = 50 → rsi_z = 0 (trung tính). Model học trên một phân phối đầu vào khác
+    # hẳn phân phối nó gặp khi chạy thật — đúng lớp lỗi lệch train/inference đã sửa
+    # ở TFT, nếu để nguyên thì bản vá RSI không hề bảo vệ được nhánh SentimentFusion.
+    if "RSI" in df.columns and pd.notna(df["RSI"].iloc[-1]):
+        rsi = float(df["RSI"].iloc[-1])
+    else:
+        rs = gain / (loss + 1e-8)
+        rsi = (100 - 100 / (1 + rs)).iloc[-1]
     rsi_z = (rsi - 50) / 50
 
     ema12 = close.ewm(span=12, adjust=False).mean()
@@ -264,10 +274,16 @@ def train_sentiment_fusion(
     days: int = FORECAST_DAYS,
     epochs: int = 60,
 ) -> None:
+    import tensorflow as tf
     from sklearn.model_selection import train_test_split
     from tensorflow.keras.callbacks import EarlyStopping
 
     from backend.models.sentiment_fusion import build_sentiment_fusion_model
+
+    # Cố định seed cho TensorFlow/Keras: khởi tạo trọng số và mặt nạ Dropout vốn lấy
+    # từ RNG toàn cục CHƯA seed của TF, nên chạy lại cùng script trên cùng dữ liệu
+    # vẫn ra Val MSE/MAE khác. Số liệu báo cáo phải tái lập được.
+    tf.keras.utils.set_random_seed(42)
 
     if tickers is None:
         tickers = sorted(

@@ -22,7 +22,9 @@ import re
 from typing import List, Optional
 
 import requests
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from backend.routers.auth import get_current_user
 from pydantic import BaseModel, Field
 
 from backend.config import settings
@@ -162,7 +164,15 @@ def _build_history(history: Optional[List[ChatMessage]]) -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/copilot", response_model=ChatResponse)
-def ask_copilot(req: ChatRequest):
+def ask_copilot(req: ChatRequest, user=Depends(get_current_user)):
+    """
+    LỖI ĐÃ SỬA — endpoint tốn tiền mà không cần đăng nhập.
+    Trước đây endpoint này không có bất kỳ dependency xác thực nào, trong khi mỗi
+    lần gọi là một request chat-completion đầy đủ tới Groq. Bất kỳ ai cũng có thể
+    gọi vòng lặp với tốc độ tối đa của đường truyền, đẩy chi phí API lên không giới
+    hạn. Mọi đường gọi Groq khác trong dự án đều có chốt chặn: research_agent.py
+    còn tự ép giãn cách tối thiểu 3 giây giữa hai lần gọi.
+    """
     is_vietnamese = req.lang != "en"
     system_prompt = _SYSTEM_PROMPT_VI if is_vietnamese else _SYSTEM_PROMPT_EN
     error_reply = (
