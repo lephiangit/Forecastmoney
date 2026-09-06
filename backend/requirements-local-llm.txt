@@ -1,0 +1,14 @@
+# Chỉ cần cài khi dùng LLM_PROVIDER=local (nạp model + adapter QLoRA trực tiếp
+# trong tiến trình — dùng để đánh giá offline / demo trên máy có GPU, KHÔNG
+# dùng cho bản deploy trên Render free tier).
+#
+#   pip install -r backend/requirements-local-llm.txt
+#
+# Không thêm các gói này vào requirements.txt chính: torch một mình đã vài GB,
+# sẽ làm build trên Render (free tier, giới hạn bộ nhớ) thất bại hoặc quá hạn.
+
+torch>=2.2.0
+transformers>=4.45.0
+peft>=0.13.0
+accelerate>=0.34.0
+bitsandbytes>=0.43.0

@@ -33,11 +33,20 @@ import requests
 from backend.config import settings
 from backend.metrics import metrics
 
-# ── Rate limiting phía client cho Groq ────────────────────────────────────────
-_groq_last_call: float = 0.0
+# ── Rate limiting phía client, dùng chung cho mọi provider (khoá theo tên) ────
+_last_call_at: Dict[str, float] = {}
+
 _GROQ_MIN_INTERVAL = 3.0
 _GROQ_MAX_RETRIES = 2
 _GROQ_TIMEOUT = 25
+
+# Endpoint tự host (vLLM/TGI/Ollama/LM Studio/HF Inference Endpoint...) chạy trên
+# máy/GPU riêng, không dùng chung hạn mức với Groq nên không cần giãn cách nhiều.
+_CUSTOM_MIN_INTERVAL = 0.0
+_CUSTOM_MAX_RETRIES = 1
+_CUSTOM_TIMEOUT = 60
+
+_VALID_LLM_PROVIDERS = {"groq", "custom", "local"}
 
 VALID_SENTIMENTS = {"BULLISH", "BEARISH", "NEUTRAL"}
 VALID_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH"}
@@ -127,61 +136,207 @@ def fetch_news(ticker: str, max_items: int = 30) -> List[Dict]:
 #  GROQ
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _call_groq(prompt: str) -> Optional[str]:
-    """Gọi Groq với rate limit phía client và cơ chế thử lại khi bị 429."""
-    global _groq_last_call
+def _post_chat_completion(
+    provider_key: str,
+    prompt: str,
+    *,
+    url: str,
+    api_key: Optional[str],
+    model: str,
+    min_interval: float,
+    max_retries: int,
+    timeout: int,
+    json_mode: bool,
+) -> Optional[str]:
+    """
+    Gọi một endpoint chat-completions TƯƠNG THÍCH OPENAI bất kỳ, có rate-limit
+    phía client và thử lại khi bị 429.
 
-    if not settings.groq_api_key:
-        print("[research] Thiếu GROQ_API_KEY")
-        return None
-
+    Groq, vLLM, TGI, Ollama, LM Studio, và Hugging Face Inference Endpoints đều
+    trả lời qua cùng một dạng request/response này — nên một hàm duy nhất phục
+    vụ được cả provider trả phí lẫn model tự host.
+    """
     payload = {
-        "model": settings.groq_model,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
-        "response_format": {"type": "json_object"},
     }
-    headers = {
-        "Authorization": f"Bearer {settings.groq_api_key}",
-        "Content-Type": "application/json",
-    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
-    for attempt in range(_GROQ_MAX_RETRIES + 1):
-        elapsed = time.time() - _groq_last_call
-        if elapsed < _GROQ_MIN_INTERVAL:
-            time.sleep(_GROQ_MIN_INTERVAL - elapsed)
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    for attempt in range(max_retries + 1):
+        elapsed = time.time() - _last_call_at.get(provider_key, 0.0)
+        if elapsed < min_interval:
+            time.sleep(min_interval - elapsed)
 
         try:
-            res = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=_GROQ_TIMEOUT,
-            )
-            _groq_last_call = time.time()
+            res = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            _last_call_at[provider_key] = time.time()
 
             if res.status_code == 200:
                 return res.json()["choices"][0]["message"]["content"].strip()
 
             if res.status_code == 429:
-                wait = _GROQ_MIN_INTERVAL * (attempt + 2)
-                print(f"[research] Groq rate-limit, thử lại sau {wait:.0f}s")
+                wait = min_interval * (attempt + 2) if min_interval > 0 else 5.0 * (attempt + 1)
+                print(f"[research] {provider_key} rate-limit, thử lại sau {wait:.0f}s")
                 time.sleep(wait)
                 continue
 
-            print(f"[research] Groq trả về {res.status_code}")
+            print(f"[research] {provider_key} trả về {res.status_code}: {res.text[:200]!r}")
             return None
 
         except requests.Timeout:
-            _groq_last_call = time.time()
-            print("[research] Groq timeout")
+            _last_call_at[provider_key] = time.time()
+            print(f"[research] {provider_key} timeout")
             return None
         except Exception as e:
-            _groq_last_call = time.time()
-            print(f"[research] Gọi Groq thất bại: {type(e).__name__}")
+            _last_call_at[provider_key] = time.time()
+            print(f"[research] Gọi {provider_key} thất bại: {type(e).__name__}")
             return None
 
     return None
+
+
+def _call_groq(prompt: str) -> Optional[str]:
+    """Gọi Groq (provider mặc định — dùng cho bản deploy)."""
+    if not settings.groq_api_key:
+        print("[research] Thiếu GROQ_API_KEY")
+        return None
+
+    return _post_chat_completion(
+        "groq",
+        prompt,
+        url="https://api.groq.com/openai/v1/chat/completions",
+        api_key=settings.groq_api_key,
+        model=settings.groq_model,
+        min_interval=_GROQ_MIN_INTERVAL,
+        max_retries=_GROQ_MAX_RETRIES,
+        timeout=_GROQ_TIMEOUT,
+        json_mode=True,
+    )
+
+
+def _call_custom_llm(prompt: str) -> Optional[str]:
+    """
+    Gọi một endpoint tương thích OpenAI tự host — vLLM, TGI, Ollama, LM Studio,
+    Hugging Face Inference Endpoints... Dùng khi `llm_provider = "custom"`.
+    """
+    if not settings.custom_llm_url:
+        print("[research] llm_provider='custom' nhưng thiếu CUSTOM_LLM_URL trong cấu hình")
+        return None
+
+    return _post_chat_completion(
+        "custom",
+        prompt,
+        url=settings.custom_llm_url,
+        api_key=settings.custom_llm_api_key,
+        model=settings.custom_llm_model or "default",
+        min_interval=_CUSTOM_MIN_INTERVAL,
+        max_retries=_CUSTOM_MAX_RETRIES,
+        timeout=_CUSTOM_TIMEOUT,
+        json_mode=settings.custom_llm_json_mode,
+    )
+
+
+# ── Model local: nạp base model + adapter LoRA trực tiếp trong tiến trình ─────
+# Nạp một lần rồi giữ lại (singleton) — tải model 7B mỗi request là không khả thi.
+_local_llm_cache: Dict[str, object] = {}
+
+
+def _load_local_llm():
+    """Nạp tokenizer + model (base + adapter LoRA) cho `llm_provider = "local"`."""
+    cache_key = f"{settings.local_llm_base_model}::{settings.local_llm_adapter}"
+    if _local_llm_cache.get("key") == cache_key and _local_llm_cache.get("model") is not None:
+        return _local_llm_cache["tokenizer"], _local_llm_cache["model"]
+
+    if not settings.local_llm_adapter:
+        print("[research] llm_provider='local' nhưng thiếu LOCAL_LLM_ADAPTER "
+              "(repo Hugging Face của adapter QLoRA, hoặc đường dẫn thư mục local)")
+        return None, None
+
+    try:
+        import torch
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+    except ImportError as e:
+        print(f"[research] llm_provider='local' cần cài transformers/peft/torch (thiếu: {e})")
+        return None, None
+
+    print(
+        f"[research] Đang nạp model local '{settings.local_llm_base_model}' "
+        f"+ adapter '{settings.local_llm_adapter}' (chỉ chạy một lần, có thể mất vài phút)..."
+    )
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(settings.local_llm_base_model)
+        base_model = AutoModelForCausalLM.from_pretrained(
+            settings.local_llm_base_model,
+            device_map="auto",
+            torch_dtype=torch.float16,
+        )
+        model = PeftModel.from_pretrained(base_model, settings.local_llm_adapter)
+        model.eval()
+    except Exception as e:
+        print(f"[research] Nạp model local thất bại: {type(e).__name__}: {e}")
+        return None, None
+
+    _local_llm_cache["key"] = cache_key
+    _local_llm_cache["tokenizer"] = tokenizer
+    _local_llm_cache["model"] = model
+    return tokenizer, model
+
+
+def _call_local_llm(prompt: str) -> Optional[str]:
+    """Sinh phản hồi trực tiếp từ model local (base + adapter LoRA fine-tune)."""
+    tokenizer, model = _load_local_llm()
+    if tokenizer is None or model is None:
+        return None
+
+    try:
+        import torch
+
+        messages = [{"role": "user", "content": prompt}]
+        input_ids = tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt"
+        ).to(model.device)
+
+        with torch.no_grad():
+            output_ids = model.generate(
+                input_ids,
+                max_new_tokens=512,
+                temperature=0.2,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id or tokenizer.pad_token_id,
+            )
+
+        generated = output_ids[0][input_ids.shape[-1]:]
+        return tokenizer.decode(generated, skip_special_tokens=True).strip()
+    except Exception as e:
+        print(f"[research] Sinh phản hồi từ model local thất bại: {type(e).__name__}: {e}")
+        return None
+
+
+def _resolve_llm_provider() -> str:
+    """Đọc `settings.llm_provider`, chuẩn hoá và rơi về 'groq' nếu giá trị không hợp lệ."""
+    provider = (settings.llm_provider or "groq").strip().lower()
+    if provider not in _VALID_LLM_PROVIDERS:
+        print(f"[research] llm_provider='{provider}' không hợp lệ (chỉ nhận groq/custom/local), "
+              f"dùng 'groq' làm mặc định")
+        return "groq"
+    return provider
+
+
+def _call_llm(prompt: str) -> Optional[str]:
+    """Gọi model LLM theo provider đã cấu hình (groq | custom | local)."""
+    provider = _resolve_llm_provider()
+    if provider == "custom":
+        return _call_custom_llm(prompt)
+    if provider == "local":
+        return _call_local_llm(prompt)
+    return _call_groq(prompt)
 
 
 def _parse_json(text: str) -> Optional[Dict]:
@@ -266,7 +421,7 @@ def _normalize_analysis(raw: Dict) -> Optional[Dict]:
     }
 
 
-def _groq_analysis(ticker: str, headlines: List[Dict], price_info: str) -> Optional[Dict]:
+def _llm_analysis(ticker: str, headlines: List[Dict], price_info: str) -> Optional[Dict]:
     headlines_text = "\n".join(
         f"- [{h['source']}] {h['title']}: {h.get('summary', '')}"
         for h in headlines[:MAX_HEADLINES_IN_PROMPT]
@@ -294,7 +449,7 @@ Trả về DUY NHẤT một JSON hợp lệ theo đúng cấu trúc sau (toàn b
   "price_target_bias": "UP" hoặc "DOWN" hoặc "SIDEWAYS"
 }}"""
 
-    text = _call_groq(prompt)
+    text = _call_llm(prompt)
     if not text:
         return None
 
@@ -386,9 +541,11 @@ def analyze_market(ticker: str, price_info: str = "", persist: bool = True) -> D
             "price_target_bias": "SIDEWAYS",
         }
     else:
-        analysis = _groq_analysis(ticker, headlines, price_info)
+        analysis = _llm_analysis(ticker, headlines, price_info)
         if analysis:
-            source, result = "groq", analysis
+            # Gắn nhãn đúng provider đã thực sự trả lời (groq/custom/local) — trang Admin
+            # dùng nhãn này để biết provider nào đang chạy và có đang lỗi/rate-limit không.
+            source, result = _resolve_llm_provider(), analysis
         else:
             source, result = "keyword", _keyword_sentiment(headlines)
 

@@ -43,6 +43,38 @@ class Settings(BaseSettings):
     # "openai/gpt-oss-120b" — model thay thế Groq khuyến nghị chính thức.
     groq_model: str = "openai/gpt-oss-120b"
 
+    # ── Model LLM tự huấn luyện (Model 2 của đồ án) ───────────────────────────
+    #
+    # Vì sao cần: `research_agent.py` bản cũ gọi cứng vào endpoint của Groq, nên
+    # model QLoRA fine-tune trong training/finetune_qlora.py không có đường nào
+    # vào hệ thống — nó chỉ nằm trên Hugging Face mà không bao giờ được dùng.
+    # Trong khi đó `training/build_llm_dataset.py` đã cố ý dựng prompt KHỚP CHÍNH
+    # XÁC với prompt lúc chạy thật, tức là đã thiết kế để thay thế được.
+    #
+    # "groq"   : gọi API Groq (mặc định — dùng cho bản deploy vì Render gói free
+    #            không chạy nổi model 7B).
+    # "custom" : gọi một endpoint TƯƠNG THÍCH OPENAI bất kỳ. Hầu hết cách phục vụ
+    #            model tự train đều cho ra giao diện này: vLLM, TGI, Ollama,
+    #            LM Studio, Hugging Face Inference Endpoints. Chỉ cần điền URL.
+    # "local"  : nạp thẳng model nền + adapter LoRA bằng transformers/peft trong
+    #            cùng tiến trình. Cần GPU (hoặc rất chậm trên CPU) — dùng để đánh
+    #            giá offline và demo trên máy cá nhân, không dùng cho production.
+    #            Cần cài thêm: pip install -r backend/requirements-local-llm.txt
+    #            (không nằm trong requirements.txt chính vì torch/transformers
+    #            nặng vài GB, sẽ làm build trên Render thất bại).
+    llm_provider: str = "groq"
+
+    # Dùng khi llm_provider = "custom"
+    custom_llm_url: Optional[str] = None       # ví dụ: http://localhost:8000/v1/chat/completions
+    custom_llm_api_key: Optional[str] = None   # để trống nếu endpoint không yêu cầu
+    custom_llm_model: Optional[str] = None     # tên model mà endpoint đó nhận
+    # Một số endpoint (TGI cũ) không hỗ trợ ép trả JSON — tắt cờ này khi đó.
+    custom_llm_json_mode: bool = True
+
+    # Dùng khi llm_provider = "local"
+    local_llm_base_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    local_llm_adapter: Optional[str] = None    # repo Hugging Face hoặc đường dẫn thư mục adapter
+
     # ── Secrets (BẮT BUỘC set qua env ở production) ───────────────────────────
     # Ký JWT đăng nhập. Đổi giá trị này sẽ vô hiệu hoá toàn bộ token đang lưu ở client.
     admin_secret_key: str = "dev-only-insecure-secret"

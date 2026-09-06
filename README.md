@@ -144,6 +144,13 @@ File này dùng `CREATE TABLE IF NOT EXISTS` nên an toàn với dữ liệu đa
 | `SUPABASE_URL` | ✓ | |
 | `SUPABASE_KEY` | ✓ | **service_role** key, không phải anon key |
 | `GROQ_API_KEY` | ✓ | Thiếu thì hệ thống rơi về chấm điểm từ khoá |
+| `LLM_PROVIDER` | | `groq` (mặc định) \| `custom` \| `local`. Xem `backend/config.py` để biết chi tiết 3 chế độ |
+| `CUSTOM_LLM_URL` | | Dùng khi `LLM_PROVIDER=custom` — endpoint tương thích OpenAI (vLLM/TGI/Ollama/LM Studio/HF Inference Endpoint) |
+| `CUSTOM_LLM_API_KEY` | | Dùng khi `LLM_PROVIDER=custom`, để trống nếu endpoint không yêu cầu |
+| `CUSTOM_LLM_MODEL` | | Dùng khi `LLM_PROVIDER=custom` — tên model mà endpoint đó nhận |
+| `CUSTOM_LLM_JSON_MODE` | | Dùng khi `LLM_PROVIDER=custom`, mặc định `true`. Tắt nếu endpoint không hỗ trợ ép JSON |
+| `LOCAL_LLM_BASE_MODEL` | | Dùng khi `LLM_PROVIDER=local`, mặc định `Qwen/Qwen2.5-7B-Instruct` |
+| `LOCAL_LLM_ADAPTER` | | Dùng khi `LLM_PROVIDER=local` — repo Hugging Face của adapter QLoRA, hoặc đường dẫn thư mục local |
 | `ADMIN_SECRET_KEY` | ✓ | Ký token đăng nhập. Tối thiểu 32 ký tự |
 | `CRON_SECRET_KEY` | ✓ | Xác thực job nền. **Phải khác** `ADMIN_SECRET_KEY` |
 | `ALLOWED_ORIGINS` | ✓ | Danh sách domain, phân tách bằng dấu phẩy. Không dùng `*` |
