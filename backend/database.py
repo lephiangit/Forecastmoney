@@ -141,6 +141,47 @@ def save_trade(user_id: int, ticker: str, action: str, quantity: float, price: f
         return False
 
 
+def get_all_trades(user_id: int, page_size: int = 1000, max_rows: int = 100_000) -> List[Dict]:
+    """
+    Toàn bộ lịch sử lệnh của một user, sắp xếp tăng dần theo thời gian.
+
+    VÌ SAO CẦN: `get_trades(user_id, limit=N)` sắp xếp GIẢM DẦN rồi cắt, tức là trả
+    về N lệnh MỚI NHẤT. Mọi nơi dựng lại vị thế từ lịch sử (`compute_positions`,
+    bot auto-trade, trang danh mục, biểu đồ vốn) đều gọi nó với limit=500 — nên khi
+    một user vượt 500 lệnh, các lệnh MUA cũ rơi ra khỏi cửa sổ và tài sản đang nắm
+    giữ BIẾN MẤT khỏi mọi phép tính.
+
+    Hậu quả cụ thể: user mua 0,5 BTC ở lệnh thứ 10, bot chạy mỗi 60 giây và sinh
+    600 lệnh trên các mã khác. Lệnh MUA BTC rơi khỏi cửa sổ → `compute_position_for`
+    trả qty = 0 → lệnh BÁN bị từ chối "chỉ đang nắm giữ 0 BTC-USD" vĩnh viễn, cắt
+    lỗ/chốt lời ngừng hoạt động cho mã đó, và bot mua thêm vô hạn vì tưởng chưa có
+    vị thế. Tiền đã bị trừ nhưng tài sản không hiển thị ở đâu cả.
+
+    Phân trang theo `range()` nên không phụ thuộc vào giới hạn 1000 dòng mặc định
+    của PostgREST.
+    """
+    c = _get_client()
+    if c is None:
+        return []
+    rows: List[Dict] = []
+    start = 0
+    try:
+        while start < max_rows:
+            res = (c.table("paper_trades").select("*")
+                   .eq("user_id", user_id)
+                   .order("trade_time", desc=False)
+                   .range(start, start + page_size - 1).execute())
+            batch = res.data or []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            start += page_size
+    except Exception as e:
+        print(f"DB get_all_trades error: {e}")
+        return rows
+    return rows
+
+
 def get_trades(user_id: int, limit: int = 100) -> List[Dict]:
     c = _get_client()
     if c is None:
@@ -573,8 +614,11 @@ def delete_price_alert(alert_id: int, user_id: int) -> bool:
     if c is None:
         return False
     try:
-        c.table("price_alerts").delete().eq("id", alert_id).eq("user_id", user_id).execute()
-        return True
+        res = c.table("price_alerts").delete().eq("id", alert_id).eq("user_id", user_id).execute()
+        # Bản cũ luôn trả True, kể cả khi không xoá được dòng nào — router vì thế
+        # trả {"success": true} cho cả alert không tồn tại hoặc của người khác, và
+        # người dùng tưởng đã tắt cảnh báo trong khi nó vẫn kích hoạt.
+        return bool(getattr(res, "data", None))
     except Exception as e:
         print(f"DB delete_price_alert error: {e}")
         return False

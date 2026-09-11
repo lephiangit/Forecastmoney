@@ -11,7 +11,7 @@ import { Skeleton, ErrorCard, EmptyState } from "@/components/ui/states"
 import { DisclaimerCard } from "@/components/ui/system-banners"
 import { SentimentBadge, ConfidencePill } from "@/components/ui/tags"
 import { Markdown } from "@/components/ui/markdown"
-import { timeAgo } from "@/lib/format"
+import { timeAgo, safeExternalHref } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { ResearchChart } from "./research-chart"
 
@@ -208,7 +208,7 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
                   {report.headlines.map((headline: any, idx: number) => (
                     <li key={idx} className="text-sm">
                       <a 
-                        href={headline.link} 
+                        href={safeExternalHref(headline.link)} 
                         target="_blank" 
                         rel="noreferrer"
                         className="font-medium text-primary hover:underline"

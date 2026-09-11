@@ -59,7 +59,14 @@ export function AiCopilot() {
     try {
       const { reply, href } = await api.askCopilot(value, history, lang)
       setMessages((m) => [...m, { role: "assistant", text: reply }])
-      if (href) setTimeout(() => router.push(href), 1000)
+      // CHỈ ĐIỀU HƯỚNG NỘI BỘ.
+      //
+      // `href` do LLM ở backend sinh ra. Nội dung tin tức RSS đi vào prompt, nên một
+      // tiêu đề được dựng khéo có thể khiến model trả về href trỏ ra ngoài — và
+      // người dùng bị đẩy sang trang giả mạo ngay trong luồng họ đang tin tưởng.
+      if (href && href.startsWith("/") && !href.startsWith("//")) {
+        setTimeout(() => router.push(href), 1000)
+      }
     } catch (e) {
       setMessages((m) => [
         ...m,

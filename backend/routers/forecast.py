@@ -19,7 +19,7 @@ yfinance và TensorFlow đều là blocking, chạy thẳng trên event loop s�
 
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query
 
 from backend.models.forecaster import (
     fetch_ohlcv,
@@ -28,6 +28,23 @@ from backend.models.forecaster import (
     run_tft_forecast,
 )
 from backend.security import validate_ticker_format
+
+
+def _require_auth_for_refresh(refresh: bool, authorization: Optional[str]) -> None:
+    """
+    `refresh=true` bỏ qua cache và chạy lại toàn bộ pipeline: tải RSS + gọi LLM +
+    inference TFT — endpoint đắt nhất hệ thống. Bản cũ cho phép người dùng ẩn danh
+    làm việc đó 20 lần/phút/IP, tức 28.800 lượt gọi LLM mỗi ngày từ một IP, và mỗi
+    lượt lại INSERT thêm một dòng vào `forecast_cache` (bảng không có UNIQUE và
+    không có job dọn) cho tới khi Supabase free tier đầy.
+
+    Người dùng đã đăng nhập vẫn dùng được bình thường; khách vãng lai đọc cache.
+    """
+    if not refresh:
+        return
+    from backend.routers.auth import get_current_user
+
+    get_current_user(authorization)  # ném 401 nếu thiếu/sai token
 
 router = APIRouter()
 
@@ -53,7 +70,8 @@ def combined_forecast(
     ticker: str,
     background_tasks: BackgroundTasks,
     days: int = Query(default=7, ge=1, le=MAX_FORECAST_DAYS),
-    refresh: bool = Query(default=False, description="Bỏ qua cache, tính lại từ đầu"),
+    refresh: bool = Query(default=False, description="Bỏ qua cache, tính lại từ đầu (cần đăng nhập)"),
+    authorization: Optional[str] = Header(None),
 ):
     """
     Pipeline đầy đủ: tin tức → TFT → SentimentFusion.
@@ -65,6 +83,7 @@ def combined_forecast(
     from backend.database import get_forecast_cache, save_forecast_cache
 
     clean_ticker = validate_ticker_format(ticker)
+    _require_auth_for_refresh(refresh, authorization)
 
     if not refresh:
         cached = get_forecast_cache(clean_ticker, days)

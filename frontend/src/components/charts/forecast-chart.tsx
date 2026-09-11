@@ -77,11 +77,16 @@ export function ForecastChart({ forecast, height = 380 }: { forecast: Forecast; 
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
     })
+    // `api.getForecast` có nhánh dự phòng trả về `history: []` khi backend lỗi và
+    // mã không nằm trong lib/data.ts. Bản cũ truy cập thẳng phần tử cuối của mảng
+    // rỗng → TypeError và TRẮNG cả trang chi tiết dự báo, thay vì hiện trạng thái
+    // "chưa có dữ liệu".
+    const lastHistory = forecast.history[forecast.history.length - 1]
     const bridge = [
-      { time: toTime(forecast.history[forecast.history.length - 1].time), value: forecast.history[forecast.history.length - 1].value },
+      ...(lastHistory ? [{ time: toTime(lastHistory.time), value: lastHistory.value }] : []),
       ...forecast.predicted.map((d) => ({ time: toTime(d.time), value: d.value })),
     ]
-    pred.setData(bridge)
+    if (bridge.length) pred.setData(bridge)
 
     chart.timeScale().fitContent()
 

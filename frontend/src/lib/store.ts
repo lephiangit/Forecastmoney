@@ -128,6 +128,16 @@ export const useAuthStore = create<AuthState>()(
       },
       logout: () => {
         if (typeof window !== "undefined") localStorage.removeItem("forecast_ai_token")
+        // LỖI ĐÃ SỬA — CHIẾM TÀI KHOẢN TRÊN MÁY DÙNG CHUNG.
+        //
+        // Bản cũ chỉ xoá token của backend. Phiên Supabase thì vẫn nằm trong
+        // localStorage và `autoRefreshToken: true` khiến nó tự gia hạn mãi. Người
+        // dùng tiếp theo trên cùng máy chỉ cần gõ /auth/reset-password là
+        // `supabase.auth.getSession()` trả về phiên của người trước, trang hiện
+        // email của họ và cho đặt mật khẩu mới.
+        import("./supabase")
+          .then((m) => m.supabase.auth.signOut())
+          .catch(() => {})
         set({ user: null })
       },
     }),

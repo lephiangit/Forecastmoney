@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from backend.database import (
     _get_client,
     get_admin_config,
+    get_all_trades,
     get_trades,
     save_trade,
     update_admin_config,
@@ -93,9 +94,30 @@ def get_portfolio(user=Depends(get_current_user)):
     """Trạng thái paper trading của người dùng hiện tại: số dư, vị thế, lãi/lỗ."""
     user_id = user["user_id"]
     config = get_admin_config(user_id)
-    trades = get_trades(user_id, limit=500)
+    # Vị thế phải dựng từ TOÀN BỘ lịch sử; xem database.get_all_trades().
+    trades = get_all_trades(user_id)
 
     positions = compute_positions(sort_trades_ascending(trades))
+
+    # GIÁ HIỆN TẠI cho từng vị thế.
+    #
+    # Bản cũ không trả trường này, nên frontend (`lib/api.ts`) đành gán
+    # `currentPrice = avgPrice`. Hệ quả: `marketValue` luôn bằng `costBasis`, và
+    # cột "Unrealized P&L" trên trang Danh mục cùng Dashboard LUÔN hiển thị 0đ / 0%
+    # — kể cả khi giá đã tăng 30% so với giá mua. Người dùng tưởng vị thế đi ngang.
+    from backend.models.forecaster import get_live_quote
+
+    for ticker, pos in positions.items():
+        try:
+            quote = get_live_quote(ticker)
+        except Exception:
+            quote = None
+        price = float(quote["price"]) if quote and quote.get("price") else None
+        pos["current_price"] = price
+        if price is not None:
+            qty = float(pos.get("qty") or 0.0)
+            pos["market_value"] = qty * price
+            pos["unrealized_pnl"] = pos["market_value"] - float(pos.get("total_cost") or 0.0)
 
     win_trades = config.get("win_trades", 0) or 0
     loss_trades = config.get("loss_trades", 0) or 0
@@ -111,7 +133,9 @@ def get_portfolio(user=Depends(get_current_user)):
         "total_trades": len(trades),
         "is_running": config.get("is_running", False),
         "positions": positions,
-        "recent_trades": trades[:20],
+        # `get_all_trades` trả về thứ tự TĂNG DẦN theo thời gian, nên "gần đây
+        # nhất" là 20 phần tử CUỐI, đảo lại cho mới nhất lên đầu.
+        "recent_trades": trades[-20:][::-1],
         "sentiment_enhanced": True,
     }
 
@@ -131,7 +155,7 @@ def get_portfolio_chart(user=Depends(get_current_user)):
     user_id = user["user_id"]
     config = get_admin_config(user_id)
 
-    trades = sort_trades_ascending(get_trades(user_id, limit=500))
+    trades = sort_trades_ascending(get_all_trades(user_id))
     initial = float(config.get("initial_balance", 0.0) or 0.0)
     balance = initial
 
@@ -203,7 +227,7 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
         new_balance = balance - total
     else:
         # Không cho bán khống — chỉ bán được phần đang thực sự nắm giữ.
-        position = compute_position_for(sort_trades_ascending(get_trades(user_id, limit=500)), ticker)
+        position = compute_position_for(sort_trades_ascending(get_all_trades(user_id)), ticker)
         if position["qty"] < req.quantity:
             raise HTTPException(
                 400,

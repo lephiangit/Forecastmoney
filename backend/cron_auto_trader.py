@@ -29,14 +29,14 @@ Chiến lược:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from backend.database import (
     _get_client,
     get_bot_config,
+    get_all_trades,
     get_recent_research,
-    get_trades,
     get_watchlist,
     save_trade,
     update_admin_config,
@@ -56,6 +56,33 @@ RESEARCH_MAX_AGE_HOURS = 12
 # Số mã tối đa bot xử lý cho mỗi user trong một lượt chạy — chặn trường hợp
 # watchlist 50 mã làm một lượt chạy kéo dài hàng phút và nghẽn cả job nền.
 MAX_TICKERS_PER_USER = 12
+
+# Chỉ các nhà cung cấp LLM thật mới được coi là cơ sở để vào lệnh.
+# Xem ghi chú trong `_build_forecast()`.
+TRUSTED_RESEARCH_SOURCES = {"groq", "custom", "local"}
+
+# Trần tỷ trọng của MỘT mã trong danh mục.
+MAX_POSITION_PCT = 0.30
+
+
+def _is_expired(end_time) -> bool:
+    """
+    Thời hạn chạy bot đã qua chưa.
+
+    So sánh phải làm trên datetime CÓ MÚI GIỜ. Bản cũ so chuỗi
+    `datetime.now().isoformat()` (giờ VN, không tz) với `end_time` của Supabase
+    (`...+00:00`), nên sai lệch luôn đúng bằng offset múi giờ: bot dừng sớm 7 tiếng
+    hoặc không bao giờ dừng, tuỳ giờ trong ngày.
+    """
+    if not end_time:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(end_time).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) >= parsed
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -152,11 +179,26 @@ def _build_forecast(ticker: str) -> Optional[Dict]:
         confidence = float(raw_confidence)
         confidence_pct = confidence * 100 if confidence <= 1.0 else confidence
 
+    # CHỐT CHẶN: độ tin cậy do bộ ĐẾM TỪ KHOÁ sinh ra không được phép mở lệnh.
+    #
+    # Khi Groq hỏng hoặc hết quota, `analyze_market` rơi xuống `_keyword_sentiment`
+    # và ghi vào DB một bản ghi `source="keyword"` với confidence lên tới 0.7 —
+    # ĐÚNG BẰNG ngưỡng của chiến lược `balanced` (70) và cao hơn `aggressive` (60).
+    # Bản cũ không hề đọc cột `source`, nên bot đặt lệnh thật chỉ vì đếm được nhiều
+    # chữ "tăng" trong tiêu đề RSS.
+    source = (research or {}).get("source", "")
+    trusted = source in TRUSTED_RESEARCH_SOURCES
+    if not trusted:
+        # Hạ về mức trung tính: dưới ngưỡng của MỌI chiến lược, nên bot đứng ngoài.
+        confidence_pct = min(confidence_pct, 50.0)
+
     return {
         "price": float(predicted_price),
         "confidence": confidence_pct,
         "model": model_used,
         "has_research": research is not None,
+        "research_source": source,
+        "research_trusted": trusted,
     }
 
 
@@ -181,6 +223,8 @@ class _UserSession:
         self.balance_at_start = self.balance
         self.win_trades = int(config.get("win_trades") or 0)
         self.loss_trades = int(config.get("loss_trades") or 0)
+        self.win_at_start = self.win_trades
+        self.loss_at_start = self.loss_trades
         self.dirty = False
 
     def record_buy(self, value: float) -> None:
@@ -214,28 +258,59 @@ class _UserSession:
         Nay chỉ ghi khi số dư dưới DB vẫn đúng bằng giá trị đọc lúc bắt đầu lượt.
         Trả False nếu bị từ chối — lượt chạy đó coi như bỏ, lượt sau sẽ tính lại trên
         số dư mới nhất.
+
+        LỖI ĐÃ SỬA (lần 2) — TIỀN SINH RA TỪ HƯ KHÔNG KHI CAS BỊ TỪ CHỐI.
+
+        Bản trước, khi CAS bị từ chối thì chỉ in cảnh báo rồi BỎ QUA. Nhưng các lệnh
+        trong lượt đó ĐÃ được `save_trade()` ghi vào `paper_trades` từ trước. Kết
+        quả: user có thêm vị thế BTC 500$ mà số dư không hề giảm — rồi bán vị thế
+        đó ra để lãi ảo, lặp lại bao nhiêu lần tuỳ thích.
+
+        Gốc rễ: các lệnh đã xảy ra THẬT, nên thứ cần ghi là PHẦN THAY ĐỔI (delta),
+        không phải giá trị tuyệt đối chụp từ đầu lượt. Nay đọc lại số dư mới nhất
+        rồi cộng delta vào đó, vẫn qua CAS để không đè mất cập nhật của lượt khác,
+        và thử lại vài lần nếu có tranh chấp.
         """
         if not self.dirty:
             return True
 
-        from backend.database import update_balance_cas
+        from backend.database import get_admin_config, update_balance_cas
 
-        ok = update_balance_cas(
-            self.user_id,
-            expected_balance=self.balance_at_start,
-            new_balance=self.balance,
-            extra={
-                "total_pnl": self.balance - self.initial_balance,
-                "win_trades": self.win_trades,
-                "loss_trades": self.loss_trades,
-            },
-        )
-        if not ok:
-            print(
-                f"  [!] User {self.user_id}: số dư đã bị một lượt chạy khác thay đổi "
-                "giữa chừng — bỏ qua ghi để không đè mất cập nhật của lượt đó."
+        delta = self.balance - self.balance_at_start
+        win_delta = self.win_trades - self.win_at_start
+        loss_delta = self.loss_trades - self.loss_at_start
+
+        for _ in range(5):
+            cfg = get_admin_config(self.user_id) or {}
+            current = float(cfg.get("current_balance") or 0.0)
+            initial = float(cfg.get("initial_balance") or self.initial_balance)
+            new_balance = current + delta
+
+            ok = update_balance_cas(
+                self.user_id,
+                expected_balance=current,
+                new_balance=new_balance,
+                extra={
+                    "total_pnl": new_balance - initial,
+                    "win_trades": int(cfg.get("win_trades") or 0) + win_delta,
+                    "loss_trades": int(cfg.get("loss_trades") or 0) + loss_delta,
+                },
             )
-        return ok
+            if ok:
+                self.balance = new_balance
+                self.balance_at_start = new_balance
+                self.win_at_start = self.win_trades
+                self.loss_at_start = self.loss_trades
+                self.dirty = False
+                return True
+
+        # Không ghi được sau 5 lần thử. Các lệnh đã nằm trong sổ nên số dư ĐANG SAI;
+        # phải báo to thay vì im lặng, để còn đối soát lại.
+        print(
+            f"  [!!] User {self.user_id}: KHÔNG ghi được số dư sau 5 lần thử. "
+            f"Các lệnh đã vào sổ nhưng số dư chưa đổi {delta:+,.2f} — cần đối soát."
+        )
+        return False
 
 
 def _check_risk_exit(
@@ -261,7 +336,9 @@ def _check_risk_exit(
     sell_value = current_price * qty
 
     if stop_loss_pct > 0 and price_change_pct <= -stop_loss_pct:
-        save_trade(session.user_id, ticker, "SELL", qty, current_price, sell_value, "AUTO_SL")
+        if not save_trade(session.user_id, ticker, "SELL", qty, current_price, sell_value, "AUTO_SL"):
+            print(f"     [!] {ticker}: ghi lệnh cắt lỗ thất bại — giữ nguyên vị thế.")
+            return False
         session.record_sell(sell_value, profitable=False)
         print(
             f"     [SL] User {session.user_id}: bán {qty:.4f} {ticker} @ {current_price:.2f} "
@@ -270,7 +347,9 @@ def _check_risk_exit(
         return True
 
     if take_profit_pct > 0 and price_change_pct >= take_profit_pct:
-        save_trade(session.user_id, ticker, "SELL", qty, current_price, sell_value, "AUTO_TP")
+        if not save_trade(session.user_id, ticker, "SELL", qty, current_price, sell_value, "AUTO_TP"):
+            print(f"     [!] {ticker}: ghi lệnh chốt lời thất bại — giữ nguyên vị thế.")
+            return False
         session.record_sell(sell_value, profitable=True)
         print(
             f"     [TP] User {session.user_id}: bán {qty:.4f} {ticker} @ {current_price:.2f} "
@@ -321,7 +400,7 @@ def _process_user(config: dict, forecast_cache: Dict[str, Optional[Dict]]) -> No
 
     # Hết thời hạn chạy → tự dừng.
     end_time = bot_cfg.get("end_time")
-    if end_time and datetime.now().isoformat() > end_time:
+    if _is_expired(end_time):
         print(f"  User {user_id}: hết thời hạn, đã dừng bot.")
         update_admin_config(user_id, {"is_running": False})
         return
@@ -339,7 +418,10 @@ def _process_user(config: dict, forecast_cache: Dict[str, Optional[Dict]]) -> No
     watchlist = [t.upper() for t in watchlist][:MAX_TICKERS_PER_USER]
 
     session = _UserSession(config)
-    all_trades = sort_trades_ascending(get_trades(user_id, limit=500))
+    # TOÀN BỘ lịch sử, không phải 500 lệnh gần nhất — xem ghi chú ở
+    # database.get_all_trades(): cắt cửa sổ làm vị thế cũ biến mất khỏi mọi phép
+    # tính, khiến cắt lỗ/chốt lời ngừng hoạt động và bot mua thêm vô hạn.
+    all_trades = sort_trades_ascending(get_all_trades(user_id))
 
     print(
         f"  User {user_id} | {bot_cfg.get('strategy', 'balanced')} | "
@@ -394,7 +476,21 @@ def _process_user(config: dict, forecast_cache: Dict[str, Optional[Dict]]) -> No
                 print(f"     [-] {ticker}: số dư không đủ ({session.balance:,.2f})")
                 continue
 
-            save_trade(user_id, ticker, "BUY", qty, current_price, total_value, "AUTO")
+            # TRẦN TỶ TRỌNG MỘT MÃ. Bản cũ không có giới hạn nào: với một tín hiệu
+            # ổn định, bot mua lại cùng một mã mỗi 60 giây cho tới khi cạn số dư —
+            # sau nửa tiếng 100% danh mục nằm trong một mã duy nhất.
+            held_value = position["qty"] * current_price
+            equity = session.balance + held_value
+            if equity > 0 and (held_value + total_value) / equity > MAX_POSITION_PCT:
+                print(f"     [-] {ticker}: chạm trần tỷ trọng {MAX_POSITION_PCT:.0%} danh mục")
+                continue
+
+            # save_trade() nuốt mọi exception và trả False. Bản cũ bỏ qua giá trị trả
+            # về, nên khi Supabase timeout thì lệnh KHÔNG vào sổ nhưng số dư vẫn bị
+            # trừ — user mất tiền mà không có vị thế tương ứng.
+            if not save_trade(user_id, ticker, "BUY", qty, current_price, total_value, "AUTO"):
+                print(f"     [!] {ticker}: ghi lệnh MUA thất bại — không trừ số dư.")
+                continue
             session.record_buy(total_value)
             all_trades.append(
                 {
@@ -419,7 +515,9 @@ def _process_user(config: dict, forecast_cache: Dict[str, Optional[Dict]]) -> No
                 continue
 
             sell_value = current_price * sell_qty
-            save_trade(user_id, ticker, "SELL", sell_qty, current_price, sell_value, "AUTO")
+            if not save_trade(user_id, ticker, "SELL", sell_qty, current_price, sell_value, "AUTO"):
+                print(f"     [!] {ticker}: ghi lệnh BÁN thất bại — không cộng số dư.")
+                continue
             session.record_sell(sell_value, profitable=current_price >= position["avg_cost"])
             all_trades.append(
                 {

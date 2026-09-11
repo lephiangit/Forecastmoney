@@ -300,8 +300,14 @@ class SentimentFusionEngine:
         # Create a smooth adjustment curve that fades over time
         time_factor = np.linspace(1.0, 0.3, days)  # Stronger near-term, weaker long-term
 
-        # Max adjustment: ±3% for high confidence, scaled down for low
-        max_adj = 0.03 * confidence
+        # LỖI ĐÃ SỬA — HAI NHÁNH DÙNG HAI BIÊN ĐỘ KHÁC NHAU.
+        #
+        # Nhánh model học và áp MAX_ADJUSTMENT = ±5% (lớp Rescaling, và ngưỡng clip
+        # nhãn lúc train), còn nhánh heuristic này dùng ±3%. Chỉ cần người dùng chọn
+        # days=14 (không có file sentiment_fusion_14d.keras) là predict() rơi xuống
+        # heuristic và "sentiment_fusion" đổi ngữ nghĩa hoàn toàn — trong khi API vẫn
+        # trả available: true và frontend không phân biệt được.
+        max_adj = MAX_ADJUSTMENT * confidence
         adjustments = sentiment_score * max_adj * time_factor
 
         return tft_prices * (1 + adjustments)

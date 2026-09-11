@@ -53,6 +53,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from backend.agents.research_agent import build_analysis_prompt  # noqa: E402
+
 SYSTEM_PROMPT = (
     "Bạn là chuyên gia phân tích tài chính. Dựa trên tin tức và số liệu dự báo kỹ thuật "
     "được cung cấp, hãy đưa ra nhận định thị trường ngắn gọn, có cấu trúc và trung thực "
@@ -89,7 +91,7 @@ def build_user_prompt(
         if price_context.get("rsi") is not None:
             parts.append(f"- RSI(14): {price_context['rsi']:.1f}")
         if price_context.get("volatility") is not None:
-            parts.append(f"- Biến động 10 phiên: {price_context['volatility']:.2f}%")
+            parts.append(f"- Biến động 20 phiên: {price_context['volatility']:.2f}%")
         parts.append("")
 
     if forecast_context:
@@ -116,37 +118,141 @@ def build_user_prompt(
 
 
 def build_target_response(record: Dict) -> str:
-    """Dựng phần output mẫu từ một bản ghi phân tích đã lưu."""
+    """
+    Dựng phần output mẫu — JSON ĐÚNG SCHEMA mà hệ thống parse lúc chạy thật.
+
+    LỖI ĐÃ SỬA — TRAIN/SERVE SKEW TOÀN PHẦN.
+
+    Bản cũ dạy model trả lời bằng Markdown:
+
+        **Tâm lý thị trường:** BULLISH
+        **Độ tin cậy:** 72%
+        ...
+
+    Nhưng lúc suy luận, `research_agent._llm_analysis()` yêu cầu "Trả về DUY NHẤT
+    một JSON hợp lệ" rồi gọi `_parse_json()`. Model fine-tune sẽ trả Markdown đúng
+    như được dạy → `_parse_json` trả None → `_normalize_analysis` không chạy →
+    `analyze_market` rơi xuống nhánh `_keyword_sentiment`.
+
+    Nghĩa là: adapter LoRA tốn hàng giờ GPU để train, cắm vào hệ thống, và sản phẩm
+    LUÔN dùng kết quả đếm từ khoá. Trang Admin báo source='keyword' 100%. Không có
+    lỗi nào được ném ra — triệu chứng duy nhất là "fine-tune xong mà chẳng khác gì".
+
+    Nay đầu ra là đúng JSON schema của `_llm_analysis`, gồm cả `price_target_bias`
+    vốn bị bản Markdown bỏ quên hoàn toàn.
+    """
     key_factors = record.get("key_factors") or []
     if isinstance(key_factors, str):
         try:
             key_factors = json.loads(key_factors)
         except json.JSONDecodeError:
             key_factors = [key_factors]
+    if not isinstance(key_factors, list):
+        key_factors = []
 
     confidence = float(record.get("confidence") or 0.5)
     if confidence > 1:
         confidence /= 100
 
-    lines = [
-        f"**Tâm lý thị trường:** {record.get('sentiment', 'NEUTRAL')}",
-        f"**Độ tin cậy:** {confidence:.0%}",
-        "",
-        f"**Nhận định:** {record.get('summary', '')}",
-        "",
-        "**Các yếu tố chính:**",
-    ]
-    lines.extend(f"{i}. {f}" for i, f in enumerate(key_factors[:3], 1))
-    lines.extend(
-        [
-            "",
-            f"**Khuyến nghị:** {record.get('recommendation', 'Theo dõi thêm.')}",
-            f"**Mức rủi ro:** {record.get('risk_level', 'MEDIUM')}",
-            "",
-            "*Đây là thông tin tham khảo phục vụ mục đích học thuật, không phải lời khuyên đầu tư.*",
-        ]
-    )
-    return "\n".join(lines)
+    bias = str(record.get("price_target_bias") or "").strip().upper()
+    if bias not in {"UP", "DOWN", "SIDEWAYS"}:
+        sentiment_now = str(record.get("sentiment", "NEUTRAL")).upper()
+        bias = {"BULLISH": "UP", "BEARISH": "DOWN"}.get(sentiment_now, "SIDEWAYS")
+
+    payload = {
+        "sentiment": str(record.get("sentiment", "NEUTRAL")).upper(),
+        "confidence": round(confidence, 3),
+        "summary": str(record.get("summary", ""))[:1000],
+        "key_factors": [str(f)[:200] for f in key_factors[:3]],
+        "recommendation": str(record.get("recommendation") or "Theo dõi thêm."),
+        "risk_level": str(record.get("risk_level", "MEDIUM")).upper(),
+        "price_target_bias": bias,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+# Nhà cung cấp LLM THẬT. Bản ghi "keyword"/"no_data" là heuristic, không phải nhãn.
+#
+# LỖI ĐÃ SỬA: bản cũ lọc `source != "groq"`. Sau khi thêm lớp trừu tượng provider
+# (06/09), `analyze_market` ghi `source = _resolve_llm_provider()`, tức "custom" hoặc
+# "local" khi chạy bằng vLLM/Ollama/model tự host — chính là mục tiêu của Model 2.
+# Bộ lọc cũ vì thế vứt sạch dữ liệu thật và in ra "Đã đọc 0 mẫu từ Supabase" mà không
+# báo lỗi gì, rồi pipeline lặng lẽ rơi về dữ liệu tổng hợp.
+TRUSTED_LLM_SOURCES = {"groq", "custom", "local"}
+
+
+def normalize_headlines(raw) -> List[Dict]:
+    """
+    Đưa cột `headlines` của một bản ghi về đúng dạng mà prompt suy luận cần:
+    list các dict có `title`, `summary`, `source`.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+
+    out: List[Dict] = []
+    for h in raw:
+        if isinstance(h, dict):
+            title = str(h.get("title") or "").strip()
+            if not title:
+                continue
+            out.append({
+                "title": title,
+                # Bản ghi cũ (trước 11/09) không lưu summary — prompt sẽ có phần đuôi
+                # rỗng. Không cứu được, chỉ có thể backfill lại.
+                "summary": str(h.get("summary") or ""),
+                "source": str(h.get("source") or "RSS"),
+            })
+        elif h:
+            out.append({"title": str(h), "summary": "", "source": "RSS"})
+    return out
+
+
+def is_usable_record(record: Dict) -> bool:
+    """
+    Một bản ghi `research_reports` có dùng làm mẫu huấn luyện được không.
+
+    HÀM DÙNG CHUNG với `training/check_research_data.py`. Trước đây hai file định
+    nghĩa "dùng được" khác nhau — `check` chỉ đòi có `summary` + `headlines`, còn
+    `build` còn ép `headlines` giải mã được thành list KHÔNG RỖNG sau khi map title.
+    Nghĩa là cổng go/no-go có thể báo ĐỦ trong khi dataset dựng ra ít hơn hẳn, và
+    không ai biết vì sao.
+    """
+    if record.get("source") not in TRUSTED_LLM_SOURCES:
+        return False
+    if not str(record.get("summary") or "").strip():
+        return False
+    if not normalize_headlines(record.get("headlines")):
+        return False
+    # key_factors rỗng dạy model xuất một mục trống — loại luôn.
+    kf = record.get("key_factors")
+    if isinstance(kf, str):
+        try:
+            kf = json.loads(kf)
+        except json.JSONDecodeError:
+            kf = None
+    if not kf:
+        return False
+    return True
+
+
+def dedup_key(ticker: str, headlines: List[Dict]) -> str:
+    """
+    Khoá khử trùng lặp: mã + tập tiêu đề.
+
+    VÌ SAO CẦN: `cron_researcher` chạy lại cùng danh sách mã mỗi ngày trên cùng hai
+    feed RSS không lọc theo mã, nên bản ghi của VCB.VN và MBB.VN trong cùng một ngày
+    có tập tiêu đề gần như trùng khít, và cùng một mã ở hai ngày liên tiếp cũng vậy.
+    Không khử trùng lặp thì bản sao gần-trùng nằm ở cả train lẫn test.
+    """
+    import hashlib
+
+    joined = "|".join(sorted(h["title"] for h in headlines))
+    return hashlib.sha256(f"{ticker}::{joined}".encode("utf-8")).hexdigest()
 
 
 def to_chat_sample(user_prompt: str, assistant_response: str) -> Dict:
@@ -190,30 +296,32 @@ def load_from_supabase(limit: int = 10000) -> Iterator[Dict]:
             break
 
         for record in rows:
-            # Chỉ dùng bản ghi do LLM sinh. Bản ghi "keyword" là kết quả đếm từ khoá —
-            # huấn luyện trên đó chỉ dạy model bắt chước một heuristic thô.
-            if record.get("source") != "groq":
-                continue
-            if not record.get("summary"):
+            if not is_usable_record(record):
                 continue
 
-            headlines_raw = record.get("headlines") or []
-            if isinstance(headlines_raw, str):
-                try:
-                    headlines_raw = json.loads(headlines_raw)
-                except json.JSONDecodeError:
-                    headlines_raw = []
+            headlines = normalize_headlines(record.get("headlines"))
+            ticker = record.get("ticker", "UNKNOWN")
 
-            headlines = [
-                h.get("title", "") if isinstance(h, dict) else str(h)
-                for h in headlines_raw
-                if h
-            ]
-            if not headlines:
-                continue
-
-            user_prompt = build_user_prompt(record.get("ticker", "UNKNOWN"), headlines)
-            yield to_chat_sample(user_prompt, build_target_response(record))
+            # PROMPT DÙNG CHUNG với lúc suy luận — không tự dựng lại.
+            #
+            # Bản cũ gọi `build_user_prompt(ticker, [title, ...])`, tức một khung
+            # HOÀN TOÀN KHÁC prompt mà `research_agent._llm_analysis` gửi đi lúc
+            # chạy thật, và còn bỏ luôn price_context. Model học một dạng input rồi
+            # gặp một dạng khác khi vào sản phẩm.
+            #
+            # `price_info` để rỗng vì bảng `research_reports` không lưu giá tại thời
+            # điểm phân tích — trùng khớp với trường hợp `get_live_quote` trả None
+            # lúc chạy thật (prompt in ra "Thông tin giá: không có"). Muốn có khối
+            # giá trong dữ liệu huấn luyện thì phải bổ sung cột giá vào bảng TRƯỚC
+            # khi backfill; xem kế hoạch nâng cấp.
+            user_prompt = build_analysis_prompt(ticker, headlines, "")
+            yield {
+                "sample": to_chat_sample(user_prompt, build_target_response(record)),
+                "ticker": ticker,
+                "created_at": str(record.get("created_at") or ""),
+                "dedup_key": dedup_key(ticker, headlines),
+                "origin": "supabase",
+            }
             total += 1
 
         offset += page_size
@@ -327,6 +435,12 @@ def generate_synthetic(count: int, data_dir: str) -> Iterator[Dict]:
             ),
             "key_factors": [
                 f"Biến động giá {change_pct:+.2f}% phiên gần nhất",
+                # LỖI ĐÃ SỬA: dòng này ghi "20 phiên" trong khi phần input của
+                # CHÍNH mẫu đó ghi "Biến động 10 phiên" — cùng một con số, hai cái
+                # tên. Cửa sổ thật là `close_numeric.iloc[idx-20 : idx+1]`, tức 20
+                # return, nên nhãn đúng là 20 phiên và input mới là chỗ sai. Cả
+                # 3000/3000 mẫu của bộ 29/08 đều dính, dạy model quy tắc vô nghĩa
+                # "chép số ở dòng 10 phiên sang dòng 20 phiên".
                 f"Độ biến động 20 phiên ở mức {volatility:.2f}%",
                 f"Tin tức thị trường nghiêng về hướng {sentiment.lower()}",
             ],
@@ -338,10 +452,22 @@ def generate_synthetic(count: int, data_dir: str) -> Iterator[Dict]:
             "risk_level": "HIGH" if volatility > 3 else "MEDIUM" if volatility > 1.5 else "LOW",
         }
 
-        price_context = {"current": round(current, 2), "change_pct": change_pct, "volatility": volatility}
-        user_prompt = build_user_prompt(ticker, headlines, price_context)
+        # Dùng CHUNG prompt với lúc suy luận, để mẫu tổng hợp không có hình dạng
+        # khác mẫu thật (chạy `--source both` trước đây cho ra dataset hai dạng
+        # prompt lẫn lộn).
+        headline_dicts = [{"title": h, "summary": "", "source": "synthetic"} for h in headlines]
+        price_info = f"Giá: {current:,.4f}"
+        user_prompt = build_analysis_prompt(ticker, headline_dicts, price_info)
 
-        yield to_chat_sample(user_prompt, build_target_response(record))
+        yield {
+            "sample": to_chat_sample(user_prompt, build_target_response(record)),
+            "ticker": ticker,
+            # Mẫu tổng hợp không có mốc thời gian thật; để rỗng nên chúng luôn bị
+            # xếp vào phần TRAIN khi chia theo thời gian (xem write_splits).
+            "created_at": "",
+            "dedup_key": dedup_key(ticker, headline_dicts),
+            "origin": "synthetic",
+        }
         generated += 1
 
     print(f"Đã sinh {generated} mẫu tổng hợp.")
@@ -351,14 +477,63 @@ def generate_synthetic(count: int, data_dir: str) -> Iterator[Dict]:
 #  XUẤT FILE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def write_splits(samples: List[Dict], output_dir: str, review_sample: int = 0) -> None:
-    """Chia train/validation/test theo tỷ lệ 80/10/10 và ghi ra JSONL."""
+def write_splits(samples: List[Dict], output_dir: str, review_sample: int = 0,
+                 force: bool = False) -> None:
+    """
+    Khử trùng lặp, chia train/validation/test THEO THỜI GIAN 80/10/10, ghi JSONL.
+
+    LỖI ĐÃ SỬA 1 — CHIA NGẪU NHIÊN.
+    Bản cũ `random.shuffle(samples)` rồi cắt 80/10/10. Với dữ liệu thật do
+    `cron_researcher` sinh, các bản ghi gần-trùng nhau (cùng ngày khác mã, hoặc cùng
+    mã hai ngày liên tiếp — vì hai feed RSS không lọc theo mã) sẽ nằm cả ở train lẫn
+    test. Eval loss trên test khi đó đo khả năng GHI NHỚ, không phải khái quát hoá.
+    Trên bộ 29/08, 93/93 ticker của test đã xuất hiện trong train.
+
+    LỖI ĐÃ SỬA 2 — KHÔNG KHỬ TRÙNG LẶP. Không có bước nào loại bản sao.
+
+    LỖI ĐÃ SỬA 3 — GHI ĐÈ KHÔNG HỎI.
+    `--output` mặc định là `data/llm_dataset`. Nếu backfill mới cho ra 40 bản ghi,
+    hàm này vẫn ghi đè `train.jsonl` (3,8 MB) bằng 32 dòng. Cảnh báo "<500 mẫu" chỉ
+    được IN RA chứ không chặn, và không có backup nào của thư mục này.
+    """
     if not samples:
         print("Không có mẫu nào để ghi. Kiểm tra lại nguồn dữ liệu.")
         return
 
-    random.seed(42)
-    random.shuffle(samples)
+    # ── Khử trùng lặp ──
+    seen = set()
+    deduped = []
+    for item in samples:
+        key = item.get("dedup_key")
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        deduped.append(item)
+    if len(deduped) < len(samples):
+        print(f"Đã loại {len(samples) - len(deduped)} mẫu trùng lặp (còn {len(deduped)}).")
+    samples = deduped
+
+    # ── Chặn ghi đè ──
+    train_path = os.path.join(output_dir, "train.jsonl")
+    if os.path.exists(train_path) and not force:
+        try:
+            with open(train_path, encoding="utf-8") as f:
+                existing = sum(1 for _ in f)
+        except OSError:
+            existing = 0
+        if existing > len(samples):
+            print(
+                f"\nTỪ CHỐI GHI ĐÈ: {train_path} đang có {existing} mẫu, bộ mới chỉ có "
+                f"{len(samples)}.\nGhi đè sẽ mất bộ dữ liệu lớn hơn. Nếu chắc chắn, "
+                "chạy lại với --force, hoặc đổi --output sang thư mục khác."
+            )
+            return
+
+    # ── Chia THEO THỜI GIAN ──
+    # Mẫu không có created_at (dữ liệu tổng hợp) xếp trước, nên chúng luôn nằm ở
+    # phần train và không bao giờ làm bẩn tập test.
+    samples.sort(key=lambda it: it.get("created_at") or "")
 
     n = len(samples)
     n_train = int(n * 0.8)
@@ -370,13 +545,25 @@ def write_splits(samples: List[Dict], output_dir: str, review_sample: int = 0) -
         "test": samples[n_train + n_val :],
     }
 
+    # Cảnh báo nếu tập test chứa mẫu tổng hợp — khi đó số liệu đánh giá vô nghĩa.
+    synth_in_test = sum(1 for it in splits["test"] if it.get("origin") == "synthetic")
+    if synth_in_test:
+        print(
+            f"\nCẢNH BÁO: {synth_in_test}/{len(splits['test'])} mẫu trong tập TEST là dữ "
+            "liệu TỔNG HỢP (tin tức sinh ra từ dấu biến động giá, nhãn cũng suy từ chính\n"
+            "dấu giá đó). Mọi chỉ số đo trên tập này không có giá trị khoa học — đừng đưa\n"
+            "vào báo cáo. Dùng --source supabase khi đã đủ dữ liệu thật."
+        )
+
     os.makedirs(output_dir, exist_ok=True)
 
     for name, rows in splits.items():
         path = os.path.join(output_dir, f"{name}.jsonl")
         with open(path, "w", encoding="utf-8") as f:
             for row in rows:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                # Chỉ ghi phần `messages`; metadata (ticker/created_at/dedup) chỉ
+                # phục vụ việc chia tập và không được lọt vào file huấn luyện.
+                f.write(json.dumps(row["sample"], ensure_ascii=False) + "\n")
         print(f"  {name:<12} {len(rows):>6} mẫu → {path}")
 
     # Tệp để review thủ công — con số "đã review N mẫu" nên đưa vào báo cáo.
@@ -390,14 +577,26 @@ def write_splits(samples: List[Dict], output_dir: str, review_sample: int = 0) -
                 "Với mỗi mẫu, đánh dấu ĐẠT / KHÔNG ĐẠT và ghi lý do.\n\n---\n\n"
             )
             for i, row in enumerate(review_rows, 1):
-                f.write(f"## Mẫu {i}\n\n### Input\n```\n{row['messages'][1]['content']}\n```\n\n")
-                f.write(f"### Output mẫu\n```\n{row['messages'][2]['content']}\n```\n\n")
+                msgs = row["sample"]["messages"]
+                f.write(f"## Mẫu {i} — {row.get('ticker', '?')} ({row.get('origin', '?')})\n\n")
+                f.write(f"### Input\n```\n{msgs[1]['content']}\n```\n\n")
+                f.write(f"### Output mẫu\n```json\n{msgs[2]['content']}\n```\n\n")
                 f.write("**Đánh giá:** [ ] ĐẠT  [ ] KHÔNG ĐẠT\n\n**Ghi chú:** \n\n---\n\n")
         print(f"  review       {len(review_rows):>6} mẫu → {review_path}")
 
     metadata = {
         "total_samples": n,
         "splits": {k: len(v) for k, v in splits.items()},
+        "origin_counts": {
+            name: {
+                "supabase": sum(1 for it in rows if it.get("origin") == "supabase"),
+                "synthetic": sum(1 for it in rows if it.get("origin") == "synthetic"),
+            }
+            for name, rows in splits.items()
+        },
+        "split_strategy": "chronological by created_at (80/10/10), deduplicated by ticker+headlines",
+        "target_format": "json matching research_agent._llm_analysis schema",
+        "prompt_builder": "backend.agents.research_agent.build_analysis_prompt",
         "system_prompt": SYSTEM_PROMPT,
         "generated_at": datetime.now().isoformat(),
         "format": "chat messages (system/user/assistant)",
@@ -413,6 +612,10 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10000, help="Số bản ghi tối đa đọc từ Supabase")
     parser.add_argument("--output", type=str, default=os.path.join(PROJECT_ROOT, "data", "llm_dataset"))
     parser.add_argument("--review-sample", type=int, default=50, help="Số mẫu xuất ra để review tay")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Cho phép ghi đè dataset hiện có kể cả khi bộ mới nhỏ hơn.",
+    )
     args = parser.parse_args()
 
     samples: List[Dict] = []
@@ -437,7 +640,7 @@ def main() -> None:
             "chạy thêm một thời gian để tích luỹ dữ liệu thật, hoặc tăng --count."
         )
 
-    write_splits(samples, args.output, args.review_sample)
+    write_splits(samples, args.output, args.review_sample, force=args.force)
     print(f"\nXong. Bước tiếp theo: mở training/finetune_qlora.py trên Colab hoặc Kaggle.")
 
 

@@ -26,7 +26,7 @@ import json
 import time
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from backend.agents.research_agent import analyze_market, fetch_news
 from backend.database import get_recent_research
@@ -312,12 +312,13 @@ def _build_markdown(ticker: str, record: dict, language: str = "vi") -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/{ticker}")
-def get_research(ticker: str):
+def get_research(ticker: str, authorization: Optional[str] = Header(None)):
     """
     Báo cáo chi tiết cho một mã.
 
     Ưu tiên dùng báo cáo đã lưu (do job nền tạo). Nếu chưa có, chạy phân tích ngay —
-    lượt gọi này chậm hơn vì phải tải RSS và gọi LLM.
+    lượt gọi này chậm hơn vì phải tải RSS và gọi LLM, và CHỈ dành cho người đã đăng
+    nhập (xem ghi chú bên dưới).
     """
     clean_ticker = validate_ticker_format(ticker)
 
@@ -326,6 +327,27 @@ def get_research(ticker: str):
 
     records = get_recent_research(clean_ticker, limit=1)
     if not records:
+        # CHẶN CẠN THREADPOOL.
+        #
+        # `analyze_market` → `_post_chat_completion` ép giãn cách tối thiểu 3 giây
+        # giữa hai lượt gọi bằng `time.sleep()` trên một biến TOÀN CỤC. Endpoint này
+        # khai báo `def` (không phải `async def`) nên mỗi request chiếm một thread
+        # trong threadpool 40 thread của FastAPI suốt thời gian ngủ + timeout 25s.
+        # Một người gửi /research/AAA1, /research/AAA2, ... (hợp lệ về định dạng
+        # nhưng chưa có trong DB) là đủ xếp hàng và giữ thread; vài IP là cạn sạch
+        # threadpool, lúc đó MỌI endpoint đồng bộ khác (login, portfolio, trade)
+        # đều treo.
+        from backend.routers.auth import get_current_user
+
+        try:
+            get_current_user(authorization)
+        except HTTPException:
+            raise HTTPException(
+                404,
+                f"Chưa có báo cáo cho '{clean_ticker}'. Job nền sẽ phân tích mã này, "
+                "hoặc đăng nhập để yêu cầu phân tích ngay.",
+            )
+
         analysis = analyze_market(clean_ticker, price_info)
         analysis["content_vi"] = _build_markdown(clean_ticker, analysis, "vi")
         analysis["content_en"] = _build_markdown(clean_ticker, analysis, "en")

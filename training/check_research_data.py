@@ -108,14 +108,23 @@ def main() -> int:
             note = "  ← không có tin tức, không dùng được"
         print(f"  {src:12s} {n:6d}  ({n / len(rows) * 100:5.1f}%){note}")
 
-    groq_rows = [r for r in rows if (r.get("source") or "") == "groq"]
-    usable = [
-        r for r in groq_rows
-        if (r.get("summary") or "").strip() and _as_list(r.get("headlines"))
-    ]
+    # DÙNG CHUNG hàm với build_llm_dataset.
+    #
+    # LỖI ĐÃ SỬA: hai file định nghĩa "dùng được" khác nhau. `check` chỉ đòi có
+    # summary + headlines, còn `build` còn ép headlines giải mã được thành list
+    # KHÔNG RỖNG sau khi map title, và loại bản ghi thiếu key_factors. Nghĩa là cổng
+    # go/no-go này có thể báo ĐỦ trong khi dataset dựng ra ít hơn hẳn — và không ai
+    # biết vì sao. Cổng mà nói dối thì không còn là cổng.
+    #
+    # Đồng thời bộ lọc `== "groq"` bỏ sót provider `custom`/`local` — chính là chế
+    # độ mà Model 2 sẽ chạy sau khi fine-tune xong.
+    from training.build_llm_dataset import TRUSTED_LLM_SOURCES, is_usable_record
+
+    groq_rows = [r for r in rows if (r.get("source") or "") in TRUSTED_LLM_SOURCES]
+    usable = [r for r in groq_rows if is_usable_record(r)]
 
     print(f"\n{'─' * 74}")
-    print(f"Bản ghi source='groq'                      : {len(groq_rows)}")
+    print(f"Bản ghi từ LLM thật (groq/custom/local)    : {len(groq_rows)}")
     print(f"  ├─ có summary (nhãn)                     : {sum(1 for r in groq_rows if (r.get('summary') or '').strip())}")
     print(f"  ├─ có headlines (input tin tức)          : {sum(1 for r in groq_rows if _as_list(r.get('headlines')))}")
     print(f"  ├─ có key_factors                        : {sum(1 for r in groq_rows if _as_list(r.get('key_factors')))}")

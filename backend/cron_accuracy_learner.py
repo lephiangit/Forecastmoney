@@ -25,6 +25,7 @@ Ba vấn đề được xử lý ở bản này:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -52,6 +53,82 @@ FINE_TUNE_LR = 1e-4
 RECENT_WINDOWS_PER_TICKER = 14
 # Mô hình mới chỉ được chấp nhận nếu loss trên tập giữ lại không tệ hơn quá ngưỡng này.
 MAX_ACCEPTABLE_REGRESSION = 1.05  # tệ hơn tối đa 5%
+
+# Số mẫu tối thiểu để một lượt fine-tune có ý nghĩa.
+MIN_SAMPLES_FOR_FINETUNE = 200
+# Số mẫu giữ lại tối thiểu để cổng kiểm chứng không chỉ là nhiễu.
+MIN_HOLDOUT_SAMPLES = 50
+
+META_PATH = os.path.join(MODELS_DIR, "tft_meta.json")
+LOCK_PATH = os.path.join(MODELS_DIR, ".online_learning.lock")
+
+
+def _today_normalized() -> "pd.Timestamp":
+    """Nửa đêm hôm nay, để so sánh với `forecast_date` đã normalize."""
+    return pd.Timestamp(datetime.now().date())
+
+
+def _mark_online_finetuned() -> None:
+    """
+    Ghi dấu vào tft_meta.json rằng mô hình production đã bị fine-tune online.
+
+    VÌ SAO CẦN: `_collect_recent_samples` lấy dữ liệu `period="1y"`, trong khi tập
+    TEST của `evaluate_tft.py` là 15% cuối lịch sử — với một mã có ~2000 phiên thì
+    15% khoảng 300 phiên, tức hơn một năm. Hai vùng này TRÙNG NHAU gần hết. Chạy
+    cron một lần rồi chạy `evaluate_tft` sẽ cho MAPE thấp giả tạo, trong khi báo cáo
+    vẫn in dòng "Tập kiểm thử chưa từng được dùng trong huấn luyện".
+    """
+    try:
+        meta = {}
+        if os.path.exists(META_PATH):
+            with open(META_PATH, encoding="utf-8") as f:
+                meta = json.load(f)
+        meta["online_finetuned_at"] = datetime.now().isoformat()
+        meta["online_finetune_count"] = int(meta.get("online_finetune_count") or 0) + 1
+        with open(META_PATH, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Cảnh báo: không ghi được dấu online_finetuned_at ({type(e).__name__}: {e}).")
+
+
+class _SingleRunLock:
+    """
+    Khoá liên tiến trình cho online_learning.
+
+    VÌ SAO CẦN: `/admin/trigger-learner` đẩy `online_learning` vào BackgroundTasks
+    mà không có cờ "đang chạy". Gọi endpoint hai lần liên tiếp là hai tác vụ cùng
+    chạy: một bên `shutil.copy2(MODEL_PATH, BACKUP_PATH)` trong khi bên kia đang ghi
+    MODEL_PATH — bản sao lưu trở thành file .keras dở dang, không mở được. Đúng lúc
+    cần khôi phục thì không còn gì để khôi phục.
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        try:
+            self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(self.fd, str(os.getpid()).encode())
+            return True
+        except FileExistsError:
+            # Khoá cũ quá 2 tiếng coi như tiến trình đã chết.
+            try:
+                if datetime.now().timestamp() - os.path.getmtime(self.path) > 7200:
+                    os.remove(self.path)
+                    return self.__enter__()
+            except OSError:
+                pass
+            return False
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+                os.remove(self.path)
+            except OSError:
+                pass
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -99,6 +176,18 @@ def run_evaluations() -> List[str]:
                 # Phiên chưa diễn ra, hoặc là ngày nghỉ — để lại đánh giá lần sau.
                 continue
 
+            # CHỈ CHẤM ĐIỂM PHIÊN ĐÃ ĐÓNG CỬA.
+            #
+            # LỖI ĐÃ SỬA: `get_pending_evaluations` lấy `forecast_date <= today`, tức
+            # gồm cả HÔM NAY, và yfinance có sẵn dòng của phiên đang diễn ra với
+            # `Close` là giá hiện tại. Chạy cron lúc 14:00 → `actual` = giá lúc 14:00,
+            # rồi `update_accuracy_evaluation` ghi `actual_price` khác NULL nên bản
+            # ghi KHÔNG BAO GIỜ được chấm lại bằng giá đóng cửa thật. Toàn bộ số liệu
+            # độ chính xác trên trang Admin — và tập mã dùng để fine-tune — đều dựa
+            # trên nhãn sai.
+            if target_date >= _today_normalized():
+                continue
+
             # Bọc riêng phần này: chỉ một bản ghi hỏng (predicted_price là None, hay
             # chỉ số ngày bị trùng khiến .loc trả về Series thay vì một số) cũng đủ
             # ném ngoại lệ và giết cả vòng lặp — mọi mã đứng sau bị bỏ qua im lặng
@@ -125,6 +214,7 @@ def run_evaluations() -> List[str]:
                 evaluated.add(ticker)
 
     print(f"Đã đánh giá xong {len(evaluated)} mã.")
+
     return sorted(evaluated)
 
 
@@ -140,56 +230,85 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
     `forecaster.py` chuẩn hoá lúc inference, nên mô hình được fine-tune trên đúng
     phân phối dữ liệu mà nó sẽ gặp khi chạy thật.
     """
-    from sklearn.preprocessing import MinMaxScaler
+    from backend.models.feature_engineering import (
+        TARGET_COLUMN,
+        FeatureScaler,
+        build_model_frame,
+    )
 
-    from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
-
-    all_X, all_Y = [], []
+    all_X, all_Y, all_T = [], [], []
+    ticker_order: List[str] = []
 
     for ticker in tickers:
         df = fetch_ohlcv(ticker, period="1y")
         if df is None or df.empty:
             continue
 
-        df = add_technical_indicators(df)
-        available = [c for c in get_feature_columns() if c in df.columns]
-        df_clean = df[["Close"] + available].dropna()
+        try:
+            df_clean, available = build_model_frame(df)
+        except ValueError:
+            continue
 
         if len(df_clean) < look_back + 5:
             continue
-        if df_clean.shape[1] != expected_features:
+        # So SỐ ĐẶC TRƯNG, không phải số cột của khung: khung còn có thêm cột giá
+        # thô để tính nhãn. Bản cũ so `df_clean.shape[1]` nên vô tình cộng thêm 1.
+        if len(available) != expected_features:
             print(
-                f"  {ticker}: số đặc trưng ({df_clean.shape[1]}) không khớp mô hình "
+                f"  {ticker}: số đặc trưng ({len(available)}) không khớp mô hình "
                 f"({expected_features}), bỏ qua."
             )
             continue
 
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled = scaler.fit_transform(df_clean.values)
+        scaler = FeatureScaler()
+        scaled = scaler.fit_transform(df_clean[available].values)
         # Nhãn phải cùng ngữ nghĩa với target hiện tại của TFT: % thay đổi giá (return),
         # KHÔNG PHẢI giá tuyệt đối đã scale như trước. Dùng lại đúng công thức trong
         # backend/train_tft.py::_build_sequences — tính trên giá THÔ (raw_close), không
         # phải giá đã qua scaler. Nếu giữ nhãn cũ, fine-tune sẽ kéo model quay lại dự
         # đoán "giá tuyệt đối" và phá hỏng model đã sửa lỗi lệch scale.
-        raw_close = df_clean["Close"].values
+        raw_close = df_clean[TARGET_COLUMN].values
 
         start = max(0, len(scaled) - look_back - RECENT_WINDOWS_PER_TICKER)
+        n_before = len(all_X)
         for i in range(start, len(scaled) - look_back):
             last_close = raw_close[i + look_back - 1]
             next_close = raw_close[i + look_back]
+            # Giá 0 (dữ liệu lỗi thỉnh thoảng gặp ở mã .VN) cho pct_change = inf mà
+            # numpy KHÔNG ném lỗi. Một nhãn inf làm loss thành NaN, và `NaN >
+            # loss_before * 1.05` là False — nghĩa là cổng kiểm chứng bị VƯỢT QUA và
+            # một mô hình NaN được ghi đè lên production.
+            if last_close <= 0:
+                continue
             pct_change = (next_close - last_close) / last_close * 100.0
+            if not np.isfinite(pct_change):
+                continue
             all_X.append(scaled[i : i + look_back])
             all_Y.append(pct_change)
+            # Ghi mã của từng mẫu để chia holdout PHÂN TẦNG theo mã (xem dưới).
+            all_T.append(len(ticker_order))
+        if len(all_X) > n_before:
+            ticker_order.append(ticker)
 
     if not all_X:
-        return None, None
+        return None, None, None
 
     X = np.array(all_X, dtype=np.float32)
     Y = np.column_stack([all_Y] * 3).astype(np.float32)
-    return X, Y
+    T = np.array(all_T, dtype=np.int32)
+    return X, Y, T
 
 
 def online_learning(tickers: List[str]) -> bool:
+    """Bọc `_online_learning_locked` bằng khoá một-lượt-một-lần."""
+    with _SingleRunLock(LOCK_PATH) as acquired:
+        if not acquired:
+            print("Một lượt online-learning khác đang chạy — bỏ qua lượt này.")
+            return False
+        return _online_learning_locked(tickers)
+
+
+def _online_learning_locked(tickers: List[str]) -> bool:
     """
     Fine-tune nhẹ mô hình trên dữ liệu mới nhất của các mã vừa được đánh giá.
 
@@ -245,20 +364,42 @@ def online_learning(tickers: List[str]) -> bool:
     expected_features = model.input_shape[-1]
     look_back = model.input_shape[1] or LOOK_BACK
 
-    X, Y = _collect_recent_samples(tickers, look_back, expected_features)
-    if X is None or len(X) < 10:
-        print("Không đủ dữ liệu mới để học (cần tối thiểu 10 mẫu).")
+    X, Y, T = _collect_recent_samples(tickers, look_back, expected_features)
+    if X is None or len(X) < MIN_SAMPLES_FOR_FINETUNE:
+        print(
+            f"Không đủ dữ liệu mới để học (có {0 if X is None else len(X)}, "
+            f"cần tối thiểu {MIN_SAMPLES_FOR_FINETUNE} mẫu)."
+        )
         return False
 
     # ── Giữ lại một phần để kiểm chứng ──
-    # Tách theo thứ tự (không trộn) để tập giữ lại luôn là phần MỚI NHẤT —
-    # đúng thứ mà ta muốn mô hình cải thiện.
-    split = max(1, int(len(X) * 0.8))
-    X_train, Y_train = X[:split], Y[:split]
-    X_holdout, Y_holdout = X[split:], Y[split:]
+    #
+    # LỖI ĐÃ SỬA: bản cũ cắt `X[:split]` / `X[split:]` với chú thích "tập giữ lại
+    # luôn là phần MỚI NHẤT". Sai — `_collect_recent_samples` nối các cửa sổ THEO
+    # THỨ TỰ MÃ, không theo thời gian toàn cục. Với tickers = [BTC, ETH, NVDA] thì
+    # holdout = toàn bộ mẫu của NVDA, còn train = BTC + ETH. Cổng kiểm chứng vì thế
+    # đo khả năng khái quát sang một mã CHƯA fine-tune, không đo chất lượng trên dữ
+    # liệu mới. Tệ hơn, với ngưỡng cũ `len(X) >= 10` thì holdout chỉ còn 2 mẫu —
+    # `loss_after <= loss_before * 1.05` trên 2 mẫu là nhiễu thuần tuý, và mô hình
+    # production bị ghi đè dựa trên đó.
+    #
+    # Nay chia PHÂN TẦNG: với MỖI mã, 20% cửa sổ mới nhất vào holdout.
+    train_idx, hold_idx = [], []
+    for t in np.unique(T):
+        idx = np.flatnonzero(T == t)          # đã theo thứ tự thời gian trong từng mã
+        cut = max(1, int(len(idx) * 0.8))
+        train_idx.extend(idx[:cut].tolist())
+        hold_idx.extend(idx[cut:].tolist())
 
-    if len(X_holdout) == 0:
-        X_holdout, Y_holdout = X_train, Y_train
+    if len(hold_idx) < MIN_HOLDOUT_SAMPLES:
+        print(
+            f"TỪ CHỐI fine-tune: chỉ có {len(hold_idx)} mẫu giữ lại, cần tối thiểu "
+            f"{MIN_HOLDOUT_SAMPLES} để cổng kiểm chứng có ý nghĩa thống kê."
+        )
+        return False
+
+    X_train, Y_train = X[train_idx], Y[train_idx]
+    X_holdout, Y_holdout = X[hold_idx], Y[hold_idx]
 
     loss_before = float(model.evaluate(X_holdout, Y_holdout, verbose=0)[0])
     print(f"Loss trước khi học: {loss_before:.6f} (trên {len(X_holdout)} mẫu giữ lại)")
@@ -280,6 +421,16 @@ def online_learning(tickers: List[str]) -> bool:
     print(f"Loss sau khi học:  {loss_after:.6f}")
 
     # ── Cổng kiểm chứng ──
+    # Loss không hữu hạn phải bị TỪ CHỐI tường minh: mọi phép so sánh với NaN đều
+    # trả False, nên nếu chỉ viết `if loss_after > ...` thì một mô hình NaN sẽ đi
+    # thẳng qua cổng và được ghi đè lên production.
+    if not np.isfinite(loss_before) or not np.isfinite(loss_after):
+        print(
+            f"TỪ CHỐI cập nhật: loss không hữu hạn (trước={loss_before}, sau={loss_after}). "
+            "Giữ nguyên mô hình đang chạy."
+        )
+        return False
+
     if loss_after > loss_before * MAX_ACCEPTABLE_REGRESSION:
         print(
             f"TỪ CHỐI cập nhật: mô hình sau fine-tune tệ hơn {loss_after / loss_before - 1:.1%}, "
@@ -294,7 +445,19 @@ def online_learning(tickers: List[str]) -> bool:
     except Exception as e:
         print(f"Cảnh báo: không sao lưu được mô hình cũ ({e}). Vẫn tiếp tục.")
 
-    model.save(MODEL_PATH)
+    # Ghi NGUYÊN TỬ: ghi ra file tạm rồi os.replace(). Bản cũ `model.save()` thẳng
+    # vào MODEL_PATH, nên một request dự báo đọc trúng lúc đang ghi sẽ nạp phải file
+    # dở dang; hai lượt fine-tune song song (timer + /admin/trigger-learner) còn có
+    # thể làm hỏng cả bản sao lưu.
+    tmp_path = MODEL_PATH + ".tmp.keras"
+    model.save(tmp_path)
+    os.replace(tmp_path, MODEL_PATH)
+
+    # ĐÁNH DẤU: mô hình production đã bị fine-tune trên dữ liệu 1 năm gần nhất, vốn
+    # TRÙNG với vùng tập test của evaluate_tft.py. Mọi số liệu "ngoài mẫu" đo sau
+    # thời điểm này đều không còn là ngoài mẫu. `evaluate_tft.py` đọc cờ này và từ
+    # chối chạy, để số liệu sai không lọt vào báo cáo.
+    _mark_online_finetuned()
 
     # Nạp lại vào tiến trình đang phục vụ — nếu thiếu bước này, toàn bộ việc học
     # ở trên sẽ không có tác dụng gì cho tới lần khởi động lại tiếp theo.

@@ -25,6 +25,7 @@ Bốn thay đổi đáng kể:
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import threading
@@ -96,7 +97,20 @@ def fetch_ohlcv(
             df.index = df.index.tz_localize(None)
         df.index.name = "Date"
 
-        df = df.interpolate("linear").ffill().bfill()
+        # LỖI ĐÃ SỬA — LOOKAHEAD BIAS QUA NỘI SUY.
+        #
+        # `interpolate("linear")` điền một ô Close thiếu bằng trung bình có trọng số
+        # của giá TRƯỚC **VÀ GIÁ SAU**; `.bfill()` điền các NaN ở đầu chuỗi bằng giá
+        # trị tương lai gần nhất. Các giá trị đó đi thẳng vào add_technical_indicators
+        # rồi vào _generate_signals của backtest — nghĩa là tín hiệu MUA/BÁN ở ngày T
+        # được tính một phần từ giá ngày T+1. Với mã .VN và mã ít thanh khoản (nơi
+        # yfinance hay có phiên trống) kết quả backtest đẹp hơn thực tế mà không có
+        # dấu hiệu nào. Đây là lỗi nhỏ nằm đúng vào phần "chứng minh chất lượng mô
+        # hình" của đồ án.
+        #
+        # `ffill()` chỉ nhìn về quá khứ nên an toàn; phần NaN còn lại ở đầu chuỗi bị
+        # dropna loại bỏ.
+        df = df.ffill()
         df = df.dropna(subset=["Close"])
         if df.empty:
             return None
@@ -335,17 +349,38 @@ def _append_synthetic_bar(df: pd.DataFrame, predicted_close: float, next_date) -
     """
     Thêm một phiên giả lập ứng với giá vừa dự báo, để bước sau tính lại được chỉ báo.
 
-    Với một phiên chưa xảy ra ta không biết Open/High/Low, nên dùng chính giá dự báo
-    cho cả bốn giá và lấy khối lượng trung bình 20 phiên gần nhất. Đây là giả định
-    đơn giản hoá cần được nêu rõ trong báo cáo: nó khiến các chỉ báo dựa trên biên độ
-    (ATR, Bollinger) bị "phẳng" dần ở các bước xa.
+    Với một phiên chưa xảy ra ta không biết Open/High/Low.
+
+    LỖI ĐÃ SỬA: bản cũ đặt Open = High = Low = Close = giá dự báo. Khi đó True Range
+    của phiên giả bằng đúng |Δgiá|, tức biên độ trong phiên biến mất hoàn toàn. Sau
+    khoảng 14 bước, ATR chỉ còn phản ánh biến động của chính đường p50 — vốn rất
+    mượt — nên `ATR_Pct` tụt về gần 0, `BB_Width` co lại, `BB_Position` bão hoà, và
+    `Volatility_10d/30d` cùng giảm. Mạng được huấn luyện trên nến THẬT nhận vào một
+    "thị trường phẳng bất thường" và trả về return gần 0: dự báo dài hạn thoái hoá
+    thành đường gần nằm ngang, mà không có lỗi nào được ném ra.
+
+    Nay biên độ của phiên giả được ước lượng từ ATR% của các phiên THẬT gần nhất,
+    nên cấu trúc biến động không bị bóp về 0. Đây vẫn là giả định đơn giản hoá và
+    phải nêu rõ trong báo cáo, nhưng nó không còn tự tạo ra một chế độ thị trường
+    chưa từng tồn tại trong dữ liệu huấn luyện.
     """
     recent_volume = float(df["Volume"].tail(20).mean()) if "Volume" in df.columns else 0.0
+
+    # Biên độ trong phiên, tính bằng % giá, lấy trung bình 14 phiên gần nhất.
+    try:
+        tail = df.tail(15)
+        rng_pct = ((tail["High"] - tail["Low"]) / tail["Close"].replace(0, float("nan"))).mean()
+        half_range = float(predicted_close) * float(rng_pct) / 2.0
+        if not (half_range > 0) or half_range != half_range:  # 0, âm hoặc NaN
+            half_range = 0.0
+    except Exception:
+        half_range = 0.0
+
     new_row = pd.DataFrame(
         {
             "Open": [predicted_close],
-            "High": [predicted_close],
-            "Low": [predicted_close],
+            "High": [predicted_close + half_range],
+            "Low": [max(predicted_close - half_range, predicted_close * 0.01)],
             "Close": [predicted_close],
             "Volume": [recent_volume],
         },
@@ -363,9 +398,11 @@ def run_tft_forecast(
     Trả về (median p50, lower p10, upper p90) dưới dạng pd.Series, hoặc (None, None, None)
     nếu thiếu dữ liệu hoặc chưa có mô hình.
     """
-    from sklearn.preprocessing import MinMaxScaler
-
-    from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+    from backend.models.feature_engineering import (
+        TARGET_COLUMN,
+        FeatureScaler,
+        build_model_frame,
+    )
 
     if df is None:
         df = fetch_ohlcv(ticker, period="2y")
@@ -381,18 +418,37 @@ def run_tft_forecast(
     try:
         # Cột đặc trưng được chốt MỘT LẦN từ dữ liệu lịch sử, để số chiều đầu vào
         # không đổi giữa các bước lặp (mô hình có input shape cố định).
-        base_features = add_technical_indicators(df)
-        feature_cols = [c for c in get_feature_columns() if c in base_features.columns]
-        all_cols = ["Close"] + feature_cols
+        # `build_model_frame` là hàm dùng chung với train_tft.py/evaluate_tft.py:
+        # ba nơi phải dựng đầu vào theo đúng một quy ước, nếu không mô hình sẽ nhận
+        # ma trận khác với ma trận nó đã học mà không có lỗi nào được ném ra.
+        # Làm sạch giống hệt lúc huấn luyện/đánh giá. Bản cũ bỏ bước này, nên một
+        # dòng rác từ yfinance (kiểu AAVE-USD: 0,52 USD trước khi dữ liệu thật bắt
+        # đầu ở 53 USD) tạo ra `Return_1d` hàng nghìn phần trăm, kéo giãn mean/std
+        # của StandardScaler và nén mọi phiên bình thường về gần 0.
+        from backend.models.feature_engineering import clean_price_history
 
-        history_clean = base_features[all_cols].dropna()
+        df = clean_price_history(df)
+        history_clean, feature_cols = build_model_frame(df)
         if len(history_clean) < LOOK_BACK:
             return None, None, None
 
+        # Model và tập đặc trưng phải khớp số chiều. Không có chốt này, lỗi shape bị
+        # `except Exception` ở cuối hàm nuốt mất và API chỉ trả "không có dự báo" —
+        # người dùng lẫn người làm đồ án đều không biết nguyên nhân thật là
+        # checkpoint được train với tập đặc trưng khác.
+        expected = getattr(model, "input_shape", (None, None, None))[-1]
+        if expected is not None and expected != len(feature_cols):
+            raise ValueError(
+                f"Checkpoint nhận {expected} đặc trưng nhưng tập đặc trưng hiện tại có "
+                f"{len(feature_cols)}. Cần train lại: python -m backend.train_tft --fresh"
+            )
+
         # Scaler khớp MỘT LẦN trên dữ liệu lịch sử và giữ nguyên suốt quá trình dự báo.
         # Khớp lại ở từng bước sẽ làm thang đo trôi và kết quả mất tính so sánh.
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaler.fit(history_clean.values)
+        # Chỉ ma trận đặc trưng đi qua scaler; cột giá thô chỉ dùng làm mốc quy đổi
+        # % return -> giá.
+        scaler = FeatureScaler()
+        scaler.fit(history_clean[feature_cols].values)
 
         working_df = df.copy()
         forecast_dates = build_forecast_dates(ticker, df.index[-1], days)
@@ -416,15 +472,17 @@ def run_tft_forecast(
 
         with track_inference():
             for step in range(days):
-                featured = add_technical_indicators(working_df)
-                window = featured[all_cols].dropna().tail(LOOK_BACK)
+                step_frame, _ = build_model_frame(working_df)
+                window = step_frame.tail(LOOK_BACK)
                 if len(window) < LOOK_BACK:
                     break
 
                 # Giá cuối cùng đã biết trong cửa sổ — mốc để quy đổi % return -> giá.
-                last_close = float(window["Close"].iloc[-1])
+                last_close = float(window[TARGET_COLUMN].iloc[-1])
 
-                scaled = scaler.transform(window.values)
+                # Chốt thứ tự cột theo `feature_cols` đã lấy từ lịch sử, không theo
+                # thứ tự mà bước lặp này tình cờ sinh ra.
+                scaled = scaler.transform(window[feature_cols].values)
                 model_input = scaled.reshape(1, LOOK_BACK, scaled.shape[1])
 
                 pred = model.predict(model_input, verbose=0)
@@ -436,9 +494,24 @@ def run_tft_forecast(
                 # hàm đơn điệu tăng theo return.)
                 r10, r50, r90 = sorted((r10, r50, r90))
 
-                price_q10 = return_to_price(r10, last_close)
+                # DẢI TIN CẬY PHẢI NỞ RA THEO HORIZON.
+                #
+                # LỖI ĐÃ SỬA: bản cũ tính p10/p90 quanh `last_close` của bước liền
+                # trước, mà `last_close` chính là p50 vừa dự báo. Kết quả là độ rộng
+                # TƯƠNG ĐỐI của dải ở T+7 bằng đúng ở T+1 — toàn bộ sai số tích luỹ
+                # của 6 bước tự hồi quy trước đó không xuất hiện ở đâu cả. Người dùng
+                # nhìn thấy khoảng dự báo 7 ngày hẹp y như 1 ngày.
+                #
+                # Mô hình chỉ được huấn luyện cho MỘT bước, nên không có phân vị đúng
+                # cho nhiều bước. Xấp xỉ tiêu chuẩn khi giả định các bước độc lập là
+                # phương sai cộng dồn tuyến tính, tức độ lệch chuẩn nhân √k.
+                #
+                # ĐÂY LÀ XẤP XỈ, CHƯA ĐƯỢC HIỆU CHỈNH THỰC NGHIỆM: evaluate_tft.py chỉ
+                # đo coverage ở horizon = 1. Phải nêu rõ điều này trong báo cáo.
+                spread = math.sqrt(step + 1)
+                price_q10 = return_to_price(r50 + (r10 - r50) * spread, last_close)
                 price_q50 = return_to_price(r50, last_close)
-                price_q90 = return_to_price(r90, last_close)
+                price_q90 = return_to_price(r50 + (r90 - r50) * spread, last_close)
 
                 preds_price_q10.append(price_q10)
                 preds_price_q50.append(price_q50)
@@ -494,9 +567,11 @@ def compute_feature_importance(
     Trả về danh sách [{feature, importance, raw_delta}] sắp giảm dần theo
     importance (đã chuẩn hoá về tổng = 1), hoặc None nếu thiếu dữ liệu/model.
     """
-    from sklearn.preprocessing import MinMaxScaler
-
-    from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+    from backend.models.feature_engineering import (
+        TARGET_COLUMN,
+        FeatureScaler,
+        build_model_frame,
+    )
 
     if df is None:
         df = fetch_ohlcv(ticker, period="2y")
@@ -508,19 +583,15 @@ def compute_feature_importance(
         return None
 
     try:
-        base_features = add_technical_indicators(df)
-        feature_cols = [c for c in get_feature_columns() if c in base_features.columns]
-        all_cols = ["Close"] + feature_cols
-
-        history_clean = base_features[all_cols].dropna()
+        history_clean, feature_cols = build_model_frame(df)
         if len(history_clean) < LOOK_BACK:
             return None
 
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaler.fit(history_clean.values)
+        scaler = FeatureScaler()
+        scaler.fit(history_clean[feature_cols].values)
 
         window = history_clean.tail(LOOK_BACK)
-        scaled = scaler.transform(window.values)
+        scaled = scaler.transform(window[feature_cols].values)
         n_features = scaled.shape[1]
 
         rng = np.random.default_rng(42)
@@ -529,7 +600,11 @@ def compute_feature_importance(
         # được xáo trộn n_repeats lần — gộp hết vào MỘT batch duy nhất.
         batch_rows = [scaled]
         row_feature: List[Optional[str]] = [None]
-        for i, col in enumerate(all_cols):
+        # Duyệt theo `feature_cols`: cột giá thô không còn là đặc trưng của mạng
+        # nên không có gì để xáo trộn. Bản cũ duyệt `all_cols` và vì thế báo cáo
+        # "độ quan trọng của Close" cho một cột mà mạng thật ra vẫn nhận vào —
+        # nay cột đó đã bị loại khỏi đầu vào.
+        for i, col in enumerate(feature_cols):
             for _ in range(n_repeats):
                 permuted = scaled.copy()
                 order = rng.permutation(LOOK_BACK)
@@ -544,7 +619,7 @@ def compute_feature_importance(
 
         base_q50 = float(preds[0, 1])
 
-        diffs_by_feature: Dict[str, List[float]] = {c: [] for c in all_cols}
+        diffs_by_feature: Dict[str, List[float]] = {c: [] for c in feature_cols}
         for row_idx in range(1, len(row_feature)):
             col = row_feature[row_idx]
             diffs_by_feature[col].append(abs(float(preds[row_idx, 1]) - base_q50))
@@ -616,15 +691,23 @@ def run_sentiment_fusion_forecast(
     adjusted = engine.predict(tft_m.values, signals, len(tft_m))
 
     # Giữ nguyên độ rộng dải tin cậy của TFT, chỉ dịch chuyển tâm theo sentiment.
+    # Dải quantile của TFT nói chung KHÔNG đối xứng quanh p50 (p90-p50 khác
+    # p50-p10). Bản cũ lấy nửa tổng độ rộng rồi cộng/trừ đều hai bên, làm méo hình
+    # dạng phân phối; nó cũng bỏ qua sàn dương nên `sf_lower` có thể âm với mã giá
+    # rất nhỏ và được trả thẳng ra API.
     if tft_l is not None and tft_u is not None:
-        band_half = (tft_u.values - tft_l.values) / 2
+        lower_gap = tft_m.values - tft_l.values
+        upper_gap = tft_u.values - tft_m.values
     else:
-        band_half = adjusted * 0.03
+        lower_gap = upper_gap = adjusted * 0.03
+
+    sf_lower = np.maximum(adjusted - lower_gap, adjusted * 0.01)
+    sf_upper = adjusted + upper_gap
 
     return (
         pd.Series(adjusted, index=tft_m.index, name="sf_median"),
-        pd.Series(adjusted - band_half, index=tft_m.index, name="sf_lower"),
-        pd.Series(adjusted + band_half, index=tft_m.index, name="sf_upper"),
+        pd.Series(sf_lower, index=tft_m.index, name="sf_lower"),
+        pd.Series(sf_upper, index=tft_m.index, name="sf_upper"),
     )
 
 

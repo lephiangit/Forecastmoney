@@ -130,8 +130,18 @@ def main() -> None:
             print("Chạy `python -m training.build_llm_dataset` trước.")
             sys.exit(1)
 
+    # Nạp luôn tập TEST nếu có. Bản cũ chỉ nạp train + validation, nên `test.jsonl`
+    # không bao giờ được chấm bằng số — luận văn vì thế không có metric định lượng
+    # nào trên tập test, chỉ có 8 mẫu in ra đọc tay.
+    test_path = os.path.join(args.dataset, "test.jsonl")
+    if os.path.exists(test_path):
+        data_files["test"] = test_path
+
     dataset = load_dataset("json", data_files=data_files)
-    print(f"\nTrain: {len(dataset['train'])} mẫu | Validation: {len(dataset['validation'])} mẫu")
+    print(
+        f"\nTrain: {len(dataset['train'])} mẫu | Validation: {len(dataset['validation'])} mẫu"
+        + (f" | Test: {len(dataset['test'])} mẫu" if "test" in dataset else "")
+    )
 
     # ── Tokenizer ──
     tokenizer = AutoTokenizer.from_pretrained(config["model_id"], trust_remote_code=True)
@@ -218,18 +228,106 @@ def main() -> None:
     except Exception:
         pass
 
+    # ══════════════════════════════════════════════════════════════════════
+    #  HAI LỖI ĐÃ SỬA Ở ĐÂY — cả hai đều IM LẶNG, loss vẫn giảm đều
+    # ══════════════════════════════════════════════════════════════════════
+    #
+    # (1) `--max-seq-length` ĐƯỢC KHAI BÁO NHƯNG KHÔNG BAO GIỜ TRUYỀN VÀO.
+    #     `args.max_seq_length` chỉ xuất hiện ở phần parse_args, không có mặt trong
+    #     TrainingArguments lẫn SFTTrainer. TRL vì thế rơi về mặc định 1024 token.
+    #     Với dữ liệu thật, prompt ghép tới 20 tiêu đề × 160 ký tự → riêng phần user
+    #     đã vượt 1000 token với tokenizer Qwen. Chuỗi bị cắt ở 1024 nên phần
+    #     `assistant` (chính là NHÃN) bị cắt cụt hoặc biến mất hoàn toàn — model học
+    #     trên mẫu không có nhãn.
+    #
+    # (2) LOSS TÍNH CẢ TRÊN PROMPT.
+    #     Với dataset dạng `messages`, TRL mặc định huấn luyện language-modeling trên
+    #     TOÀN CHUỖI. Prompt ở đây gần như cố định (cùng một khung "Bạn là chuyên gia
+    #     phân tích tài chính...", cùng khối === TIN TỨC ===), nên phần lớn gradient
+    #     đi vào việc học thuộc prompt. `final_train_loss` trong training_log.json vì
+    #     thế chủ yếu phản ánh độ dễ đoán của prompt, không phải chất lượng nhận định
+    #     — và đó là con số sẽ được đưa vào báo cáo.
+    #
+    # Tên tham số của TRL đổi giữa các phiên bản (`max_seq_length` → `max_length`,
+    # `completion_only_loss` → `assistant_only_loss`), nên dò theo chữ ký thật thay
+    # vì đoán.
+    sft_args = training_args
+    try:
+        import inspect
+
+        from trl import SFTConfig
+
+        supported = set(inspect.signature(SFTConfig.__init__).parameters)
+        extra = {}
+        for name in ("max_length", "max_seq_length"):
+            if name in supported:
+                extra[name] = args.max_seq_length
+                break
+        for name in ("assistant_only_loss", "completion_only_loss"):
+            if name in supported:
+                extra[name] = True
+                break
+
+        if extra:
+            base = {k: v for k, v in training_args.to_dict().items() if k in supported}
+            base.update(extra)
+            sft_args = SFTConfig(**base)
+            print(f"SFTConfig: {', '.join(f'{k}={v}' for k, v in extra.items())}")
+        else:
+            print("CẢNH BÁO: SFTConfig của phiên bản trl này không nhận max_length/"
+                  "assistant_only_loss — kiểm tra lại thủ công trước khi tin vào loss.")
+    except Exception as e:
+        print(f"CẢNH BÁO: không cấu hình được SFTConfig ({type(e).__name__}: {e}). "
+              "Độ dài chuỗi sẽ rơi về mặc định của trl và có thể cắt cụt nhãn.")
+
     trainer = SFTTrainer(
         model=model,
-        args=training_args,
+        args=sft_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
         processing_class=tokenizer,
     )
 
+    # ── Kiểm tra độ dài token TRƯỚC khi train ──
+    # Nếu có mẫu vượt max_seq_length thì nhãn đang bị cắt — phải biết ngay, không
+    # phải sau 3 giờ GPU.
+    try:
+        lengths = [
+            len(tokenizer.apply_chat_template(r["messages"], tokenize=True))
+            for r in dataset["train"].select(range(min(200, len(dataset["train"]))))
+        ]
+        over = sum(1 for n in lengths if n > args.max_seq_length)
+        print(
+            f"Độ dài token (mẫu {len(lengths)} bản ghi): trung vị {sorted(lengths)[len(lengths) // 2]}, "
+            f"lớn nhất {max(lengths)}, vượt ngưỡng {args.max_seq_length}: {over}"
+        )
+        if over:
+            print(
+                f"  CẢNH BÁO: {over} mẫu vượt ngưỡng và sẽ bị CẮT CỤT — phần nhãn có thể "
+                f"mất. Tăng --max-seq-length hoặc giảm số tiêu đề trong prompt."
+            )
+    except Exception as e:
+        print(f"  (không đo được độ dài token: {type(e).__name__})")
+
     print("\nBắt đầu huấn luyện...\n")
     started = datetime.now()
     result = trainer.train()
     duration = (datetime.now() - started).total_seconds()
+
+    # ── Đánh giá định lượng trên tập TEST ──
+    test_metrics = {}
+    if "test" in dataset:
+        try:
+            print("\nĐánh giá trên tập test (chưa từng dùng để train hay chọn epoch)...")
+            test_metrics = trainer.evaluate(eval_dataset=dataset["test"], metric_key_prefix="test")
+            loss = test_metrics.get("test_loss")
+            if loss is not None:
+                import math as _math
+
+                test_metrics["test_perplexity"] = round(_math.exp(min(loss, 20)), 3)
+            print(f"  test_loss = {loss}")
+        except Exception as e:
+            print(f"  Không đánh giá được trên tập test: {type(e).__name__}: {e}")
 
     # ── Lưu adapter ──
     trainer.save_model(args.output)
@@ -248,6 +346,8 @@ def main() -> None:
         "effective_batch_size": args.batch_size * args.grad_accum,
         "train_samples": len(dataset["train"]),
         "final_train_loss": result.training_loss,
+        "test_metrics": test_metrics,
+        "max_seq_length": args.max_seq_length,
         "duration_seconds": round(duration),
         "duration_human": f"{duration / 60:.1f} phút",
         "log_history": trainer.state.log_history,

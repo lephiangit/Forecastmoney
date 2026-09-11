@@ -176,7 +176,11 @@ def build_dataset(
              target[k] = clip((giá_thật[k] - giá_TFT[k]) / giá_TFT[k], -0.05, 0.05)
       3. Sinh sentiment bán tổng hợp dựa trên hướng biến động thật (xem synth_sentiment).
     """
-    from backend.models.feature_engineering import add_technical_indicators
+    from backend.models.feature_engineering import (
+        add_technical_indicators,
+        build_model_frame,
+        clean_price_history,
+    )
     from backend.models.forecaster import run_tft_forecast
 
     rng = np.random.default_rng(seed)
@@ -196,6 +200,11 @@ def build_dataset(
         if df.empty or "Close" not in df.columns:
             continue
 
+        # Làm sạch GIỐNG HỆT train_tft.py trước khi tính ranh giới tập.
+        df = clean_price_history(df)
+        if df.empty:
+            continue
+
         # Anchor chỉ được lấy trong vùng TFT chưa từng thấy khi huấn luyện — dùng
         # đúng hàm chia tập của train_tft.py để không tự tính lệch.
         #
@@ -210,11 +219,39 @@ def build_dataset(
         # Nay: (1) hai anchor liền kề của cùng một mã cách nhau tối thiểu `days`
         # phiên nên cửa sổ tương lai không chồng nhau; (2) chia train/val THEO MÃ
         # (xem dưới) chứ không trộn ngẫu nhiên.
-        _, _, _, test_start = split_indices(len(df))
+        # LỖI ĐÃ SỬA — ranh giới tập tính trên DataFrame THÔ.
+        #
+        # `train_tft.py` và `evaluate_tft.py` gọi `split_indices()` trên khung ĐÃ
+        # LÀM SẠCH và đã `dropna()` (bỏ ~49 dòng đầu vì cửa sổ MA50), còn ở đây gọi
+        # trên `len(df)` thô. Hai ranh giới vì thế không trùng nhau: quy về toạ độ
+        # thô, ranh giới test thật là 0.85N + 0.15*49 + 120, còn ở đây tính ra
+        # 0.85N + 120 — sớm hơn khoảng 7 phiên. Hiện tại độ lệch đó mới ăn vào
+        # khoảng trống 60 phiên nên chưa chạm vùng validation, nhưng chỉ cần thêm
+        # một mã kiểu UNI-USD (nơi clean_price_history chỉ giữ đoạn cuối) là độ lệch
+        # thành hàng trăm phiên và anchor rơi thẳng vào vùng TRAIN của TFT.
+        frame_for_split, _ = build_model_frame(df)
+        if len(frame_for_split) < LOOK_BACK * 4:
+            continue
+        _, _, _, test_start_clean = split_indices(len(frame_for_split))
+        # Quy vị trí trong khung đã làm sạch về vị trí trong df thô.
+        try:
+            test_start = df.index.get_loc(frame_for_split.index[test_start_clean])
+        except (KeyError, IndexError):
+            continue
+
         usable_end = len(df) - days - 1
         usable_start = max(test_start, LOOK_BACK)
         if usable_start >= usable_end:
             continue
+
+        # CẢNH BÁO PHƯƠNG PHÁP (chưa sửa được bằng code, phải nêu trong báo cáo):
+        # anchor nằm trong vùng TEST của TFT, và nhãn `target` lấy từ giá tương lai
+        # của chính vùng đó. Nghĩa là mọi số liệu báo cáo cho pipeline kết hợp
+        # "TFT + SentimentFusion" đo trên tập test đều đo trên dữ liệu mà tầng fusion
+        # đã học thuộc. Thêm nữa `synth_sentiment()` sinh sentiment TỪ hướng giá thật
+        # của tương lai, nên tầng fusion được học kèm đáp án. Cách sửa đúng là cắt
+        # vùng test làm hai nửa: nửa đầu huấn luyện fusion, nửa sau giữ lại để đánh
+        # giá end-to-end — xem kế hoạch nâng cấp.
 
         candidate_positions = np.arange(usable_start, usable_end, days)
         if len(candidate_positions) == 0:

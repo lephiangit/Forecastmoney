@@ -49,6 +49,10 @@ CHECKPOINT_FILE = PROJECT_ROOT / "training" / ".backfill_research_done.txt"
 SKIP_FILES = {"merged_data", "bitcoin_data", "bitcoin_data_global"}
 SLEEP_SECONDS = 4.0  # khoảng nghỉ giữa các lượt gọi Groq, giống cadence của cron_researcher.py
 
+# Số mã liên tiếp không có LLM trả lời thì dừng hẳn. Ngăn kịch bản "hết quota ở mã
+# thứ 30 rồi vẫn chạy nốt 270 mã, ghi 270 dòng keyword vào DB".
+MAX_CONSECUTIVE_FAILURES = 5
+
 
 def _default_tickers() -> List[str]:
     if not DATA_DIR.exists():
@@ -99,23 +103,52 @@ def main() -> None:
 
     print(f"Sẽ phân tích {len(remaining)} mã còn lại (trong tổng {len(tickers)} mã)...\n")
 
-    from backend.agents.research_agent import analyze_market
+    from backend.agents.research_agent import analyze_market, has_relevant_feed
+    from training.build_llm_dataset import TRUSTED_LLM_SOURCES
     from backend.models.forecaster import get_live_quote
 
     succeeded = failed = 0
+    consecutive_failures = 0
     for i, ticker in enumerate(remaining, start=1):
         try:
             live = get_live_quote(ticker)
             price_info = f"Giá: {live['price']:,.4f}" if live else ""
 
             result = analyze_market(ticker, price_info)  # persist=True mặc định
+            src = result.get("source")
             print(
                 f"  [{i}/{len(remaining)}] {ticker}: {result.get('sentiment')} "
-                f"(tin cậy {result.get('confidence')}, nguồn {result.get('source')}, "
+                f"(tin cậy {result.get('confidence')}, nguồn {src}, "
                 f"{result.get('news_count')} tin)"
             )
-            _mark_done(ticker)
-            succeeded += 1
+
+            # LỖI ĐÃ SỬA — ĐÁNH DẤU XONG CHO CẢ NHỮNG LƯỢT THẤT BẠI.
+            #
+            # `analyze_market()` KHÔNG BAO GIỜ raise khi Groq lỗi: `_post_chat_completion`
+            # trả None ở mọi nhánh lỗi (kể cả 429 sau khi hết retry), rồi hàm rơi
+            # xuống `_keyword_sentiment`. Nên khối `except` bên dưới và điều kiện
+            # `if "429" in msg` KHÔNG BAO GIỜ chạy.
+            #
+            # Hệ quả thật: hết hạn mức Groq ở mã thứ 30 → 270 mã còn lại vẫn in
+            # "thành công", vẫn được `_mark_done`, và vẫn ghi 270 dòng
+            # source='keyword' vào research_reports. Chạy lại lệnh y hệt sẽ BỎ QUA
+            # đúng 270 mã đó vĩnh viễn. File `.backfill_research_done.txt` (29/08,
+            # 104 mã) cho thấy điều này ĐÃ xảy ra một lần.
+            if src in TRUSTED_LLM_SOURCES:
+                _mark_done(ticker)
+                succeeded += 1
+                consecutive_failures = 0
+            else:
+                failed += 1
+                consecutive_failures += 1
+                print(f"      └─ KHÔNG đánh dấu xong (nguồn '{src}' không phải LLM thật).")
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    print(
+                        f"\n{consecutive_failures} mã liên tiếp không có LLM trả lời — "
+                        "nhiều khả năng đã chạm hạn mức hoặc mất khoá API. Dừng lại.\n"
+                        "Sửa xong thì chạy lại y nguyên lệnh này; các mã đã xong sẽ được bỏ qua."
+                    )
+                    break
 
         except Exception as e:
             msg = str(e)
@@ -128,9 +161,9 @@ def main() -> None:
 
         time.sleep(SLEEP_SECONDS)
 
-    print(f"\nHoàn tất: {succeeded} thành công, {failed} lỗi.")
-    print("Bước tiếp theo: chạy lại `python -m training.build_llm_dataset --source both --count 3000`")
-    print("để dataset lần này chứa dữ liệu THẬT thay vì 100% tổng hợp.")
+    print(f"\nHoàn tất: {succeeded} có LLM trả lời, {failed} không dùng được.")
+    print("Kiểm chứng trước khi dựng dataset: python -m training.check_research_data")
+    print("Sau khi check báo đủ: python -m training.build_llm_dataset --source supabase")
 
 
 if __name__ == "__main__":

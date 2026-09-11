@@ -349,6 +349,22 @@ def google_auth(req: GoogleAuthRequest):
         if not user_response or not user_response.user:
             raise HTTPException(401, "Token Google không hợp lệ.")
 
+        # CHỐT CHẶN: token phải THẬT SỰ đến từ Google.
+        #
+        # Bản cũ chỉ kiểm tra "token Supabase này hợp lệ" rồi tin trường `email`
+        # của nó. Nhưng anon key của Supabase là công khai, nên nếu project còn bật
+        # email signup, kẻ tấn công gọi thẳng Supabase Auth /signup với email của
+        # NẠN NHÂN, nhận về một access_token hợp lệ, rồi POST /auth/google. Backend
+        # tra ra tài khoản Google thật của nạn nhân (password_hash ==
+        # "GOOGLE_OAUTH_USER" nên chốt chặn 409 bên dưới không kích hoạt) và cấp
+        # token nội bộ cho kẻ tấn công.
+        _app_meta = getattr(user_response.user, "app_metadata", None) or {}
+        _providers = set(_app_meta.get("providers") or [])
+        if _app_meta.get("provider"):
+            _providers.add(_app_meta["provider"])
+        if "google" not in _providers:
+            raise HTTPException(401, "Token này không phải do Google cấp.")
+
         email = (user_response.user.email or f"google_user_{user_response.user.id[:8]}").lower()
 
         existing_user = get_user_by_username(email)
@@ -496,9 +512,24 @@ def reset_password(req: ResetPasswordRequest):
         ):
             raise HTTPException(401, "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
 
+        # Email phải đã được xác minh. Nếu không có chốt này, một tài khoản Supabase
+        # vừa tạo bằng email của nạn nhân (qua anon key công khai) là đủ để ghi đè
+        # mật khẩu tài khoản nạn nhân trong bảng `users`.
+        if not getattr(user_response.user, "email_confirmed_at", None):
+            raise HTTPException(401, "Email chưa được xác minh.")
+
         user = get_user_by_username(email)
         if not user:
             raise HTTPException(404, "Không tìm thấy tài khoản.")
+
+        # Tài khoản tạo bằng Google không có mật khẩu để "đặt lại". Cho phép đặt
+        # mật khẩu cho nó chính là con đường chiếm tài khoản: kẻ tấn công đặt mật
+        # khẩu rồi đăng nhập thường.
+        if user.get("password_hash") == "GOOGLE_OAUTH_USER":
+            raise HTTPException(
+                409,
+                "Tài khoản này đăng nhập bằng Google nên không có mật khẩu để đặt lại.",
+            )
 
         supabase.table("users").update({"password_hash": hash_password(req.new_password)}).eq(
             "id", user["id"]

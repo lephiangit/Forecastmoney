@@ -51,7 +51,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
@@ -69,7 +68,11 @@ PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+from backend.models.feature_engineering import (
+    TARGET_COLUMN,
+    FeatureScaler,
+    build_model_frame,
+)
 from backend.train_tft import (
     LOOK_BACK,
     SKIP_FILES,
@@ -197,10 +200,13 @@ def evaluate_ticker(model, ticker: str, horizon: int = 1) -> Optional[Dict]:
     if df.empty:
         return None
 
-    df = add_technical_indicators(df)
-    available = [c for c in get_feature_columns() if c in df.columns]
-    all_cols = ["Close"] + available
-    df_clean = df[all_cols].dropna()
+    # Dùng CHUNG hàm dựng khung với train_tft.py. Nếu đánh giá tự dựng lại khung
+    # theo quy ước riêng, chỉ cần lệch một cột là số liệu báo cáo đo trên một ma
+    # trận đầu vào khác với ma trận mô hình đã học.
+    try:
+        df_clean, available = build_model_frame(df)
+    except ValueError:
+        return None
 
     # Dùng CHÍNH hàm chia tập của train_tft.py, không tự tính lại.
     #
@@ -221,11 +227,14 @@ def evaluate_ticker(model, ticker: str, horizon: int = 1) -> Optional[Dict]:
         return None
 
     # Scaler khớp trên tập train — giống hệt điều kiện lúc huấn luyện.
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaler.fit(train_slice.values)
-    scaled_test = scaler.transform(test_slice.values)
+    # Cùng loại scaler và cùng cách khớp như lúc huấn luyện: StandardScaler +
+    # cắt +/-5 sigma, chỉ khớp trên tập train, và CHỈ trên ma trận đặc trưng —
+    # cột giá thô đứng ngoài.
+    scaler = FeatureScaler()
+    scaler.fit(train_slice[available].values)
+    scaled_test = scaler.transform(test_slice[available].values)
 
-    closes = test_slice["Close"].values
+    closes = test_slice[TARGET_COLUMN].values
 
     # Dựng toàn bộ cửa sổ đầu vào rồi predict một lần theo lô — nhanh hơn hàng chục
     # lần so với gọi model.predict cho từng điểm.
@@ -463,6 +472,15 @@ def main() -> None:
     parser.add_argument("--tickers", type=str, default=None, help="Danh sách mã, phân tách bằng dấu phẩy")
     parser.add_argument("--horizon", type=int, default=1, help="Số phiên dự báo trước (mặc định 1)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số mã đánh giá")
+    parser.add_argument(
+        "--allow-online-finetuned", action="store_true",
+        help="Vẫn chạy dù mô hình đã bị fine-tune online. Số liệu thu được KHÔNG dùng "
+             "được cho báo cáo vì vùng fine-tune trùng với tập test.",
+    )
+    parser.add_argument(
+        "--only-trained", action="store_true",
+        help="Chỉ đánh giá các mã có trong tickers_used của tft_meta.json.",
+    )
     args = parser.parse_args()
 
     import tensorflow as tf
@@ -483,6 +501,7 @@ def main() -> None:
     # Script này diễn giải output của model là % THAY ĐỔI GIÁ (return), không phải
     # mức giá tuyệt đối — cảnh báo nếu checkpoint đang nạp được huấn luyện trước
     # khi đổi sang target này, để không đọc nhầm kết quả.
+    trained_tickers: set = set()
     meta_path = os.path.join(MODELS_DIR, "tft_meta.json")
     if os.path.exists(meta_path):
         try:
@@ -495,6 +514,41 @@ def main() -> None:
                     "diễn giải output là % return. Kết quả sẽ SAI nếu model thực ra dự đoán "
                     "giá tuyệt đối. Train lại với `python -m backend.train_tft --fresh`."
                 )
+
+            # CHỐT CHẶN 1: meta phải mới hơn file model.
+            # Bản fork kaggle/train_kaggle_standalone.py chỉ ghi tft_meta.pkl và
+            # KHÔNG đụng tới tft_meta.json. Ai train trên Kaggle rồi copy đè
+            # global_tft.keras về sẽ để lại một file JSON cũ vẫn nói
+            # target_type="return_pct_1step" — cảnh báo ở trên không bao giờ bật, và
+            # script này diễn giải output (giá đã scale, khoảng [0,1]) như % return.
+            # Mọi MAPE/Coverage trong báo cáo sai nhưng trông hoàn toàn hợp lý.
+            model_path = os.path.join(MODELS_DIR, "global_tft.keras")
+            if os.path.exists(model_path) and os.path.getmtime(model_path) > os.path.getmtime(meta_path) + 60:
+                print(
+                    "LỖI: global_tft.keras MỚI HƠN tft_meta.json. Nghĩa là model đã bị ghi đè "
+                    "bởi một đường khác (bản fork Kaggle, copy tay...) mà không cập nhật meta, "
+                    "nên không thể biết nó được train với target/tập đặc trưng nào.\n"
+                    "Train lại bằng `python -m backend.train_tft --fresh` rồi chạy lại."
+                )
+                return
+
+            # CHỐT CHẶN 2: mô hình đã bị fine-tune online thì KHÔNG còn ngoài mẫu.
+            # cron_accuracy_learner fine-tune trên dữ liệu 1 năm gần nhất, vốn trùng
+            # với vùng tập test ở đây.
+            if meta.get("online_finetuned_at") and not args.allow_online_finetuned:
+                print(
+                    f"LỖI: mô hình đã bị fine-tune online lúc {meta['online_finetuned_at']} "
+                    f"({meta.get('online_finetune_count', '?')} lần) trên dữ liệu 1 năm gần nhất "
+                    "— vùng này TRÙNG với tập test ở đây, nên số liệu thu được KHÔNG còn là "
+                    "ngoài mẫu và không dùng được cho báo cáo.\n"
+                    "Train lại sạch (`python -m backend.train_tft --fresh`), hoặc thêm cờ "
+                    "--allow-online-finetuned nếu bạn chỉ muốn xem nhanh và KHÔNG đưa số vào báo cáo."
+                )
+                return
+
+            # Danh sách mã đã tham gia huấn luyện — để tách kết quả in-distribution
+            # khỏi kết quả zero-shot ở phần tổng hợp.
+            trained_tickers = set(meta.get("tickers_used") or [])
         except Exception:
             pass
 
@@ -504,6 +558,11 @@ def main() -> None:
         tickers = sorted(
             f[:-4] for f in os.listdir(DATA_DIR) if f.endswith(".csv") and f[:-4] not in SKIP_FILES
         )
+    if args.only_trained:
+        if not trained_tickers:
+            print("LỖI: --only-trained nhưng tft_meta.json không có danh sách tickers_used.")
+            return
+        tickers = [t for t in tickers if t in trained_tickers]
     if args.limit:
         tickers = tickers[: args.limit]
 
@@ -538,6 +597,7 @@ def main() -> None:
             print("bỏ qua (không đủ dữ liệu)")
             continue
 
+        result["in_training_set"] = result["ticker"] in trained_tickers
         tft = result["models"]["tft"]
         naive = result["models"]["naive"]
         verdict = "tốt hơn naive" if tft["mape"] < naive["mape"] else "kém hơn naive"
@@ -562,6 +622,7 @@ def main() -> None:
             rows.append(
                 {
                     "ticker": r["ticker"],
+                    "in_training_set": r.get("in_training_set", False),
                     "model": model_name,
                     "mae": m["mae"],
                     "rmse": m["rmse"],
@@ -585,9 +646,28 @@ def main() -> None:
         )
 
     # ── Tóm tắt ra màn hình ──
+    # TÁCH HAI NHÓM.
+    #
+    # LỖI ĐÃ SỬA: script đánh giá MỌI file CSV trong data/ mà không đối chiếu
+    # `tickers_used` trong meta. Quy trình được chính train_tft.py khuyến nghị là
+    # chạy thử `--max-tickers 20` trước — nếu sau đó chạy evaluate_tft không tham
+    # số, báo cáo gộp 20 mã đã huấn luyện với ~287 mã ZERO-SHOT vào một MAPE trung
+    # bình duy nhất, rồi tự kết luận trên con số lai đó.
+    in_dist = [r for r in all_results if r.get("in_training_set")]
+    zero_shot = [r for r in all_results if not r.get("in_training_set")]
+    if trained_tickers and in_dist and zero_shot:
+        print("\n" + "!" * 70)
+        print(
+            f"LƯU Ý: {len(in_dist)} mã đã tham gia huấn luyện và {len(zero_shot)} mã "
+            "ZERO-SHOT (chưa từng thấy lúc train) đang được đánh giá cùng lúc.\n"
+            "Đừng gộp hai nhóm này thành một con số trong báo cáo — chúng trả lời hai\n"
+            "câu hỏi khác nhau. Bảng riêng của từng nhóm ở ngay dưới."
+        )
+        print("!" * 70)
+
     agg = aggregate(all_results)
     print("\n" + "=" * 70)
-    print("KẾT QUẢ TỔNG HỢP")
+    print("KẾT QUẢ TỔNG HỢP" + (f" ({len(all_results)} mã)" if all_results else ""))
     print("=" * 70)
     print(f"{'Mô hình':<28} {'MAPE (%)':>10} {'Hướng (%)':>12}")
     print("-" * 70)

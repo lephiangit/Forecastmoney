@@ -230,9 +230,15 @@ export const api = {
           currentPrice,
           targetPrice,
           horizonDays: real.days || 30,
-          confidence: real?.research?.confidence
+          // KHÔNG BỊA ĐỘ TIN CẬY.
+          //
+          // Bản cũ: `70 + Math.floor(Math.random() * 20)` khi backend không trả
+          // research.confidence. Giao diện vì thế hiện "Confidence 83%" — một con
+          // số ngẫu nhiên, đổi mỗi lần refetch, trình bày y hệt số liệu của mô
+          // hình. Trong một đồ án tài chính đây là số liệu giả.
+          confidence: real?.research?.confidence != null
             ? (real.research.confidence <= 1 ? Math.round(real.research.confidence * 100) : real.research.confidence)
-            : (70 + Math.floor(Math.random() * 20)),
+            : null,
           direction,
           expectedReturn,
           model: real.model || "TFT",
@@ -345,7 +351,10 @@ export const api = {
         const qty = Number(v.qty) || 0
         const costBasis = Number(v.total_cost) || 0
         const avgPrice = Number(v.avg_cost) || 0
-        const currentPrice = avgPrice // Fallback, could be updated with real live quotes if available
+        // Giá hiện tại THẬT do backend trả về (/admin/portfolio nay có current_price).
+        // Bản cũ gán currentPrice = avgPrice, nên marketValue luôn bằng costBasis và
+        // cột "Unrealized P&L" luôn là 0đ/0% dù giá đã chạy 30%.
+        const currentPrice = Number(v.current_price) || avgPrice
         const marketValue = qty * currentPrice
         
         return {
@@ -384,8 +393,9 @@ export const api = {
         investedValue: investedValue,
         totalPnl: real.total_pnl,
         totalPnlPercent: real.initial_balance > 0 ? (real.total_pnl / real.initial_balance) * 100 : 0,
-        dayPnl: 0,
-        dayPnlPercent: 0,
+        // Chưa có nguồn số liệu lãi/lỗ trong ngày — để null thay vì giả vờ bằng 0.
+        dayPnl: null,
+        dayPnlPercent: undefined,
         holdings: holdings,
         history: history,
         is_running: !!real.is_running,

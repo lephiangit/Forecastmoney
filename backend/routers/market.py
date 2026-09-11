@@ -55,8 +55,24 @@ def get_overview(tickers: Optional[str] = Query(
     Each call is fresh — no caching, no DB.
     """
     if tickers:
-        ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
-        ticker_list = ticker_list[:20]  # Max 20 to avoid rate limits
+        # Phải kiểm tra định dạng như mọi endpoint nhận mã từ URL. Bản cũ chỉ
+        # `.upper()` rồi đưa thẳng vào `get_live_quote`, nên 20 chuỗi rác mỗi
+        # request đều thành 20 lượt tải yfinance; thất bại lại không được cache nên
+        # mỗi request đều miss. Đủ để IP của Render bị Yahoo chặn tạm thời và toàn
+        # bộ tính năng giá của ứng dụng ngừng chạy.
+        ticker_list = []
+        for raw in tickers.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ticker_list.append(validate_ticker_format(raw))
+            except HTTPException:
+                continue  # bỏ qua mã sai định dạng thay vì làm hỏng cả request
+            if len(ticker_list) >= 20:
+                break
+        if not ticker_list:
+            ticker_list = DEFAULT_TICKERS
     else:
         ticker_list = DEFAULT_TICKERS
 

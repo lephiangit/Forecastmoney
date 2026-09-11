@@ -96,8 +96,11 @@ export interface Portfolio {
   investedValue: number
   totalPnl: number
   totalPnlPercent: number
-  dayPnl: number
-  dayPnlPercent: number
+  // null = backend chưa cung cấp số liệu lãi/lỗ trong ngày.
+  // Trước đây hai trường này bị gán cứng 0 và vẫn hiển thị như số thật, nên thẻ
+  // "Today P&L" luôn hiện $0.00 kèm huy hiệu xanh +0.00% — kể cả ngày bot lỗ nặng.
+  dayPnl: number | null
+  dayPnlPercent?: number
   holdings: Holding[]
   history: ForecastPoint[]
   is_running?: boolean

@@ -162,9 +162,30 @@ def run_backtest(req: BacktestRequest):
 
     ticker = req.ticker.upper()
 
-    # Map days_back to yfinance period
-    period_map = {30: "1mo", 60: "3mo", 90: "3mo", 180: "6mo", 365: "1y"}
-    period = period_map.get(req.days_back, "3mo")
+    # LỖI ĐÃ SỬA — BẢNG TRA CỨU CHỈ KHỚP 5 GIÁ TRỊ.
+    #
+    # `days_back` được validate ge=7, le=3650, nhưng bảng cũ chỉ có {30,60,90,180,365}
+    # và mọi giá trị khác âm thầm rơi về "3mo". Gửi days_back=3650 → tải về ~63 phiên,
+    # điều kiện `len(df) > req.days_back` sai nên không cắt gì, rồi summary vẫn trả
+    # đúng 3650. Người đọc (và hội đồng chấm) nhận một báo cáo "backtest 10 năm" với
+    # Sharpe và Max Drawdown tính trên 3 tháng dữ liệu. Mọi giá trị 7, 45, 120, 200,
+    # 730... đều dính.
+    #
+    # Nay ánh xạ theo NGƯỠNG nên mọi days_back hợp lệ đều lấy đủ dữ liệu.
+    if req.days_back <= 30:
+        period = "1mo"
+    elif req.days_back <= 90:
+        period = "3mo"
+    elif req.days_back <= 180:
+        period = "6mo"
+    elif req.days_back <= 365:
+        period = "1y"
+    elif req.days_back <= 730:
+        period = "2y"
+    elif req.days_back <= 1825:
+        period = "5y"
+    else:
+        period = "max"
 
     # Fetch historical data
     df = fetch_ohlcv(ticker, period=period)
@@ -206,7 +227,20 @@ def run_backtest(req: BacktestRequest):
 
         if signal == 1 and position_qty == 0 and balance >= req.trade_amount:
             # BUY
-            qty = round(req.trade_amount / close, 4)
+            # LỖI ĐÃ SỬA — LÀM TRÒN 4 CHỮ SỐ TẠO VỊ THẾ MA.
+            #
+            # Với BTC ~110.000 USD và trade_amount = 5 (schema chỉ đòi gt=0):
+            # round(5/110000, 4) = round(0,0000454, 4) = 0.0. Khi đó total = 0, số dư
+            # không đổi, position_qty = 0 → nhánh BÁN (đòi position_qty > 0) KHÔNG BAO
+            # GIỜ chạy, còn nhánh MUA (đòi position_qty == 0) thì luôn đúng. Kết quả:
+            # danh sách trades đầy lệnh BUY số lượng 0, nhưng total_trades = 0,
+            # win_rate = 0, sharpe = 0. Dính với mọi tài sản giá cao.
+            qty = req.trade_amount / close
+            if qty <= 0:
+                raise HTTPException(
+                    400,
+                    f"trade_amount ({req.trade_amount}) quá nhỏ so với giá {ticker} ({close:,.2f}).",
+                )
             total = close * qty
             balance -= total
             position_qty = qty

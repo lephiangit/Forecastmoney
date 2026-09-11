@@ -12,17 +12,43 @@ SECURITY NOTES
 
 from typing import List, Optional
 
+import hashlib
+
 from pydantic_settings import BaseSettings
 
 # Các giá trị secret mặc định — chỉ dùng được ở môi trường dev.
 # Nếu gặp lại các giá trị này ở production, app sẽ dừng khởi động.
+#
+# LỖI BẢO MẬT ĐÃ SỬA: danh sách này từng chứa chuỗi "capmot100123@" dưới dạng rõ.
+# Đó KHÔNG phải một placeholder — nó là giá trị ADMIN_SECRET_KEY đang dùng thật,
+# có trong `.env` và `backend/.env`. Hai file .env đó được .gitignore chặn, nhưng
+# `config.py` thì nằm trong git: nghĩa là khoá ký JWT bị commit lên GitHub qua
+# chính đoạn mã có nhiệm vụ cấm dùng nó. Bất kỳ ai đọc repo đều tự ký được token
+# `{"role": "admin"}` hợp lệ cho mọi instance chưa đặt ENVIRONMENT=production.
+#
+# Nay chỉ lưu SHA-256: vẫn chặn được đúng các giá trị đó ở production, nhưng không
+# thể đọc ngược ra secret từ mã nguồn.
+#
+# KHOÁ CŨ PHẢI COI NHƯ ĐÃ LỘ VĨNH VIỄN VÀ PHẢI ĐƯỢC LUÂN CHUYỂN.
 _INSECURE_DEFAULTS = {
     "change-this-in-production",
     "dev-only-insecure-secret",
-    "capmot100123@",
-    "admin123",
     "",
 }
+
+# SHA-256 của các giá trị từng được dùng thật trong dự án và nay bị cấm.
+_INSECURE_DEFAULT_HASHES = {
+    "b064f09796a6d7645561c60ba2cfb69552d3e7daa46137b48dc88569333695cf",
+    "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+}
+
+
+def _is_insecure_secret(value: str) -> bool:
+    """True nếu `value` là một secret mặc định/đã lộ, không được dùng ở production."""
+    v = (value or "").strip()
+    if v in _INSECURE_DEFAULTS:
+        return True
+    return hashlib.sha256(v.encode("utf-8")).hexdigest() in _INSECURE_DEFAULT_HASHES
 
 
 class Settings(BaseSettings):
@@ -148,7 +174,7 @@ class Settings(BaseSettings):
         if not self.is_production:
             return problems
 
-        if self.admin_secret_key.strip() in _INSECURE_DEFAULTS:
+        if _is_insecure_secret(self.admin_secret_key):
             problems.append(
                 "ADMIN_SECRET_KEY đang để giá trị mặc định. Sinh giá trị mới: "
                 'python -c "import secrets; print(secrets.token_urlsafe(48))"'
@@ -156,7 +182,7 @@ class Settings(BaseSettings):
         if len(self.admin_secret_key) < 32:
             problems.append("ADMIN_SECRET_KEY quá ngắn (cần tối thiểu 32 ký tự).")
 
-        if self.cron_secret_key.strip() in _INSECURE_DEFAULTS:
+        if _is_insecure_secret(self.cron_secret_key):
             problems.append("CRON_SECRET_KEY đang để giá trị mặc định.")
         if self.cron_secret_key.strip() == self.admin_secret_key.strip():
             problems.append(

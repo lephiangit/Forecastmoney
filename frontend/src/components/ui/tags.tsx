@@ -26,7 +26,12 @@ export function SentimentBadge({ sentiment, label }: { sentiment: "bullish" | "b
   )
 }
 
-export function ConfidencePill({ value }: { value: number }) {
+export function ConfidencePill({ value }: { value: number | null | undefined }) {
+  // Không có số liệu thật thì nói thẳng là không có. Bản cũ nhận một con số do
+  // Math.random() sinh ra ở lib/api.ts và hiển thị như độ tin cậy của mô hình.
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return <span className="font-mono text-xs text-muted-foreground">—</span>
+  }
   const v = Number(value) || 0
   const color = v >= 85 ? "text-positive" : v >= 70 ? "text-primary" : "text-muted-foreground"
   return (

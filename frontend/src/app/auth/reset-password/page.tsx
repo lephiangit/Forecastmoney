@@ -21,9 +21,26 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     async function checkSession() {
       try {
-        // Supabase client automatically picks up the #access_token from URL
+        // CHỈ chấp nhận phiên đến từ ĐÚNG liên kết khôi phục mật khẩu.
+        //
+        // Bản cũ nhận BẤT KỲ phiên Supabase nào còn sót trong trình duyệt — kể cả
+        // phiên đăng nhập Google của người dùng trước trên máy dùng chung. Kết hợp
+        // với việc logout không gọi signOut(), đó là một đường chiếm tài khoản trọn
+        // vẹn: mở /auth/reset-password, thấy email người khác, đặt mật khẩu mới.
+        //
+        // Supabase đặt `type=recovery` trong fragment của liên kết khôi phục. Không
+        // có nó thì đây không phải luồng đặt lại mật khẩu.
+        const hash = typeof window !== "undefined" ? window.location.hash : ""
+        const isRecovery = /(^|[#&])type=recovery(&|$)/.test(hash)
+        if (!isRecovery) {
+          throw new Error(
+            "Trang này chỉ mở được từ liên kết đặt lại mật khẩu trong email. " +
+            "Vui lòng bấm lại liên kết đó, hoặc yêu cầu gửi liên kết mới."
+          )
+        }
+
         const { data: { session }, error } = await supabase.auth.getSession()
-        
+
         if (error || !session || !session.user.email) {
           throw new Error("Invalid or expired reset link")
         }

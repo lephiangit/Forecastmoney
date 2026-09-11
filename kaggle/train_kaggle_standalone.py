@@ -1,4 +1,66 @@
 """
+train_kaggle_standalone.py — BẢN FORK ĐÃ NGỪNG DÙNG. KHÔNG CHẠY FILE NÀY.
+
+File này là một bản CHÉP TAY của feature_engineering.py + train_tft.py, tách ra để
+chạy độc lập trên Kaggle. Nó đã không được cập nhật qua BA lần sửa lỗi phương pháp
+của bản chính, nên nếu ai train bằng nó rồi copy `global_tft.keras` về `models/`,
+cả ba lỗi quay lại nguyên vẹn:
+
+  1. RÒ RỈ QUA SCALER — `scaler.fit_transform(df_clean[all_cols].values)` khớp trên
+     100% lịch sử, nên min/max của tương lai lọt vào chuẩn hoá của quá khứ.
+
+  2. SAI NGỮ NGHĨA NHÃN — `Y.append(scaled_data[i + LOOK_BACK, 0])` là GIÁ CLOSE ĐÃ
+     MINMAX, không phải % thay đổi giá. Bản chính đã đổi sang `return_pct_1step`.
+     Hai loại nhãn này không thể trộn.
+
+  3. RÒ RỈ QUA VALIDATION — `np.random.shuffle(indices)` rồi `validation_split=0.1`
+     đưa các cửa sổ trùng nhau 59/60 phiên vào cả train lẫn validation.
+
+Ngoài ra nó còn: dùng tập đặc trưng CŨ (22 cột phụ thuộc mức giá, đã thay bằng 21
+cột scale-free); không chặn chia cho 0 nên `inf` chui vào MinMaxScaler và làm loss
+thành NaN; không seed RNG nào nên kết quả không tái lập được; và CHỈ ghi
+`tft_meta.pkl`, KHÔNG ghi `tft_meta.json` — nghĩa là mọi chốt chặn an toàn của
+backend (kiểm tra target_type, feature_set_version) đều bị vô hiệu một cách im lặng.
+
+Nguy hiểm nhất là dòng cuối của nó:
+
+    accuracy = max(0.0, (1.0 - final_val_mae) * 100)
+
+`final_val_mae` là MAE của GIÁ ĐÃ MINMAX về [0,1]. Một mô hình dự đoán hằng số
+bằng trung bình cũng cho MAE khoảng 0.2, tức "độ chính xác 80%". Con số đó không
+liên quan tới MAPE, độ chính xác hướng hay coverage nào cả — nhưng nó in ra đẹp và
+rất dễ bị chép thẳng vào báo cáo.
+
+CÁCH TRAIN ĐÚNG, kể cả trên Kaggle: upload cả repo rồi chạy bản chính —
+
+    python -m backend.train_tft --fresh
+    python -m backend.evaluate_tft
+
+Bản chính đã có WindowDataset cắt cửa sổ khi cần nên không tràn RAM, và tự ghi
+tft_meta.json với đủ target_type + feature_set_version.
+
+Giữ file lại để đối chiếu trong báo cáo (phần "các lỗi đã sửa"), không để chạy.
+"""
+
+import os
+import sys
+
+if os.environ.get("FORECASTAI_ALLOW_STALE_KAGGLE_FORK") != "1":
+    sys.stderr.write(
+        "\n" + "=" * 78 + "\n"
+        "train_kaggle_standalone.py DA NGUNG DUNG — tu choi chay.\n\n"
+        "File nay chua ba loi phuong phap da duoc sua o ban chinh (ro ri qua scaler,\n"
+        "sai ngu nghia nhan, ro ri qua validation) va se tao ra mot model khong tuong\n"
+        "thich voi backend, kem theo mot con so 'do chinh xac' vo nghia.\n\n"
+        "Chay ban chinh thay the:\n"
+        "    python -m backend.train_tft --fresh\n"
+        "    python -m backend.evaluate_tft\n\n"
+        "Xem docstring dau file de biet chi tiet tung loi.\n"
+        + "=" * 78 + "\n"
+    )
+    raise SystemExit(2)
+
+"""
 feature_engineering.py – Technical indicator computation for enhanced model inputs.
 Generates RSI, MACD, Bollinger Bands, ATR, OBV, rolling stats, and time features.
 """

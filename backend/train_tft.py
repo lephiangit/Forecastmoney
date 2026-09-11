@@ -71,6 +71,31 @@ lẫn hai loại nhãn hoàn toàn khác nhau. Vì vậy hàm `train_tft()` ki�
 nếu không khớp — không cần nhớ truyền `--fresh` bằng tay, nhưng vẫn nên truyền để
 rõ ràng.
 ────────────────────────────────────────────────────────────────────────────────
+LỖI PHƯƠNG PHÁP ĐÃ SỬA (lần 3): ĐẶC TRƯNG ĐẦU VÀO PHỤ THUỘC MỨC GIÁ TUYỆT ĐỐI
+
+Lần sửa thứ 2 ở trên đổi NHÃN sang % thay đổi giá, nhưng ĐẦU VÀO thì vẫn giữ
+nguyên vấn đề. Dòng dựng dataset của bản trước:
+
+    all_cols = ["Close"] + available        # <-- giá thô là đặc trưng số 0
+    scaler.fit(train_slice.values)           # <-- và được đưa vào scaler
+
+Mức giá tuyệt đối vì thế vẫn được nạp thẳng vào mạng, cùng 11 đặc trưng khác mang
+đơn vị tiền tệ (MACD, Bollinger, ATR, OBV, MA5/10/20/50). Tổng cộng 12/22 đặc
+trưng trôi theo mức giá — đúng vấn đề mà lần sửa thứ 2 tưởng đã xử lý xong.
+
+Bản này:
+  - Toàn bộ 12 đặc trưng đó chuyển sang dạng không đơn vị (tỷ lệ, phần trăm, độ
+    dốc, percent-B). Xem bảng ánh xạ trong backend/models/feature_engineering.py.
+  - Cột giá thô tách hẳn khỏi ma trận đặc trưng: nó chỉ còn dùng để tính nhãn.
+  - Quy ước dựng khung dữ liệu gom vào `build_model_frame()` — trước đây được chép
+    tay ở năm chỗ khác nhau.
+  - MinMaxScaler đổi sang StandardScaler + cắt +/-5 sigma.
+
+Tổng đặc trưng: 22 -> 21 (BB_Upper + BB_Lower gộp thành BB_Position).
+
+`FEATURE_SET_VERSION` được ghi vào tft_meta.json và kiểm tra khi nạp checkpoint cũ,
+nên không thể vô tình huấn luyện tiếp một mô hình đã học tập đặc trưng khác.
+────────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -85,7 +110,6 @@ import math
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
@@ -108,7 +132,14 @@ PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from backend.models.feature_engineering import add_technical_indicators, get_feature_columns
+from backend.models.feature_engineering import (
+    FEATURE_SET_VERSION,
+    MAX_PLAUSIBLE_DAILY_RETURN,
+    TARGET_COLUMN,
+    FeatureScaler,
+    build_model_frame,
+    clean_price_history,
+)
 from backend.models.tft_model import build_tft_model, compile_tft_model, get_tft_callbacks
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
@@ -213,60 +244,12 @@ TARGET_TYPE = "return_pct_1step"
 # DOGE-USD từng tăng 355% một phiên (tháng 1/2021) và MS tăng 87% (13/10/2008) —
 # cả hai đều là biến động thật và phải được giữ lại. Đặt ở 1000% (gấp 10 lần chỉ
 # trong một phiên) nên chỉ bắt được dữ liệu sai thật sự.
-MAX_PLAUSIBLE_DAILY_RETURN = 1000.0
-
-
-def clean_price_history(df: "pd.DataFrame") -> "pd.DataFrame":
-    """
-    Loại dữ liệu giá không hợp lệ TRƯỚC khi tính chỉ báo và dựng nhãn.
-
-    VÌ SAO CẦN: lượt mở rộng lên 309 mã kéo theo vài file dữ liệu hỏng mà nhìn
-    tổng quan không thấy được. Cụ thể đã gặp:
-
-      - UNI-USD  : Yahoo ghép HAI tài sản khác nhau vào cùng một ký hiệu. Giá đứng
-                   ở 0,000038 USD (volume 3) suốt nhiều tháng rồi nhảy thẳng lên
-                   0,598 USD — tức 1.573.987% trong một phiên.
-      - COMP-USD : 306 phiên giá bằng 0.
-      - AAVE-USD : một dòng đầu rác (0,52 USD, volume 0) trước khi dữ liệu thật bắt
-                   đầu ở 53 USD.
-
-    Chỉ MỘT nhãn 1,5 triệu phần trăm cũng đủ khống chế hàm mất mát: lượt chạy thử
-    cho loss tập train 9,43 trong khi tập validation chỉ 0,45 — chênh 20 lần theo
-    chiều vô lý. Loại các mã hỏng đưa độ lệch chuẩn của nhãn từ 1330,95% xuống
-    2,75%.
-
-    Cách xử lý: bỏ dòng có giá không dương/không hữu hạn, rồi nếu vẫn còn bước nhảy
-    bất khả thi thì GIỮ LẠI ĐOẠN LIÊN TỤC DÀI NHẤT không chứa bước nhảy nào — cách
-    này xử được cả rác ở đầu file lẫn trường hợp file ghép hai tài sản ở giữa.
-    """
-    if "Close" not in df.columns:
-        return df.iloc[0:0]
-
-    close = pd.to_numeric(df["Close"], errors="coerce")
-    df = df[np.isfinite(close) & (close > 0)]
-    if len(df) < 2:
-        return df
-
-    close = pd.to_numeric(df["Close"], errors="coerce").values
-    returns = np.abs((close[1:] - close[:-1]) / close[:-1] * 100.0)
-    breaks = np.flatnonzero(returns > MAX_PLAUSIBLE_DAILY_RETURN)
-    if len(breaks) == 0:
-        return df
-
-    # `breaks[k]` nghĩa là bước nhảy nằm giữa dòng breaks[k] và breaks[k]+1, nên các
-    # đoạn liên tục là [0, b0], [b0+1, b1], ... [b_last+1, hết].
-    bounds = [0] + [int(b) + 1 for b in breaks] + [len(df)]
-    segments = [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
-    start, end = max(segments, key=lambda s: s[1] - s[0])
-    return df.iloc[start:end]
-
-
 def _build_sequences(scaled: np.ndarray, raw_close: np.ndarray, look_back: int):
     """
     Cắt chuỗi đã chuẩn hoá thành các cặp (cửa sổ đầu vào, % thay đổi giá kế tiếp).
 
-    Đầu vào X vẫn dùng dữ liệu đã qua MinMaxScaler như trước (ổn định cho việc học
-    của mạng). Nhãn Y giờ là % THAY ĐỔI GIÁ tính từ giá THẬT (raw_close, chưa
+    Đầu vào X là ma trận đặc trưng đã chuẩn hoá bằng `FeatureScaler` (StandardScaler
+    + cắt +/-5 sigma). Nhãn Y là % THAY ĐỔI GIÁ tính từ giá THẬT (raw_close, chưa
     chuẩn hoá) — không đi qua scaler — để tránh việc nhãn bị bó buộc vào phạm vi
     [0,1] của giai đoạn train, vốn là nguyên nhân gây lệch scale nghiêm trọng khi
     giá tương lai vượt ngưỡng đã học (xem ghi chú ở đầu file).
@@ -390,7 +373,9 @@ def create_tft_dataset(verbose: bool = True, max_tickers: int | None = None):
 
     if not os.path.isdir(DATA_DIR):
         print(f"Không tìm thấy thư mục dữ liệu: {DATA_DIR}")
-        return None, None, None, None, 0, report
+        # Bản cũ trả 6 giá trị trong khi hàm gọi unpack 4 → ValueError che mất
+        # đúng thông báo hữu ích vừa in ra ở trên.
+        return None, None, 0, report
 
     csv_files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".csv"))
     if max_tickers:
@@ -432,12 +417,14 @@ def create_tft_dataset(verbose: bool = True, max_tickers: int | None = None):
             report["tickers_skipped"].append({"ticker": ticker, "reason": "không còn dòng hợp lệ"})
             continue
 
-        df = add_technical_indicators(df)
-
-        available = [c for c in get_feature_columns() if c in df.columns]
-        all_cols = ["Close"] + available
-
-        df_clean = df[all_cols].dropna()
+        # Khung dữ liệu dựng qua HÀM DÙNG CHUNG. `df_clean` có cột giá thô
+        # (TARGET_COLUMN) để tính nhãn, và `available` là danh sách đặc trưng dừng
+        # sẽ đưa vào mạng — giá thô KHÔNG nằm trong đó.
+        try:
+            df_clean, available = build_model_frame(df)
+        except ValueError as e:
+            report["tickers_skipped"].append({"ticker": ticker, "reason": str(e)})
+            continue
 
         min_rows = MIN_ROWS_FOR_SPLIT
         if len(df_clean) < min_rows:
@@ -448,8 +435,8 @@ def create_tft_dataset(verbose: bool = True, max_tickers: int | None = None):
 
         # Số chiều đặc trưng phải giống nhau ở mọi mã — mô hình có input shape cố định.
         if feature_cols_reference is None:
-            feature_cols_reference = all_cols
-        elif all_cols != feature_cols_reference:
+            feature_cols_reference = available
+        elif available != feature_cols_reference:
             report["tickers_skipped"].append({"ticker": ticker, "reason": "tập đặc trưng không khớp"})
             continue
 
@@ -473,14 +460,20 @@ def create_tft_dataset(verbose: bool = True, max_tickers: int | None = None):
         # Scaler khớp CHỈ trên phần train. Khớp trên toàn bộ dữ liệu sẽ để lộ
         # giá trị min/max của tương lai vào quá trình huấn luyện — cũng là một
         # dạng rò rỉ, tinh vi hơn nhưng vẫn làm kết quả đẹp giả tạo.
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaler.fit(train_slice.values)
+        # StandardScaler + cắt +/-5 sigma thay cho MinMaxScaler: xem ghi chú ở đầu
+        # backend/models/feature_engineering.py.
+        #
+        # Chỉ ma trận ĐẶC TRƯNG được chuẩn hoá. Cột giá thô đứng ngoài, chỉ dùng để
+        # tính nhãn % thay đổi. Bản cũ đưa cả `Close` vào `scaler.fit(...)` nên mức
+        # giá tuyệt đối trở thành đặc trưng số 0 của mạng.
+        scaler = FeatureScaler()
+        scaler.fit(train_slice[available].values)
 
         # Chỉ lưu ma trận đã chuẩn hoá + vector nhãn; cửa sổ được cắt lúc tạo batch.
-        tr_scaled = scaler.transform(train_slice.values).astype(np.float32)
-        va_scaled = scaler.transform(val_slice.values).astype(np.float32)
-        tr_targets = _build_targets(train_slice["Close"].values, LOOK_BACK)
-        va_targets = _build_targets(val_slice["Close"].values, LOOK_BACK)
+        tr_scaled = scaler.transform(train_slice[available].values).astype(np.float32)
+        va_scaled = scaler.transform(val_slice[available].values).astype(np.float32)
+        tr_targets = _build_targets(train_slice[TARGET_COLUMN].values, LOOK_BACK)
+        va_targets = _build_targets(val_slice[TARGET_COLUMN].values, LOOK_BACK)
 
         if len(tr_targets) == 0 or len(va_targets) == 0:
             report["tickers_skipped"].append({"ticker": ticker, "reason": "không đủ cửa sổ"})
@@ -582,13 +575,24 @@ def train_tft(fresh: bool = False, max_tickers: int | None = None, epochs: int |
             with open(meta_path, encoding="utf-8") as f:
                 old_meta = json.load(f)
             old_target_type = old_meta.get("target_type", "close_price_scaled")
+            old_feature_set = old_meta.get("feature_set_version", "legacy-v1")
         except Exception:
             old_target_type = None
+            old_feature_set = None
         if not fresh and old_target_type != TARGET_TYPE:
             print(
                 f"Checkpoint cũ có target_type='{old_target_type}', khác với target hiện "
                 f"tại ('{TARGET_TYPE}'). Tự động chuyển sang huấn luyện MỚI để tránh trộn "
                 "lẫn hai loại nhãn khác nhau."
+            )
+            fresh = True
+        # Đổi tập đặc trưng cũng buộc phải train mới. Số cột có thể tình cờ trùng
+        # nhau giữa hai tập khác nhau, nên so num_features là không đủ — phải so
+        # tên phiên bản tập đặc trưng.
+        if not fresh and old_feature_set != FEATURE_SET_VERSION:
+            print(
+                f"Checkpoint cũ dùng tập đặc trưng '{old_feature_set}', khác với tập hiện "
+                f"tại ('{FEATURE_SET_VERSION}'). Tự động chuyển sang huấn luyện MỚI."
             )
             fresh = True
 
@@ -651,6 +655,9 @@ def train_tft(fresh: bool = False, max_tickers: int | None = None, epochs: int |
         "validation_gap": VALIDATION_GAP,
         "split_strategy": "chronological-per-ticker",
         "target_type": TARGET_TYPE,
+        "feature_set_version": FEATURE_SET_VERSION,
+        "target_column_in_features": False,
+        "scaler": "StandardScaler + clip +/-5 sigma (per-ticker, fit on train only)",
         "batch_size": BATCH_SIZE,
         "train_samples": int(len(train_ds.index)),
         "val_samples": int(len(val_ds.index)),

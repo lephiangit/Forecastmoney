@@ -56,7 +56,9 @@ export default function DashboardPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard label={t("totalValue")} value={p.totalValue} format={(n) => formatCurrency(n)} changePercent={p.dayPnlPercent} icon={Wallet} accent delay={0} />
-          <StatCard label={t("todayPnl")} value={p.dayPnl} format={(n) => formatCurrency(n)} changePercent={p.dayPnlPercent} icon={TrendingUp} delay={0.05} />
+          {p.dayPnl !== null && p.dayPnl !== undefined && (
+            <StatCard label={t("todayPnl")} value={p.dayPnl} format={(n) => formatCurrency(n)} changePercent={p.dayPnlPercent} icon={TrendingUp} delay={0.05} />
+          )}
           <StatCard label={t("totalPnl")} value={p.totalPnl} format={(n) => formatCurrency(n)} changePercent={p.totalPnlPercent} icon={PieChart} delay={0.1} />
           <StatCard label={t("availableCash")} value={p.cash} format={(n) => formatCurrency(n)} icon={DollarSign} delay={0.15} />
         </div>
