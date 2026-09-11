@@ -318,6 +318,17 @@ def save_forecast_cache(ticker: str, days: int, response_json: Dict) -> bool:
     if c is None:
         return False
     try:
+        # LỖI ĐÃ SỬA — BẢNG PHÌNH VÔ HẠN.
+        #
+        # Bản cũ luôn `insert`, bảng `forecast_cache` không có ràng buộc UNIQUE trên
+        # (ticker, days), và không có job nào dọn. Mỗi lượt gọi `?refresh=true` lại
+        # thêm một dòng JSONB. Với hạn mức 20 req/phút/IP đó là 28.800 dòng mỗi ngày
+        # từ một IP, cho tới khi Supabase free tier (500 MB) đầy — lúc đó MỌI tính
+        # năng cần DB đều chết.
+        #
+        # Nay xoá bản ghi cũ của đúng cặp (ticker, days) trước khi ghi bản mới, nên
+        # bảng giữ tối đa một dòng cho mỗi cặp kể cả khi schema chưa có UNIQUE.
+        c.table("forecast_cache").delete().eq("ticker", ticker).eq("days", days).execute()
         c.table("forecast_cache").insert({
             "ticker": ticker,
             "days": days,
@@ -327,6 +338,30 @@ def save_forecast_cache(ticker: str, days: int, response_json: Dict) -> bool:
     except Exception as e:
         print(f"DB save_forecast_cache error: {e}")
         return False
+
+
+def purge_stale_forecast_cache(max_age_hours: int = 24) -> int:
+    """
+    Xoá các dòng cache cũ hơn `max_age_hours`. Gọi từ job nền.
+
+    Cần thiết vì bảng này chưa từng được dọn: các cặp (ticker, days) không còn ai
+    truy vấn sẽ nằm lại vĩnh viễn.
+    """
+    c = _get_client()
+    if c is None:
+        return 0
+    try:
+        from datetime import timedelta
+
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        res = c.table("forecast_cache").delete().lt("created_at", cutoff).execute()
+        n = len(getattr(res, "data", None) or [])
+        if n:
+            print(f"[cache] Đã dọn {n} dòng forecast_cache cũ hơn {max_age_hours}h.")
+        return n
+    except Exception as e:
+        print(f"DB purge_stale_forecast_cache error: {e}")
+        return 0
 
 def get_bot_config(user_id: int) -> Optional[Dict]:
     c = _get_client()

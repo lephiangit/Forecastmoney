@@ -73,10 +73,19 @@ def _mark_done(ticker: str) -> None:
         f.write(ticker + "\n")
 
 
+from backend.agents.research_agent import has_relevant_feed  # noqa: E402
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tickers", type=str, default=None, help="Danh sách mã, phân tách bằng dấu phẩy")
     parser.add_argument("--limit", type=int, default=None, help="Chỉ chạy N mã đầu tiên")
+    parser.add_argument(
+        "--include-generic-news", action="store_true",
+        help="Chạy cả những mã KHÔNG có nguồn tin riêng (chỉ có tin chung). Mặc định "
+             "bỏ qua, vì nhận định sinh ra từ tin không liên quan tới mã là dữ liệu "
+             "nhiễu cho Model 2.",
+    )
     args = parser.parse_args()
 
     if args.tickers:
@@ -91,6 +100,28 @@ def main() -> None:
         print("Không có mã nào để chạy — kiểm tra lại data/*.csv hoặc dùng --tickers.")
         sys.exit(1)
 
+    # LỌC THEO NGUỒN TIN.
+    #
+    # Mã không có feed riêng sẽ nhận tin CHUNG — cùng một tập tiêu đề cho mọi mã
+    # trong ngày. Nhận định sinh ra từ đó là hàm của tên mã chứ không phải của tin
+    # tức, nên đưa vào tập huấn luyện Model 2 chỉ tạo nhiễu.
+    if not args.include_generic_news:
+        before = len(tickers)
+        tickers = [t for t in tickers if has_relevant_feed(t)]
+        skipped = before - len(tickers)
+        if skipped:
+            print(
+                f"Bỏ qua {skipped}/{before} mã không có nguồn tin riêng (chỉ có tin chung).\n"
+                "Dùng --include-generic-news nếu vẫn muốn chạy chúng."
+            )
+
+    if not tickers:
+        print(
+            "Không mã nào có nguồn tin riêng. Kiểm tra lại danh sách, hoặc chạy với "
+            "--include-generic-news (dữ liệu thu được sẽ nhiễu)."
+        )
+        sys.exit(1)
+
     done = _load_done()
     remaining = [t for t in tickers if t not in done]
 
@@ -103,7 +134,7 @@ def main() -> None:
 
     print(f"Sẽ phân tích {len(remaining)} mã còn lại (trong tổng {len(tickers)} mã)...\n")
 
-    from backend.agents.research_agent import analyze_market, has_relevant_feed
+    from backend.agents.research_agent import analyze_market
     from training.build_llm_dataset import TRUSTED_LLM_SOURCES
     from backend.models.forecaster import get_live_quote
 

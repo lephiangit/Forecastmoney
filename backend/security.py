@@ -195,6 +195,16 @@ def sanitize_user_text(text: str, max_chars: int) -> str:
 _TICKER_RE = re.compile(r"^\^?[A-Za-z0-9][A-Za-z0-9.\-=]{0,19}$")
 
 
+def is_valid_ticker_format(ticker: str) -> bool:
+    """
+    Như `validate_ticker_format` nhưng trả bool thay vì ném HTTPException.
+
+    Dùng ở những chỗ không có ngữ cảnh HTTP để ném lỗi (WebSocket), hoặc khi muốn
+    bỏ qua phần tử sai thay vì làm hỏng cả request.
+    """
+    return bool(ticker and _TICKER_RE.match(str(ticker).strip()))
+
+
 def validate_ticker_format(ticker: str) -> str:
     """
     Kiểm tra định dạng ticker trước khi đưa vào yfinance hoặc câu query DB.

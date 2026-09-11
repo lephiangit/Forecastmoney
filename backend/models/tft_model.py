@@ -77,6 +77,20 @@ class GatedResidualNetwork(tf.keras.layers.Layer):
         return self.layer_norm(skip + h)
 
 
+# ĐÍNH CHÍNH QUAN TRỌNG CHO BÁO CÁO
+#
+# Lớp `VariableSelectionNetwork` dưới đây CÓ TỒN TẠI trong mã nguồn nhưng
+# `build_tft_model()` KHÔNG HỀ GỌI TỚI NÓ — đồ thị model thực tế chỉ có
+# `Dense(name="input_projection")` chiếu thẳng input. Nghĩa là nó chưa từng ảnh
+# hưởng tới bất kỳ dự báo nào.
+#
+# Nếu báo cáo đồ án ghi "TFT có Variable Selection Network cho khả năng diễn giải"
+# thì phải sửa lại cho khớp thực tế, hoặc nêu rõ đây là hướng future work chưa hoàn
+# thiện. Phần "độ quan trọng đặc trưng" mà hệ thống đang hiển thị là
+# PERMUTATION IMPORTANCE (xem forecaster.compute_feature_importance), không phải
+# trọng số của lớp này.
+
+
 class VariableSelectionNetwork(tf.keras.layers.Layer):
     """
     Variable Selection Network – Learns which input features are most important.

@@ -182,12 +182,12 @@ export default function BacktestPage() {
                     />
                     <YAxis
                       tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`}
+                      tickFormatter={(v: number) => formatCurrency(v, { compact: true })}
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px" }}
                       labelStyle={{ color: "hsl(var(--foreground))" }}
-                      formatter={(val: any) => [`$${Number(val).toLocaleString()}`, "Balance"]}
+                      formatter={(val: any) => [formatCurrency(Number(val)), "Balance"]}
                     />
                     <ReferenceLine y={result.summary.initial_balance} stroke="hsl(var(--muted-foreground))" strokeDasharray="5 5" label="" />
                     <Line

@@ -21,20 +21,15 @@ export default function AuthCallbackPage() {
       if (cancelled) return
       try {
         setStatus("Đang đồng bộ tài khoản...")
-        console.log("[CALLBACK] Step 1: Got Supabase session, access_token exists:", !!session.access_token)
-        console.log("[CALLBACK] Step 2: Calling POST /auth/google...")
         // Send Supabase token to our backend to get a custom JWT
         const res = await api.loginWithGoogle(session.access_token)
         if (cancelled) return
 
-        console.log("[CALLBACK] Step 3: Backend response:", JSON.stringify(res))
 
         if (res.token) {
           // Store the CUSTOM JWT (not the Supabase token)
           localStorage.setItem("forecast_ai_token", res.token)
-          console.log("[CALLBACK] Step 4: Saved Custom JWT to localStorage, token starts with:", res.token.substring(0, 20))
           login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
-          console.log("[CALLBACK] Step 5: Zustand login() called, redirecting to /")
           setStatus("Đăng nhập thành công! Đang chuyển hướng...")
           router.push("/")
         } else {
@@ -53,22 +48,20 @@ export default function AuthCallbackPage() {
       try {
         const hash = window.location.hash
         const search = window.location.search
-        console.log("[CALLBACK] URL hash exists:", !!hash, "search:", search)
-        console.log("[CALLBACK] Full URL:", window.location.href.substring(0, 100) + "...")
 
         // Step 1: Try getSession immediately (Supabase may have already parsed the URL)
         const { data: { session }, error } = await supabase.auth.getSession()
-        console.log("[CALLBACK] getSession result - session:", !!session, "error:", error?.message || "none")
 
         if (error) {
           setStatus(`Lỗi: ${error.message}`)
-          setDetail(JSON.stringify(error))
+          // Không đổ nguyên object lỗi ra giao diện: nó lộ tên lớp lỗi và thông điệp
+        // nội bộ của Supabase, và sẽ nằm trong ảnh chụp màn hình lúc bảo vệ.
+        setDetail(error?.message || "Không hoàn tất được đăng nhập.")
           setTimeout(() => router.push("/login?error=session_error"), 3000)
           return
         }
 
         if (session) {
-          console.log("[CALLBACK] Session found immediately, exchanging...")
           await exchangeForCustomJWT(session)
           return
         }

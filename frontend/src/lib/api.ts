@@ -23,6 +23,7 @@ import type {
   ResearchQueueItem,
   LeaderboardEntry,
 } from "./types"
+import { useAuthStore, useCurrencyStore } from "./store"
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL
 
@@ -87,7 +88,11 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
   if (res.status === 401 && typeof window !== "undefined") {
     const hadToken = !!localStorage.getItem("forecast_ai_token")
     // Token missing or expired – clear stale auth state
-    const { useAuthStore } = require("./store")
+    // LỖI ĐÃ SỬA: `require()` trong module ESM chỉ chạy được nhờ shim CommonJS của
+    // webpack. Khi build bằng Turbopack, hoặc khi đoạn này lọt vào đường chạy phía
+    // server, `require` không tồn tại → xử lý 401 ném ReferenceError thay vì đăng
+    // xuất, làm mất luôn cơ chế chuyển hướng khi hết phiên.
+    // `store.ts` không import ngược `api.ts` nên import tĩnh không tạo vòng lặp.
     useAuthStore.getState().logout()
 
     // Only redirect if we're not already on login/register/callback pages AND they actually had a token
@@ -371,7 +376,24 @@ export const api = {
         }
       })
 
-      const investedValue = holdings.reduce((sum, h) => sum + h.marketValue, 0)
+      // QUY VỀ MỘT ĐƠN VỊ TRƯỚC KHI CỘNG.
+      //
+      // LỖI ĐÃ SỬA: bản cũ cộng thẳng `marketValue` của mọi vị thế rồi để
+      // `formatCurrency(totalValue)` coi tổng là USD. Nhưng giá gốc của FPT.VN là
+      // VND còn BTC-USD là USD — cộng hai đơn vị khác nhau vào một số, rồi ở chế độ
+      // VND phần vốn vốn đã là VND lại bị nhân thêm 25.400 lần. "Total Value" sai
+      // vài nghìn lần, và tổng không khớp với các dòng bên dưới (vốn định dạng đúng
+      // theo `{ currency: h.ticker }`).
+      //
+      // Nay tổng luôn tính bằng USD; từng dòng vẫn hiển thị theo đơn vị gốc của mã.
+      const fxRate = useCurrencyStore.getState().exchangeRate || 25400
+      const toUsd = (value: number, ticker: string) =>
+        ticker.toUpperCase().endsWith(".VN") ? value / fxRate : value
+
+      const investedValue = holdings.reduce(
+        (sum, h) => sum + toUsd(h.marketValue, h.ticker),
+        0,
+      )
       
       if (investedValue > 0) {
         holdings.forEach(h => {
@@ -498,8 +520,13 @@ export const api = {
   // người xem không có cách nào biết. Trả mảng rỗng để giao diện hiện trạng thái
   // trống thay vì số liệu giả.
   async getAdminUsers(): Promise<AdminUser[]> {
-    const real = await tryFetch<AdminUser[]>("/admin/users")
-    return real || []
+    // Dùng `apiFetch` (NÉM lỗi) chứ không phải `tryFetch`.
+    //
+    // LỖI ĐÃ SỬA: `tryFetch` nuốt 403 thành `[]`, nên một người không phải admin mở
+    // /admin sẽ thấy bảng người dùng RỖNG, `isError` luôn false và không có thông
+    // báo nào — trông như hệ thống không có user nào. Rất dễ bị hiểu nhầm là lỗi dữ
+    // liệu ngay giữa buổi demo, trong khi thật ra là thiếu quyền.
+    return await apiFetch<AdminUser[]>("/admin/users")
   },
 
   // Bốn thao tác quản trị dưới đây dùng `apiFetch` (NÉM lỗi) chứ không phải

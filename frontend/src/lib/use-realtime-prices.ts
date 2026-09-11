@@ -33,8 +33,18 @@ export function useRealtimePrices(tickers: string[]) {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL
     if (!baseUrl) return
 
+    // WebSocket nay BẮT BUỘC xác thực: middleware rate-limit của backend khai báo
+    // @app.middleware("http") nên không chạm tới scope websocket, và CORS cũng không
+    // áp dụng cho WS — trước đây bất kỳ ai từ bất kỳ origin nào cũng mở được kết nối
+    // không giới hạn. Trình duyệt không cho đặt header tuỳ ý trên WebSocket nên token
+    // đi qua query string.
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("forecast_ai_token") : null
+    if (!token) return
+
     // Convert http(s) to ws(s)
-    const wsUrl = baseUrl.replace(/^http/, "ws") + "/ws/prices"
+    const wsUrl =
+      baseUrl.replace(/^http/, "ws") + "/ws/prices?token=" + encodeURIComponent(token)
 
     try {
       const ws = new WebSocket(wsUrl)

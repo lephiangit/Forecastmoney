@@ -19,7 +19,9 @@ from datetime import datetime
 # Đảm bảo thư mục gốc dự án nằm trong sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from typing import Optional
+
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -73,10 +75,18 @@ class PriceWSManager:
     def subscribe(self, ws: WebSocket, tickers: list[str]):
         if ws not in self.subscriptions:
             return
+        # KIỂM TRA ĐỊNH DẠNG MÃ.
+        #
+        # Bản cũ chỉ `.upper()[:20]`, nên 25 chuỗi rác đi thẳng vào vòng fetch của
+        # `_fetch_live_prices_for_ws`. `get_live_quote` trả None cho mã rác và KHÔNG
+        # cache thất bại, nên cứ mỗi 10 giây server lại tải lại 25 mã rác từ yfinance,
+        # vĩnh viễn.
+        from backend.security import is_valid_ticker_format
+
         clean = {
             str(t).upper()[:20]
             for t in tickers[: self.MAX_SUBSCRIPTIONS_PER_CLIENT]
-            if isinstance(t, str) and t.strip()
+            if isinstance(t, str) and t.strip() and is_valid_ticker_format(t.strip())
         }
         self.subscriptions[ws] = clean
 
@@ -231,6 +241,9 @@ def _check_price_alerts():
 
 
 # Danh sách mã luôn được stream sẵn cho client chưa subscribe gì.
+# Trần số mã tải mỗi chu kỳ broadcast. Các mã mặc định luôn được giữ chỗ trước.
+MAX_WS_FETCH_TICKERS = 25
+
 WS_DEFAULT_TICKERS = [
     "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "ADA-USD",
     "XRP-USD", "DOGE-USD", "AVAX-USD", "AAPL", "NVDA", "TSLA",
@@ -248,11 +261,26 @@ def _fetch_live_prices_for_ws() -> dict:
 
     from backend.models.forecaster import get_live_quote
 
-    all_subs: set = set()
-    for subs in ws_manager.subscriptions.values():
-        all_subs.update(subs)
+    # LỖI ĐÃ SỬA — MỘT CLIENT LÀM MỌI CLIENT KHÁC NGỪNG NHẬN GIÁ.
+    #
+    # Bản cũ: `list(set(WS_DEFAULT_TICKERS) | all_subs)[:25]`. `all_subs` là hợp của
+    # TẤT CẢ client, và `set` không có thứ tự, nên 25 phần tử được chọn gần như chắc
+    # chắn toàn là mã do một client đăng ký — người dùng thật không còn nhận được
+    # BTC-USD/AAPL nữa.
+    #
+    # Nay các mã mặc định LUÔN nằm trong danh sách, phần còn lại ưu tiên mã được
+    # nhiều client đăng ký nhất, và thứ tự ổn định (sort) để kết quả tái lập được.
+    from collections import Counter
 
-    tickers_to_fetch = list(set(WS_DEFAULT_TICKERS) | all_subs)[:25]
+    counts: "Counter[str]" = Counter()
+    for subs in ws_manager.subscriptions.values():
+        counts.update(subs)
+
+    tickers_to_fetch = list(WS_DEFAULT_TICKERS)
+    remaining = MAX_WS_FETCH_TICKERS - len(tickers_to_fetch)
+    if remaining > 0:
+        extra = [t for t, _ in counts.most_common() if t not in set(WS_DEFAULT_TICKERS)]
+        tickers_to_fetch.extend(sorted(extra[:remaining]))
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(get_live_quote, tickers_to_fetch))
@@ -317,8 +345,14 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(WS_BROADCAST_INTERVAL)
 
     from backend.cron_auto_trader import run_auto_trade
+    from backend.database import purge_stale_forecast_cache
 
+    # Dọn `forecast_cache` mỗi 6 giờ. Bảng này chưa từng được dọn và chỉ có insert,
+    # nên nó phình ra cho tới khi Supabase free tier đầy.
     tasks = [
+        asyncio.create_task(
+            _run_periodically(purge_stale_forecast_cache, 6 * 3600, "cache-purge")
+        ),
         asyncio.create_task(_run_periodically(run_auto_trade, AUTO_TRADE_INTERVAL, "auto-trade")),
         asyncio.create_task(_run_periodically(_take_portfolio_snapshots, SNAPSHOT_INTERVAL, "snapshot")),
         asyncio.create_task(_run_periodically(_evaluate_model_predictions, MODEL_EVAL_INTERVAL, "accuracy")),
@@ -513,8 +547,29 @@ app.include_router(notifications.router, tags=["Notifications"])
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws/prices")
-async def ws_prices(ws: WebSocket):
-    """Stream giá real-time. Client gửi {"type":"subscribe","tickers":[...]} để lọc."""
+async def ws_prices(ws: WebSocket, token: Optional[str] = Query(default=None)):
+    """
+    Stream giá real-time. Client gửi {"type":"subscribe","tickers":[...]} để lọc.
+
+    BẮT BUỘC XÁC THỰC bằng `?token=<JWT>`.
+
+    VÌ SAO: middleware `rate_limit_middleware` khai báo `@app.middleware("http")` nên
+    KHÔNG chạm tới scope `websocket`, và CORS cũng không áp dụng cho WS. Bản cũ vì
+    thế cho bất kỳ ai từ bất kỳ origin nào mở kết nối không giới hạn, đăng ký mã tuỳ
+    ý, và đẩy các mã mặc định ra khỏi vòng fetch dùng chung.
+    """
+    if token:
+        try:
+            from backend.routers.auth import get_current_user
+
+            get_current_user(f"Bearer {token}")
+        except Exception:
+            await ws.close(code=1008)  # policy violation
+            return
+    else:
+        await ws.close(code=1008)
+        return
+
     if not await ws_manager.connect(ws):
         return
     try:

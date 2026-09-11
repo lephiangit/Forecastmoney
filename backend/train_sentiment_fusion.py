@@ -79,6 +79,10 @@ if PROJECT_ROOT not in sys.path:
 
 from backend.train_tft import LOOK_BACK, SKIP_FILES, TRAIN_RATIO, split_indices
 
+# Phần vùng TEST của TFT được dùng để HUẤN LUYỆN tầng fusion. Phần còn lại giữ
+# nguyên, chưa từng bị chạm tới, dành cho đánh giá end-to-end.
+FUSION_TRAIN_FRACTION = 0.5
+
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
@@ -188,6 +192,8 @@ def build_dataset(
     X_prices, X_signals, Y_adjust = [], [], []
     sample_tickers: list = []
     n_used_tickers = 0
+    holdout_starts: list = []
+    clip_stats = {"total": 0, "clipped": 0}
 
     for ticker in tickers:
         path = os.path.join(DATA_DIR, f"{ticker}.csv")
@@ -244,6 +250,28 @@ def build_dataset(
         if usable_start >= usable_end:
             continue
 
+        # GIỮ LẠI NỬA SAU CỦA VÙNG TEST ĐỂ ĐÁNH GIÁ END-TO-END.
+        #
+        # LỖI ĐÃ SỬA: anchor lấy trên TOÀN BỘ vùng test của TFT, và nhãn lấy từ giá
+        # tương lai của chính vùng đó. Nghĩa là mọi số liệu báo cáo cho pipeline kết
+        # hợp "TFT + SentimentFusion" đo trên tập test đều đo trên dữ liệu mà tầng
+        # fusion đã học thuộc.
+        #
+        # Nay fusion chỉ học trên NỬA ĐẦU vùng test; nửa sau chưa từng bị chạm tới và
+        # là nơi duy nhất được phép lấy số liệu end-to-end cho báo cáo.
+        fusion_train_end = usable_start + int((usable_end - usable_start) * FUSION_TRAIN_FRACTION)
+        if fusion_train_end <= usable_start:
+            continue
+        holdout_starts.append(str(df.index[fusion_train_end].date()))
+        usable_end = fusion_train_end
+
+        # CẢNH BÁO PHƯƠNG PHÁP CÒN LẠI (phải nêu trong báo cáo):
+        # `synth_sentiment()` sinh sentiment TỪ hướng giá thật của tương lai, nên tầng
+        # fusion vẫn được học kèm đáp án. Chỉ số của fusion do đó KHÔNG so sánh trực
+        # tiếp được với chỉ số của TFT. Cách sửa triệt để là dùng sentiment THẬT từ
+        # research_reports tại đúng mốc thời gian của anchor — phụ thuộc lượng dữ liệu
+        # backfill tích luỹ được.
+
         # CẢNH BÁO PHƯƠNG PHÁP (chưa sửa được bằng code, phải nêu trong báo cáo):
         # anchor nằm trong vùng TEST của TFT, và nhãn `target` lấy từ giá tương lai
         # của chính vùng đó. Nghĩa là mọi số liệu báo cáo cho pipeline kết hợp
@@ -287,7 +315,17 @@ def build_dataset(
 
             signals = np.array([sentiment, confidence, *tech], dtype=np.float32)
 
-            target = np.clip((future_closes - tft_prices) / tft_prices, -MAX_ADJUSTMENT, MAX_ADJUSTMENT)
+            raw_deviation = (future_closes - tft_prices) / tft_prices
+            target = np.clip(raw_deviation, -MAX_ADJUSTMENT, MAX_ADJUSTMENT)
+            # ĐẾM TỶ LỆ NHÃN BỊ CHẠM BIÊN.
+            #
+            # Với mã crypto, độ lệch tích luỹ sau 7 phiên giữa dự báo tự hồi quy và
+            # giá thật thường xuyên vượt 10%, trong khi biên clip chỉ ±5%. Khi phần
+            # lớn nhãn nằm đúng ở biên, model học "luôn đẩy hết biên độ về một phía"
+            # và tanh bão hoà — Val MSE báo cáo nhỏ một cách giả tạo vì nhãn chỉ còn
+            # hai mức, chứ không phải vì model tốt. Không đếm thì không ai biết.
+            clip_stats["total"] += int(target.size)
+            clip_stats["clipped"] += int(np.sum(np.abs(raw_deviation) >= MAX_ADJUSTMENT))
 
             # Đầu vào phải chuẩn hoá y hệt lúc suy luận — dùng chung hàm với
             # SentimentFusionEngine.predict() để hai bên không bao giờ lệch nhau.
@@ -307,6 +345,24 @@ def build_dataset(
     # ValueError: too many values to unpack — crash ngay khi không dựng được mẫu nào.
     if not X_prices:
         return None, 0
+
+    # ── Hai con số phải báo cáo, không được giấu ──
+    if clip_stats["total"]:
+        pct = clip_stats["clipped"] / clip_stats["total"] * 100
+        print(f"\n  Nhãn chạm biên +/-{MAX_ADJUSTMENT:.0%}: {pct:.1f}% "
+              f"({clip_stats['clipped']:,}/{clip_stats['total']:,})")
+        if pct > 30:
+            print(
+                "  CẢNH BÁO: quá nhiều nhãn nằm đúng ở biên. Khi đó nhãn chỉ còn hai mức\n"
+                "  và model học 'luôn đẩy hết biên độ về một phía'; Val MSE sẽ nhỏ một cách\n"
+                "  giả tạo. Cân nhắc nới MAX_ADJUSTMENT hoặc loại các anchor lệch quá lớn."
+            )
+    if holdout_starts:
+        print(
+            f"  Vùng giữ lại để đánh giá end-to-end bắt đầu từ: "
+            f"{min(holdout_starts)} … {max(holdout_starts)} (tuỳ mã).\n"
+            f"  Tầng fusion CHƯA từng thấy dữ liệu sau các mốc này."
+        )
 
     return (
         np.array(X_prices, dtype=np.float32),

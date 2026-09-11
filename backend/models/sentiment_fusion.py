@@ -269,6 +269,11 @@ class SentimentFusionEngine:
         Apply sentiment fusion adjustments to TFT prices.
         Returns adjusted prices of shape (days,).
         """
+        # Ghi lại nhánh nào thực sự chạy. Bản cũ không có cách nào phân biệt: API
+        # luôn trả `available: true` kể cả khi rơi về công thức tuyến tính, nên biểu
+        # đồ và báo cáo không biết con số đến từ model đã huấn luyện hay từ heuristic.
+        self.last_mode = "heuristic"
+
         model_path = os.path.join(self.model_dir, f"sentiment_fusion_{days}d.keras")
 
         model = self._load_or_create(days) if os.path.exists(model_path) else None
@@ -281,6 +286,7 @@ class SentimentFusionEngine:
                 signals_input = market_signals.reshape(1, -1)
                 adjustments = model.predict([prices_input, signals_input], verbose=0)[0]
                 # Điều chỉnh vẫn được áp lên GIÁ THÔ — chỉ đầu vào mới chuẩn hoá.
+                self.last_mode = "model"
                 return tft_prices[:days] * (1 + adjustments)
             except Exception as e:
                 print(f"⚠️ SentimentFusion inference error: {e}")

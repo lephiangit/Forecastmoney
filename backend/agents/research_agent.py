@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import quote_plus
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -127,70 +128,112 @@ def _clean_news_text(text: str, max_chars: int) -> str:
     return cleaned[:max_chars]
 
 
+def _ticker_news_feed(ticker: str):
+    """
+    URL RSS chứa tin tức CỦA RIÊNG mã này.
+
+    Yahoo Finance có feed theo từng mã, miễn phí và không cần khoá API. Nó phủ được
+    cổ phiếu Mỹ, ETF và cả ký hiệu crypto dạng `BTC-USD`.
+
+    Mã `.VN` không có trên Yahoo Finance news nên trả None — các mã đó vẫn dùng
+    `vn_feeds` (tin kinh tế Việt Nam chung).
+    """
+    t = ticker.upper().strip()
+    if not t or t.endswith(".VN"):
+        return None
+    return (
+        "https://feeds.finance.yahoo.com/rss/2.0/headline"
+        f"?s={quote_plus(t)}&region=US&lang=en-US"
+    )
+
+
 def has_relevant_feed(ticker: str) -> bool:
     """
-    Nguồn RSS hiện có CÓ liên quan tới mã này không.
+    Có nguồn tin THẬT SỰ nói về mã này không.
 
-    VẤN ĐỀ ĐANG TỒN TẠI (chưa sửa được bằng code, cần thêm nguồn tin):
-    `fetch_news` chọn feed bằng đúng một dòng —
+    LỖI ĐÃ SỬA — MỌI MÃ KHÔNG PHẢI .VN ĐỀU DÙNG FEED CRYPTO.
 
-        feeds = settings.vn_feeds if ticker.upper().endswith(".VN") else settings.crypto_feeds
+    Bản cũ chọn feed bằng đúng một dòng:
 
-    nghĩa là MỌI mã không kết thúc `.VN` đều dùng feed crypto (cointelegraph,
-    coindesk). Chạy phân tích cho AAPL, NVDA, SPY, JPM sẽ nhận về tin Bitcoin, rồi
-    sinh "nhận định về AAPL" dựa trên tin về BTC. Trong 306 mã ở `data/`, khoảng
-    250 mã rơi vào trường hợp này.
+        feeds = settings.vn_feeds if ticker.endswith(".VN") else settings.crypto_feeds
+
+    nên AAPL, NVDA, SPY, JPM đều nhận tin Bitcoin, rồi sinh "nhận định về AAPL" dựa
+    trên tin về BTC. Khoảng 250 trong 306 mã ở `data/` rơi vào trường hợp này.
 
     Tệ hơn cho Model 2: hai feed đó không lọc theo mã, nên trong cùng một ngày MỌI
     mã nhận CÙNG một tập tiêu đề — input chỉ khác nhau ở dòng "Mã tài sản: X". Dữ
-    liệu "thật" sinh ra từ đó vẫn không có quan hệ nhân quả tin tức → nhận định,
-    đúng khuyết điểm mà việc backfill được cho là sẽ khắc phục.
+    liệu "thật" sinh ra từ đó vẫn không có quan hệ nhân quả tin tức → nhận định.
 
-    Hàm này cho phép `backfill_research_reports.py` LOẠI các mã không có nguồn tin
-    khớp ra khỏi tập huấn luyện, thay vì sinh ra hàng trăm mẫu nhiễu.
+    Nay `fetch_news` ưu tiên feed RIÊNG của từng mã (Yahoo Finance), và hàm này cho
+    biết một mã có nguồn riêng hay chỉ có feed chung. `backfill_research_reports.py`
+    dùng nó để loại các mã chỉ có tin chung ra khỏi tập huấn luyện.
     """
     t = ticker.upper()
     if t.endswith(".VN"):
-        return bool(settings.vn_feeds)
-    if t.endswith("-USD"):
-        return bool(settings.crypto_feeds)
-    # Cổ phiếu/ETF Mỹ: chưa có nguồn tin riêng.
-    return False
+        # Chưa có nguồn tin theo từng mã cho sàn VN — chỉ có tin kinh tế chung.
+        return False
+    return _ticker_news_feed(t) is not None
+
+
+def _parse_feed(url: str, limit: int, source_label=None) -> List[Dict]:
+    """Đọc một feed RSS và chuẩn hoá thành danh sách tiêu đề đã làm sạch."""
+    import feedparser
+
+    out: List[Dict] = []
+    try:
+        feed = feedparser.parse(url)
+        label = source_label or _clean_news_text(feed.feed.get("title", url), 60)
+        for entry in feed.entries[:limit]:
+            title = _clean_news_text(entry.get("title", ""), MAX_HEADLINE_CHARS)
+            if not title:
+                continue
+            out.append(
+                {
+                    "title": title,
+                    "summary": _clean_news_text(entry.get("summary", ""), MAX_SUMMARY_CHARS),
+                    "link": entry.get("link", "")[:500],
+                    "published": entry.get("published", "")[:100],
+                    "source": label,
+                }
+            )
+    except Exception as e:
+        print(f"[research] Không đọc được feed {url}: {type(e).__name__}")
+    return out
 
 
 def fetch_news(ticker: str, max_items: int = 30) -> List[Dict]:
-    """Lấy tiêu đề tin tức cho một mã qua RSS."""
+    """
+    Lấy tiêu đề tin tức cho một mã.
+
+    Thứ tự ưu tiên:
+      1. Feed RIÊNG của mã (Yahoo Finance) — tin thật sự nói về mã đó.
+      2. Feed chung (`crypto_feeds` / `vn_feeds`) — chỉ khi (1) không có hoặc rỗng.
+
+    Tin đến từ feed chung được đánh dấu `ticker_specific=False`, để nơi dùng biết
+    rằng nhận định sinh ra từ chúng KHÔNG có quan hệ nhân quả với mã.
+    """
     try:
-        import feedparser
+        import feedparser  # noqa: F401
     except ImportError:
         print("[research] Thiếu thư viện feedparser.")
         return []
 
-    feeds = settings.vn_feeds if ticker.upper().endswith(".VN") else settings.crypto_feeds
-    if not feeds:
-        return []
-
     headlines: List[Dict] = []
-    per_feed = max(1, max_items // len(feeds) + 2)
 
-    for url in feeds:
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:per_feed]:
-                title = _clean_news_text(entry.get("title", ""), MAX_HEADLINE_CHARS)
-                if not title:
-                    continue
-                headlines.append(
-                    {
-                        "title": title,
-                        "summary": _clean_news_text(entry.get("summary", ""), MAX_SUMMARY_CHARS),
-                        "link": entry.get("link", "")[:500],
-                        "published": entry.get("published", "")[:100],
-                        "source": _clean_news_text(feed.feed.get("title", url), 60),
-                    }
-                )
-        except Exception as e:
-            print(f"[research] Không đọc được feed {url}: {type(e).__name__}")
+    own_feed = _ticker_news_feed(ticker)
+    if own_feed:
+        for h in _parse_feed(own_feed, max_items, source_label=f"Yahoo Finance · {ticker.upper()}"):
+            h["ticker_specific"] = True
+            headlines.append(h)
+
+    if not headlines:
+        feeds = settings.vn_feeds if ticker.upper().endswith(".VN") else settings.crypto_feeds
+        if feeds:
+            per_feed = max(1, max_items // len(feeds) + 2)
+            for url in feeds:
+                for h in _parse_feed(url, per_feed):
+                    h["ticker_specific"] = False
+                    headlines.append(h)
 
     # Loại tin trùng tiêu đề — nhiều nguồn đăng lại cùng một bản tin.
     seen = set()
@@ -677,8 +720,12 @@ def analyze_market(ticker: str, price_info: str = "", persist: bool = True) -> D
                 }
                 for h in headlines[:30]
             ],
-            # Nguồn tin có thật sự liên quan tới mã này không — xem has_relevant_feed().
-            "news_relevant": has_relevant_feed(ticker),
+            # Tin dùng để phân tích có thật sự nói về mã này không. Dựa trên tin
+            # ĐÃ LẤY ĐƯỢC chứ không chỉ dựa vào loại mã: feed riêng có thể rỗng và
+            # hệ thống rơi về tin chung.
+            "news_relevant": bool(headlines) and all(
+                h.get("ticker_specific") for h in headlines
+            ),
         }
     )
 

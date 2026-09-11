@@ -144,7 +144,9 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
               </div>
               {view === "vi" && (viContent || report.content_vi) && (
                 <span className="flex items-center gap-1 text-[11px] text-info">
-                  <Check className="h-3 w-3" /> Translated by Gemini
+                  <Check className="h-3 w-3" /> {/* Hệ thống dùng Groq/Llama, không phải Gemini —
+                      nhãn cũ sai công nghệ và rất dễ bị soi khi đối chiếu với backend. */}
+                  {t("translatedByAi")}
                 </span>
               )}
             </div>

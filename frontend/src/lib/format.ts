@@ -65,9 +65,39 @@ export function formatSigned(value: number): string {
   return `${sign}${formatCurrency(v)}`
 }
 
-export function timeAgo(iso: string): string {
+/**
+ * Khoảng thời gian đã trôi qua, theo ngôn ngữ đang chọn.
+ *
+ * LỖI ĐÃ SỬA: bản cũ luôn trả tiếng Anh, nên ở chế độ VI các trang Research,
+ * Research Archive và bảng người dùng trong Admin hiện "5m ago", "2d ago" xen giữa
+ * nội dung tiếng Việt.
+ *
+ * Đọc ngôn ngữ thẳng từ localStorage (khoá persist của useLangStore) thay vì import
+ * store — `format.ts` là module thuần, không nên phụ thuộc vào React store.
+ */
+function currentLang(): "en" | "vi" {
+  if (typeof window === "undefined") return "en"
+  try {
+    const raw = localStorage.getItem("forecastai-lang")
+    if (!raw) return "en"
+    const parsed = JSON.parse(raw)
+    return parsed?.state?.lang === "vi" ? "vi" : "en"
+  } catch {
+    return "en"
+  }
+}
+
+export function timeAgo(iso: string, lang?: "en" | "vi"): string {
+  const l = lang ?? currentLang()
   const diff = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(diff / 60000)
+  if (l === "vi") {
+    if (mins < 1) return "vừa xong"
+    if (mins < 60) return `${mins} phút trước`
+    const h = Math.floor(mins / 60)
+    if (h < 24) return `${h} giờ trước`
+    return `${Math.floor(h / 24)} ngày trước`
+  }
   if (mins < 1) return "just now"
   if (mins < 60) return `${mins}m ago`
   const hours = Math.floor(mins / 60)

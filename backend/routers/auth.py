@@ -217,6 +217,54 @@ def verify_token(token: str) -> Optional[dict]:
 _last_active_writes: dict = {}
 _LAST_ACTIVE_THROTTLE = 300
 
+# Cache trạng thái tài khoản đọc từ DB: {user_id: (thoi_diem, role, status)}.
+# Token sống 7 ngày nên không thể tin `role` trong payload — xem `_live_account_state`.
+_account_state_cache: dict = {}
+_ACCOUNT_STATE_TTL = 60
+
+
+def _live_account_state(user_id: int):
+    """
+    Đọc `role` và `status` HIỆN TẠI của tài khoản từ DB, có cache ngắn.
+
+    LỖI ĐÃ SỬA — QUYỀN VÀ TÌNH TRẠNG LẤY TỪ PAYLOAD JWT.
+
+    `create_token()` nhúng `role` tại thời điểm đăng nhập và token sống 7 NGÀY, không
+    có cơ chế thu hồi. Hệ quả cụ thể:
+
+      - Admin A hạ quyền admin B qua `PUT /admin/users/{id}/role`. Token cũ của B vẫn
+        ký hợp lệ và `exp` còn tới 7 ngày, nên B tiếp tục gọi được `GET /admin/users`,
+        `PUT /admin/users/{id}/balance`, `DELETE /admin/users/{id}`.
+      - `PUT /admin/users/{id}/status` đặt "suspended" chỉ được kiểm tra ở `login`,
+        nên người bị treo vẫn thao tác bình thường bằng token đang cầm.
+      - Sau `/auth/change-password` hay `/auth/reset-password`, token của phiên bị
+        chiếm trước đó vẫn dùng được.
+
+    Cache 60 giây để không thêm một round-trip DB vào mỗi request.
+    """
+    now = time.time()
+    cached = _account_state_cache.get(user_id)
+    if cached and now - cached[0] < _ACCOUNT_STATE_TTL:
+        return cached[1], cached[2]
+
+    role = status = None
+    try:
+        from backend.database import _get_client
+
+        c = _get_client()
+        if c:
+            res = c.table("users").select("role,status").eq("id", user_id).limit(1).execute()
+            if res.data:
+                role = res.data[0].get("role")
+                status = res.data[0].get("status")
+    except Exception as e:
+        # DB lỗi: giữ nguyên giá trị trong token thay vì khoá hết người dùng ra ngoài.
+        print(f"[auth] Không đọc được trạng thái tài khoản {user_id}: {type(e).__name__}")
+        return None, None
+
+    _account_state_cache[user_id] = (now, role, status)
+    return role, status
+
 
 def _touch_last_active(user_id: int) -> None:
     now = time.time()
@@ -246,6 +294,13 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     payload = verify_token(authorization[7:])
     if not payload:
         raise HTTPException(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.")
+
+    # Đối chiếu với trạng thái HIỆN TẠI trong DB, không tin payload 7 ngày tuổi.
+    live_role, live_status = _live_account_state(payload["user_id"])
+    if live_status and str(live_status).lower() in {"suspended", "banned", "disabled"}:
+        raise HTTPException(403, "Tài khoản đã bị tạm khoá.")
+    if live_role:
+        payload = {**payload, "role": live_role}
 
     _touch_last_active(payload["user_id"])
     return payload

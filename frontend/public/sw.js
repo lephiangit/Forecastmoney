@@ -76,9 +76,26 @@ self.addEventListener("fetch", (event) => {
   // để không bao giờ hiển thị giao diện cũ khi đang có mạng bình thường.
   if (event.request.mode === "navigate") {
     event.respondWith(
-      fetch(event.request).catch(() =>
-        caches.open(STATIC_CACHE).then((cache) => cache.match(event.request)),
-      ),
+      (async () => {
+        try {
+          const response = await fetch(event.request)
+          // LỖI ĐÃ SỬA: service worker KHÔNG BAO GIỜ cache trang HTML (chỉ
+          // isStaticAsset mới được cache), nên nhánh dự phòng bên dưới luôn trả
+          // undefined và trình duyệt báo lỗi mạng. PWA "cài được" nhưng mở offline
+          // vẫn trắng — trái hẳn mô tả ở đầu file. Nay lưu lại bản sao của trang
+          // vừa tải thành công để còn có cái mà trả về khi mất mạng.
+          if (response && response.ok) {
+            const cache = await caches.open(STATIC_CACHE)
+            cache.put(event.request, response.clone())
+          }
+          return response
+        } catch (err) {
+          const cache = await caches.open(STATIC_CACHE)
+          const cached =
+            (await cache.match(event.request)) || (await cache.match("/"))
+          return cached || Response.error()
+        }
+      })(),
     )
   }
 })
