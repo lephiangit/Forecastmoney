@@ -244,6 +244,23 @@ class Settings(BaseSettings):
         if not self.supabase_url or not self.supabase_key:
             warnings.append("Thiếu SUPABASE_URL hoặc SUPABASE_KEY — toàn bộ tính năng cần dữ liệu sẽ hỏng.")
 
+        # BẪY LÚC LUÂN CHUYỂN KHOÁ — dễ khoá chính mình ra ngoài ngay trước hạn.
+        #
+        # Hash mật khẩu ĐỊNH DẠNG CŨ có salt suy ra từ ADMIN_SECRET_KEY. Khoá đó bắt
+        # buộc phải luân chuyển (nó từng bị commit vào git qua chính file này). Nhưng
+        # ngay khi luân chuyển, mọi tài khoản còn ở định dạng cũ — kể cả admin — bị
+        # từ chối dù gõ đúng mật khẩu, và triệu chứng duy nhất là "sai mật khẩu".
+        #
+        # Chỉ cảnh báo ở production: ở dev thì gần như luôn là cài mới, không có hash cũ.
+        if self.is_production and not self.legacy_password_secret:
+            warnings.append(
+                "LEGACY_PASSWORD_SECRET chưa đặt. Nếu ADMIN_SECRET_KEY đã từng được "
+                "luân chuyển, mọi tài khoản còn lưu hash định dạng cũ (kể cả admin) sẽ "
+                "không đăng nhập được dù mật khẩu đúng. Đặt biến này bằng giá trị "
+                "ADMIN_SECRET_KEY CŨ trong giai đoạn chuyển tiếp; hash tự nâng cấp sau "
+                "lần đăng nhập đầu tiên."
+            )
+
         return warnings
 
 

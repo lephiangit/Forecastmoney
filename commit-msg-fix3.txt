@@ -1,0 +1,44 @@
+fix(backtest): chay dung chien luoc cua he thong, co phi va truot gia
+
+VAN DE
+routers/backtest.py cham diem RSI/MACD/Bollinger bang mot bo trong so RIENG, khong
+lien quan gi toi thu ma cron_auto_trader.py thuc su dung de vao lenh (du bao TFT +
+SentimentFusion). Nghia la con so "chien luoc nay lai bao nhieu" dang do mot chien
+luoc KHAC voi chien luoc cua san pham — va do la con so se nam trong bao cao.
+No cung khong tinh phi giao dich lan truot gia, nen khong tra loi duoc cau hoi duy
+nhat ma mot backtest can tra loi: co lai sau chi phi khong.
+
+DA SUA
+- signal_source="model" (mac dinh): chay dung tin hieu cua he thong — du bao
+  quantile 1 buoc cua TFT, gac theo nguong loi nhuan ky vong GIONG HET
+  cron_auto_trader (3.0 / 1.5 / 0.5 %), kem cat lo va chot loi.
+- Cong "do tin cay" cua bot that lay tu tin tuc, thu KHONG ton tai trong qua khu.
+  Thay bang cong dua tren dai quantile cua chinh TFT: chi mua khi ca phan vi bi
+  quan p10 cung duong. Co so ro rang, khong bia so.
+- signal_source="technical": giu nguyen bo RSI/MACD cu nhung goi dung ten — mot
+  BASELINE de doi chung, khong phai chien luoc cua he thong.
+- Phi va truot gia ap cho ca hai chieu, bao cao tach rieng:
+  total_fees, total_slippage_cost, pnl_before_costs.
+- Them buy_and_hold_pnl_pct: moc so sanh toi thieu ma moi chien luoc phai vuot.
+- Canh bao tu dong khi cua so backtest lan vao vung TRAIN cua mo hinh, khi ma
+  khong nam trong tap huan luyen (zero-shot), va khi chien luoc thua mua-va-giu.
+- bars_simulated tra ve so phien THUC SU mo phong, khong lap lai days_back.
+
+KHONG CO LOOKAHEAD
+- Scaler khop CHI tren phan du lieu truoc cua so backtest.
+- Quyet dinh o phien t chi dung thong tin toi het phien t; lenh khop o gia MO CUA
+  phien t+1, khong phai gia dong cua vua dung de ra quyet dinh.
+- Chan chi so trung ngay (truoc day lam .loc tra ve Series, float() nem loi va
+  lenh bi bo qua AM THAM).
+
+KIEM CHUNG (250 phien BTC-USD, mo hinh gia)
+- conservative 0 lenh | balanced 2 lenh +0.51% | aggressive 18 lenh -0.16%
+- aggressive LO dung vi phi (23.41 USD) — dung thu ma viec tinh phi sinh ra de thay
+- mua-va-giu cung giai doan: -9.86%
+
+BA GIOI HAN da ghi ro trong docstring dau file, phai neu trong bao cao:
+tam ly thi truong khong ton tai trong qua khu; mo hinh da thay mot phan giai doan
+nay luc huan luyen; day la mo phong chu khong phai giao dich that.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019Y5jaGZ8Qis98v25tZftH3

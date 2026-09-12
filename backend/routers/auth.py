@@ -76,6 +76,10 @@ class ResetPasswordRequest(BaseModel):
 #  MẬT KHẨU
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Cờ chống ngập log cho chẩn đoán hash cũ (xem verify_password).
+_WARNED_LEGACY_HASH = False
+
+
 def _pbkdf2(password: str, salt: bytes, iterations: int) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations).hex()
 
@@ -142,6 +146,32 @@ def verify_password(password: str, stored: str) -> Tuple[bool, bool]:
         if hmac.compare_digest(_legacy_hash(password, secret), stored):
             # Xác thực được bằng định dạng cũ → luôn cần nâng cấp sang định dạng mới.
             return True, True
+
+    # CHẨN ĐOÁN: hash ở ĐỊNH DẠNG CŨ mà không khoá nào xác thực được, trong khi
+    # LEGACY_PASSWORD_SECRET chưa được đặt.
+    #
+    # VÌ SAO CẦN DÒNG NÀY: salt của định dạng cũ suy ra TỪ ADMIN_SECRET_KEY. Khoá đó
+    # bắt buộc phải luân chuyển (nó từng bị commit vào git qua config.py). Ngay khi
+    # luân chuyển, MỌI tài khoản còn ở định dạng hash cũ — kể cả admin — sẽ bị từ
+    # chối dù gõ đúng mật khẩu, và triệu chứng duy nhất là "sai mật khẩu".
+    #
+    # Cách thoát: đặt LEGACY_PASSWORD_SECRET = giá trị ADMIN_SECRET_KEY CŨ. Hash sẽ
+    # tự nâng cấp sang định dạng mới ngay sau lần đăng nhập thành công đầu tiên, nên
+    # biến này chỉ cần tồn tại trong giai đoạn chuyển tiếp.
+    #
+    # Chỉ in MỘT LẦN mỗi tiến trình, để một lượt dò mật khẩu không làm ngập log.
+    global _WARNED_LEGACY_HASH
+    if not _WARNED_LEGACY_HASH and not settings.legacy_password_secret:
+        _WARNED_LEGACY_HASH = True
+        print(
+            "[auth] CẢNH BÁO: có tài khoản đang lưu hash ở ĐỊNH DẠNG CŨ nhưng không "
+            "xác thực được bằng ADMIN_SECRET_KEY hiện tại, và LEGACY_PASSWORD_SECRET "
+            "chưa được đặt.\n"
+            "       Nếu bạn vừa luân chuyển ADMIN_SECRET_KEY thì đây chính là nguyên "
+            "nhân: salt của định dạng cũ suy ra từ khoá đó.\n"
+            "       Khắc phục: đặt LEGACY_PASSWORD_SECRET = giá trị ADMIN_SECRET_KEY CŨ. "
+            "Hash tự nâng cấp sau lần đăng nhập đầu tiên."
+        )
     return False, False
 
 

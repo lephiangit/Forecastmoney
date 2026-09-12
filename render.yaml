@@ -44,6 +44,19 @@ services:
       - key: CRON_SECRET_KEY
         sync: false
 
+      # BẮT BUỘC trong giai đoạn luân chuyển ADMIN_SECRET_KEY.
+      #
+      # Hash mật khẩu định dạng cũ có salt suy ra từ ADMIN_SECRET_KEY. Luân chuyển
+      # khoá đó mà không đặt biến này = khoá toàn bộ người dùng cũ (kể cả admin) ra
+      # ngoài, với triệu chứng duy nhất là "sai mật khẩu". Đặt bằng giá trị
+      # ADMIN_SECRET_KEY CŨ; xoá được sau khi mọi người đã đăng nhập lại một lần.
+      - key: LEGACY_PASSWORD_SECRET
+        sync: false
+
+      # Nhà cung cấp LLM: groq (mặc định) | custom | local.
+      - key: LLM_PROVIDER
+        value: groq
+
       # Danh sách domain frontend được phép gọi API.
       # Ví dụ: https://forecastai.netlify.app
       - key: ALLOWED_ORIGINS

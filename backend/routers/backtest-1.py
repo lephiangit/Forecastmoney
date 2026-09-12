@@ -429,11 +429,6 @@ def run_backtest(req: BacktestRequest):
     if df_raw is None or df_raw.empty:
         raise HTTPException(404, f"Không lấy được dữ liệu lịch sử cho '{ticker}'.")
 
-    # Chỉ số trùng ngày làm `.loc[date]` trả về Series thay vì một số, và khi đó
-    # `float()` ném lỗi — lệnh sẽ bị bỏ qua ÂM THẦM ở `_exec_price`. Giữ dòng cuối
-    # của mỗi ngày và sắp lại cho chắc.
-    df_raw = df_raw[~df_raw.index.duplicated(keep="last")].sort_index()
-
     fee_rate = req.fee_pct / 100.0
     slip_rate = req.slippage_pct / 100.0
 
