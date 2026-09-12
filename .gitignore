@@ -103,3 +103,10 @@ noibo.md
 logic.md
 design_rule/
 train_fusion_log.txt
+
+# Script commit tam thoi - khong thuoc ma nguon
+commit-fix*.bat
+commit-msg-fix*.txt
+cleanup-fix*.bat
+cleanup-msg-fix*.txt
+*-1.py
