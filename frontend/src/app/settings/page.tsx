@@ -36,7 +36,9 @@ export default function SettingsPage() {
         if (typeof window !== "undefined") {
           localStorage.setItem(`forecastai-profile-${user.id}`, JSON.stringify({ name, email }));
         }
-        login(name || user.name, user.role, user.id, email || user.email)
+        // Truyền lại `user.isOAuth`: bỏ trống sẽ ghi đè thành false và tài khoản
+        // Google bị hiểu nhầm thành tài khoản email/mật khẩu sau mỗi lần lưu.
+        login(name || user.name, user.role, user.id, email || user.email, user.isOAuth)
         // Also save to database
         try {
           await api.updateProfile(name || user.name)
@@ -95,7 +97,17 @@ export default function SettingsPage() {
         <Section icon={User} title="Profile">
           <div className="grid gap-4 sm:grid-cols-2">
             <FieldInput label={t("name")} value={name} onChange={setName} />
-            <FieldInput label={t("email")} value={email} onChange={setEmail} type="email" />
+            {/* Ô email CHỈ ĐỌC: `api.updateProfile` chỉ gửi `name` lên máy chủ, nên
+                sửa email ở đây trước kia chỉ ghi vào localStorage — người dùng
+                tưởng đã đổi email tài khoản trong khi máy chủ không hề biết. */}
+            <FieldInput
+              label={t("email")}
+              value={email}
+              onChange={setEmail}
+              type="email"
+              readOnly
+              hint="Email lấy từ tài khoản đăng nhập, không sửa được ở đây."
+            />
           </div>
           <div className="mt-4 flex items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-muted-foreground">{t("role")}:</span>
@@ -296,11 +308,15 @@ function FieldInput({
   value,
   onChange,
   type = "text",
+  readOnly = false,
+  hint,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   type?: string
+  readOnly?: boolean
+  hint?: string
 }) {
   return (
     <div>
@@ -308,9 +324,14 @@ function FieldInput({
       <input
         type={type}
         value={value}
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-border bg-secondary px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary/60"
+        className={cn(
+          "w-full rounded-md border border-border bg-secondary px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary/60",
+          readOnly && "cursor-not-allowed opacity-70 focus:border-border",
+        )}
       />
+      {hint && <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   )
 }

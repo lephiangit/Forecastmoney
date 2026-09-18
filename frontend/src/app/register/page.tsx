@@ -56,7 +56,19 @@ export default function RegisterPage() {
       const res = await api.register(email, password)
       if (res.token) {
         localStorage.setItem("forecast_ai_token", res.token)
-        login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
+
+        // `api.register` chỉ gửi email + mật khẩu, nên ô "Tên" người dùng vừa
+        // nhập trước đây bị vứt đi hoàn toàn. Ghi nó lên máy chủ ngay sau khi đã
+        // có token. Lỗi ở bước này không được chặn việc đăng ký đã thành công.
+        if (name.trim()) {
+          try {
+            await api.updateProfile(name.trim())
+          } catch (e) {
+            console.error("Không lưu được tên hiển thị", e)
+          }
+        }
+
+        login(name.trim() || res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
         router.push("/")
       }
     } catch (err: any) {

@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { useEffect, useState, type ReactNode } from "react"
 
-import { useThemeStore } from "@/lib/store"
+import { useLangStore, useThemeStore } from "@/lib/store"
 
 /**
  * Đồng bộ class "light" trên <html> với useThemeStore.
@@ -35,6 +35,13 @@ function ThemeSync() {
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light")
   }, [theme])
+
+  // `<html lang>` phải theo ngôn ngữ thật. layout.tsx cố định "en" cho lần render
+  // trên server (tránh lệch hydrate); cập nhật ở đây sau khi đã hydrate.
+  const lang = useLangStore((s) => s.lang)
+  useEffect(() => {
+    document.documentElement.lang = lang
+  }, [lang])
 
   return null
 }

@@ -93,6 +93,12 @@ function NotificationsMenu() {
     <div className="relative">
       <button
         onClick={() => setOpen(o => !o)}
+        aria-label={
+          unreadCount > 0
+            ? `${t("notifications")} (${unreadCount} chưa đọc)`
+            : t("notifications")
+        }
+        aria-expanded={open}
         className="relative rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <Bell className="h-4.5 w-4.5" />

@@ -59,15 +59,25 @@ export default function MarketsPage() {
     .filter((a) => filter === "all" || a.category === filter || (filter === "watchlist" && watchlist.includes(a.ticker)))
     .filter((a) => a.ticker.toLowerCase().includes(search.toLowerCase()) || a.name.toLowerCase().includes(search.toLowerCase()))
 
+  // `api.addWatchlist` / `api.removeWatchlist` dùng `apiFetch`, tức là NÉM lỗi.
+  // Không bắt thì lỗi rơi vào unhandled rejection: ngôi sao không đổi trạng thái
+  // và người dùng không nhận được thông báo nào.
+  const [watchlistError, setWatchlistError] = useState<string | null>(null)
+
   const toggleWatchlist = async (e: React.MouseEvent, ticker: string) => {
     e.preventDefault()
-    if (watchlist.includes(ticker)) {
-      await api.removeWatchlist(ticker)
-    } else {
-      await api.addWatchlist(ticker)
+    setWatchlistError(null)
+    try {
+      if (watchlist.includes(ticker)) {
+        await api.removeWatchlist(ticker)
+      } else {
+        await api.addWatchlist(ticker)
+      }
+      refetchWatchlist()
+      setTimeout(() => refetch(), 100) // Trigger refetch to update prices list immediately
+    } catch (err) {
+      setWatchlistError((err as Error)?.message || "Không cập nhật được danh sách theo dõi.")
     }
-    refetchWatchlist()
-    setTimeout(() => refetch(), 100) // Trigger refetch to update prices list immediately
   }
 
   return (
@@ -102,6 +112,15 @@ export default function MarketsPage() {
         </div>
       </div>
 
+      {watchlistError && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-negative"
+        >
+          {watchlistError}
+        </div>
+      )}
+
       {isError ? (
         <ErrorCard onRetry={() => refetch()} />
       ) : !data ? (
@@ -135,9 +154,22 @@ export default function MarketsPage() {
                     className="border-b border-border/60 transition-colors last:border-0 hover:bg-accent/40"
                   >
                     <td className="px-4 py-3">
-                      <button onClick={(e) => toggleWatchlist(e, a.ticker)} className="text-muted-foreground hover:text-primary transition-colors">
-                        <Star className={cn("h-4 w-4", watchlist.includes(a.ticker) && "fill-primary text-primary")} />
-                      </button>
+                      {/* Chỉ hiện cho người đã đăng nhập: khách bấm vào chỉ nhận 401
+                          im lặng (giống forecast/page.tsx). */}
+                      {user && (
+                        <button
+                          onClick={(e) => toggleWatchlist(e, a.ticker)}
+                          aria-label={
+                            watchlist.includes(a.ticker)
+                              ? `Bỏ ${a.ticker} khỏi danh sách theo dõi`
+                              : `Thêm ${a.ticker} vào danh sách theo dõi`
+                          }
+                          aria-pressed={watchlist.includes(a.ticker)}
+                          className="text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          <Star className={cn("h-4 w-4", watchlist.includes(a.ticker) && "fill-primary text-primary")} />
+                        </button>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Link href={`/forecast/${a.ticker}`} className="flex items-center gap-3">
@@ -157,8 +189,8 @@ export default function MarketsPage() {
                         {formatPercent(a.changePercent)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(a.high24h, { currency: a.ticker })}</td>
-                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCurrency(a.low24h, { currency: a.ticker })}</td>
+                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{a.high24h != null ? formatCurrency(a.high24h, { currency: a.ticker }) : "—"}</td>
+                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{a.low24h != null ? formatCurrency(a.low24h, { currency: a.ticker }) : "—"}</td>
                     <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatNumber(a.volume, { compact: true })}</td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end">
@@ -201,21 +233,24 @@ export default function MarketsPage() {
                         <span className="text-[10px] text-muted-foreground block truncate font-mono uppercase mt-0.5">{res.exchange} · {res.type}</span>
                       </Link>
                     </div>
-                    <button
-                      onClick={async (e) => {
-                        e.preventDefault()
-                        if (isStarred) {
-                          await api.removeWatchlist(res.symbol)
-                        } else {
-                          await api.addWatchlist(res.symbol)
+                    {/* Chỉ hiện cho người đã đăng nhập — giống bảng chính ở trên.
+                        Khách bấm vào chỉ nhận 401, mà `apiFetch` nay NÉM lỗi nên
+                        kết quả là unhandled rejection và tuyệt đối không có gì
+                        xảy ra trên màn hình. */}
+                    {user && (
+                      <button
+                        onClick={(e) => toggleWatchlist(e, res.symbol)}
+                        aria-label={
+                          isStarred
+                            ? `Bỏ ${res.symbol} khỏi danh sách theo dõi`
+                            : `Thêm ${res.symbol} vào danh sách theo dõi`
                         }
-                        refetchWatchlist()
-                        setTimeout(() => refetch(), 100) // Refresh markets page overview prices
-                      }}
-                      className="rounded p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
-                    >
-                      <Star className={cn("h-4 w-4", isStarred && "fill-primary text-primary")} />
-                    </button>
+                        aria-pressed={isStarred}
+                        className="rounded p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                      >
+                        <Star className={cn("h-4 w-4", isStarred && "fill-primary text-primary")} />
+                      </button>
+                    )}
                   </div>
                 )
               })}

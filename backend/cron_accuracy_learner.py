@@ -260,8 +260,7 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
             )
             continue
 
-        scaler = FeatureScaler()
-        scaled = scaler.fit_transform(df_clean[available].values)
+        feat_values = df_clean[available].values
         # Nhãn phải cùng ngữ nghĩa với target hiện tại của TFT: % thay đổi giá (return),
         # KHÔNG PHẢI giá tuyệt đối đã scale như trước. Dùng lại đúng công thức trong
         # backend/train_tft.py::_build_sequences — tính trên giá THÔ (raw_close), không
@@ -269,20 +268,49 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
         # đoán "giá tuyệt đối" và phá hỏng model đã sửa lỗi lệch scale.
         raw_close = df_clean[TARGET_COLUMN].values
 
-        start = max(0, len(scaled) - look_back - RECENT_WINDOWS_PER_TICKER)
-        n_before = len(all_X)
-        for i in range(start, len(scaled) - look_back):
+        start = max(0, len(feat_values) - look_back - RECENT_WINDOWS_PER_TICKER)
+
+        # Lọc trước các cửa sổ hợp lệ, để biết ĐÚNG ranh giới train/holdout trước
+        # khi khớp scaler.
+        #
+        # Giá 0 (dữ liệu lỗi thỉnh thoảng gặp ở mã .VN) cho pct_change = inf mà
+        # numpy KHÔNG ném lỗi. Một nhãn inf làm loss thành NaN, và `NaN >
+        # loss_before * 1.05` là False — nghĩa là cổng kiểm chứng bị VƯỢT QUA và
+        # một mô hình NaN được ghi đè lên production.
+        valid_windows = []
+        for i in range(start, len(feat_values) - look_back):
             last_close = raw_close[i + look_back - 1]
             next_close = raw_close[i + look_back]
-            # Giá 0 (dữ liệu lỗi thỉnh thoảng gặp ở mã .VN) cho pct_change = inf mà
-            # numpy KHÔNG ném lỗi. Một nhãn inf làm loss thành NaN, và `NaN >
-            # loss_before * 1.05` là False — nghĩa là cổng kiểm chứng bị VƯỢT QUA và
-            # một mô hình NaN được ghi đè lên production.
             if last_close <= 0:
                 continue
             pct_change = (next_close - last_close) / last_close * 100.0
             if not np.isfinite(pct_change):
                 continue
+            valid_windows.append((i, pct_change))
+
+        if not valid_windows:
+            continue
+
+        # SCALER CHỈ ĐƯỢC KHỚP TRÊN PHẦN DÙNG ĐỂ FINE-TUNE.
+        #
+        # LỖI ĐÃ SỬA: bản cũ gọi `fit_transform` trên TOÀN BỘ dữ liệu, trong đó có
+        # cả 20% cửa sổ mới nhất sẽ được giữ lại làm holdout cho cổng kiểm chứng.
+        # Trung bình/độ lệch chuẩn của chính dữ liệu holdout vì thế lọt vào scaler,
+        # làm loss đo trên holdout đẹp hơn thực tế và cổng kiểm chứng mất tác dụng
+        # — đúng lớp lỗi mà train_tft.py:469-474 đã xử lý (scaler khớp chỉ trên
+        # phần train).
+        #
+        # `cut` dùng ĐÚNG công thức chia của _online_learning_locked() để hai nơi
+        # không lệch nhau.
+        cut = max(1, int(len(valid_windows) * 0.8))
+        fit_end = valid_windows[cut - 1][0] + look_back  # hết cửa sổ train cuối cùng
+
+        scaler = FeatureScaler()
+        scaler.fit(feat_values[:fit_end])
+        scaled = scaler.transform(feat_values)
+
+        n_before = len(all_X)
+        for i, pct_change in valid_windows:
             all_X.append(scaled[i : i + look_back])
             all_Y.append(pct_change)
             # Ghi mã của từng mẫu để chia holdout PHÂN TẦNG theo mã (xem dưới).

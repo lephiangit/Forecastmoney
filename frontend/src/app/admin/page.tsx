@@ -113,11 +113,11 @@ export default function AdminPage() {
       )}
 
       {/* KPI overview */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* Chỉ còn 3 thẻ — để lg:grid-cols-4 sẽ chừa một ô trống toang bên phải. */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatCard label={t("totalUsers")} value={totalUsers} format={(n) => (Number(n) || 0).toFixed(0)} icon={Users} accent />
         <StatCard label={t("activeUsers")} value={activeUsers} format={(n) => (Number(n) || 0).toFixed(0)} icon={UserCheck} delay={0.05} />
         <StatCard label={t("totalAum")} value={totalAum} format={(n) => formatCurrency(n, { compact: true })} icon={DollarSign} delay={0.1} />
-
       </div>
 
       {/* Tabs */}
@@ -328,9 +328,11 @@ export default function AdminPage() {
                     >
                       <td className="px-4 py-3 font-medium text-card-foreground">{m?.model || "Unknown"}</td>
                       <td className="px-4 py-3 font-mono font-semibold text-card-foreground">{m?.ticker || "Unknown"}</td>
-                      <td className="px-4 py-3"><ConfidencePill value={Number(m?.accuracy) || 0} /></td>
-                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.mae || 0}</td>
-                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.rmse || 0}</td>
+                      {/* Truyền thẳng giá trị (ConfidencePill đã xử lý null): `Number(x) || 0`
+                          biến "chưa đo được" thành "sai 100%". */}
+                      <td className="px-4 py-3"><ConfidencePill value={m?.accuracy ?? null} /></td>
+                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.mae ?? "—"}</td>
+                      <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.rmse ?? "—"}</td>
                       <td className="px-4 py-3 text-right font-mono text-muted-foreground">{m?.predictions?.toLocaleString("en-US") || 0}</td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end">

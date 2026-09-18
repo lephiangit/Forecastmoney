@@ -1,13 +1,5 @@
-import {
-  MARKET_ASSETS,
-  buildForecast,
-  SIGNALS,
-  RESEARCH,
-  buildPortfolio,
-  TRANSACTIONS,
-  AUTO_TRADE_CONFIG,
-  AUTO_TRADE_STATS,
-} from "./data"
+// lib/data.ts CHỦ Ý không còn được import ở đây nữa: mọi đường lùi về dữ liệu mẫu
+// đã bị gỡ, để không có cách nào số bịa lọt ra giao diện như số liệu thật.
 import type {
   MarketAsset,
   Forecast,
@@ -27,19 +19,9 @@ import { useAuthStore, useCurrencyStore } from "./store"
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL
 
-// Jitter live-ish values so the UI feels real even with local data.
-function jitter<T extends { price: number; change: number; changePercent: number }>(
-  asset: T,
-): T {
-  const factor = 1 + (Math.random() - 0.5) * 0.004
-  const price = Number((asset.price * factor).toFixed(2))
-  const change = Number((asset.change + (Math.random() - 0.5) * asset.price * 0.001).toFixed(2))
-  return {
-    ...asset,
-    price,
-    change,
-    changePercent: Number(((change / (price - change)) * 100).toFixed(2)),
-  }
+/** Có token đăng nhập trong trình duyệt hay không. */
+function hasToken(): boolean {
+  return typeof window !== "undefined" && !!localStorage.getItem("forecast_ai_token")
 }
 
 /** Lỗi API có giữ lại mã trạng thái và thông báo `detail` do backend trả về. */
@@ -93,7 +75,13 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
     // server, `require` không tồn tại → xử lý 401 ném ReferenceError thay vì đăng
     // xuất, làm mất luôn cơ chế chuyển hướng khi hết phiên.
     // `store.ts` không import ngược `api.ts` nên import tĩnh không tạo vòng lặp.
-    useAuthStore.getState().logout()
+    //
+    // CHỈ đăng xuất khi THỰC SỰ từng có token. `logout()` gọi
+    // `supabase.auth.signOut()`, mà trang /auth/callback đang dùng đúng phiên
+    // Supabase đó để đổi lấy JWT của backend. Một request 401 bất kỳ của khách
+    // chưa đăng nhập (ví dụ polling watchlist) sẽ phá huỷ phiên ngay giữa chừng
+    // và làm hỏng toàn bộ luồng đăng nhập Google.
+    if (hadToken) useAuthStore.getState().logout()
 
     // Only redirect if we're not already on login/register/callback pages AND they actually had a token
     const p = window.location.pathname
@@ -145,13 +133,17 @@ const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms))
 export const api = {
   async getMarkets(): Promise<MarketAsset[]> {
     let watchlistTickers: string[] = []
-    try {
-      const watchlist = await api.getWatchlist()
-      if (watchlist && watchlist.length > 0) {
-        watchlistTickers = [...watchlist]
+    // Chỉ hỏi watchlist khi đã đăng nhập — khách vãng lai gọi sẽ ăn 401 mỗi 30
+    // giây một cách vô ích.
+    if (hasToken()) {
+      try {
+        const watchlist = await api.getWatchlist()
+        if (watchlist && watchlist.length > 0) {
+          watchlistTickers = [...watchlist]
+        }
+      } catch {
+        // Ignore if not logged in
       }
-    } catch {
-      // Ignore if not logged in
     }
 
     const defaultTickers = [
@@ -160,18 +152,25 @@ export const api = {
     ]
 
     const allTickers = Array.from(new Set([...defaultTickers, ...watchlistTickers])).slice(0, 30)
-    const res = await tryFetch<{ data: any[] }>(`/market/overview?tickers=${allTickers.join(",")}`)
+    // `apiFetch` (NÉM lỗi) chứ không phải `tryFetch`. Bản cũ nuốt lỗi rồi trả về
+    // `MARKET_ASSETS` — bảng giá cứng trong lib/data.ts (BTC 68.120, ETH 3.602...).
+    // Hậu quả: khi backend lỗi/bị rate-limit, trang Thị trường, dải giá chạy ngang
+    // và trang chủ hiển thị giá BỊA như giá thật, không có dấu hiệu nào phân biệt.
+    // Nay lỗi nổi lên để react-query bật `isError` và ErrorCard hiện ra.
+    const res = await apiFetch<{ data: any[] }>(`/market/overview?tickers=${allTickers.join(",")}`)
     if (res?.data) {
       return res.data.map((d: any) => ({
         ...d,
         changePercent: d.change_pct ?? d.changePercent ?? 0,
-        high24h: d.high_24h ?? d.high24h ?? d.price ?? 0,
-        low24h: d.low_24h ?? d.low24h ?? d.price ?? 0,
+        // KHÔNG lùi về `d.price`: làm vậy là bịa ra biên độ ngày bằng 0. Thiếu dữ
+        // liệu thì để null và giao diện hiển thị "—".
+        high24h: d.high_24h ?? d.high24h ?? null,
+        low24h: d.low_24h ?? d.low24h ?? null,
         category: d.category ?? d.type ?? "stock",
         sparkline: d.sparkline || [],
       }))
     }
-    return MARKET_ASSETS
+    throw new ApiError("Máy chủ không trả về dữ liệu thị trường.", 0)
   },
 
   async getAsset(ticker: string): Promise<MarketAsset | undefined> {
@@ -187,99 +186,89 @@ export const api = {
   async getForecasts(): Promise<Forecast[]> {
     const defaultTickers = ["BTC-USD", "ETH-USD", "NVDA", "AAPL", "TSLA"]
     let tickers: string[] = [...defaultTickers]
-    
-    try {
-      const watchlist = await api.getWatchlist()
-      if (watchlist && watchlist.length > 0) {
-        for (const t of watchlist) {
-          if (!tickers.includes(t)) {
-            tickers.push(t)
+
+    // Chỉ hỏi watchlist khi đã đăng nhập (xem getMarkets).
+    if (hasToken()) {
+      try {
+        const watchlist = await api.getWatchlist()
+        if (watchlist && watchlist.length > 0) {
+          for (const t of watchlist) {
+            if (!tickers.includes(t)) {
+              tickers.push(t)
+            }
           }
         }
+      } catch {
+        // Ignore watchlist errors
       }
-    } catch {
-      // Ignore watchlist errors
     }
-    
+
     // Limit to 12 tickers max to prevent overloading
     tickers = tickers.slice(0, 12)
-    
-    return Promise.all(tickers.map(async (ticker) => {
-      const f = await api.getForecast(ticker)
-      return f
-    }))
+
+    // allSettled: `getForecast` nay NÉM lỗi khi backend hỏng. Với Promise.all,
+    // một mã lỗi sẽ xoá sạch danh sách. Chỉ hiển thị các mã lấy được.
+    const results = await Promise.allSettled(tickers.map((t) => api.getForecast(t)))
+    return results
+      .filter((r): r is PromiseFulfilledResult<Forecast> => r.status === "fulfilled")
+      .map((r) => r.value)
   },
 
+  /**
+   * Dự báo của một mã.
+   *
+   * KHÔNG CÒN DỮ LIỆU BỊA. Bản cũ dùng `tryFetch` rồi khi lỗi thì dựng nguyên một
+   * dự báo giả: giá, 60 phiên lịch sử, dải tin cậy, model "TFT-v3" và độ tin cậy
+   * ngẫu nhiên 68–94% — không một dấu hiệu nào cho người dùng biết đó là số bịa.
+   * Nay dùng `apiFetch` (ném lỗi) để react-query bật `isError` và ErrorCard hiện ra.
+   */
   async getForecast(ticker: string): Promise<Forecast> {
-    try {
-      const real = await tryFetch<any>(`/forecast/combined/${ticker}`)
-      
-      const forecastData = real?.sentiment_fusion?.available ? real.sentiment_fusion : real?.tft
-      
-      if (real && forecastData && forecastData.median && forecastData.median.length > 0) {
-        const currentPrice = real.current_price || 0
-        const predicted = forecastData.median.map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
-        const upperBand = (forecastData.upper_q90 || []).map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
-        const lowerBand = (forecastData.lower_q10 || []).map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
-        
-        const targetPrice = predicted[predicted.length - 1].value
-        const expectedReturn = currentPrice > 0 ? ((targetPrice - currentPrice) / currentPrice) * 100 : 0
-        const direction = expectedReturn > 1 ? "up" : expectedReturn < -1 ? "down" : "neutral"
-        
-        const baseTicker = ticker.split("-")[0]
-        const fallback = buildForecast(baseTicker) || buildForecast(ticker)
+    const real = await apiFetch<any>(`/forecast/combined/${ticker}`)
 
-        return {
-          ticker: real.ticker || ticker,
-          name: fallback?.name || ticker,
-          currentPrice,
-          targetPrice,
-          horizonDays: real.days || 30,
-          // KHÔNG BỊA ĐỘ TIN CẬY.
-          //
-          // Bản cũ: `70 + Math.floor(Math.random() * 20)` khi backend không trả
-          // research.confidence. Giao diện vì thế hiện "Confidence 83%" — một con
-          // số ngẫu nhiên, đổi mỗi lần refetch, trình bày y hệt số liệu của mô
-          // hình. Trong một đồ án tài chính đây là số liệu giả.
-          confidence: real?.research?.confidence != null
-            ? (real.research.confidence <= 1 ? Math.round(real.research.confidence * 100) : real.research.confidence)
-            : null,
-          direction,
-          expectedReturn,
-          model: real.model || "TFT",
-          history: real.historical?.length > 0 
-            ? real.historical.map((h: any) => ({ time: h.date, value: h.close }))
-            : fallback?.history || [],
-          predicted,
-          upperBand,
-          lowerBand,
-          updatedAt: real.generated_at || new Date().toISOString()
-        }
-      }
-    } catch (e) {
-      console.error("Forecast fetch failed, using fallback:", e)
+    const forecastData = real?.sentiment_fusion?.available ? real.sentiment_fusion : real?.tft
+
+    if (!real || !forecastData || !forecastData.median || forecastData.median.length === 0) {
+      throw new ApiError(`Chưa có dữ liệu dự báo cho ${ticker}.`, 404)
     }
 
-    const baseTicker = ticker.split("-")[0]
-    const fallback = buildForecast(baseTicker) || buildForecast(ticker)
-    if (fallback) return fallback
-    
-    // Return a safe minimal fallback so Promise.all in getForecasts never rejects
+    const currentPrice = real.current_price || 0
+    const predicted = forecastData.median.map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
+    const upperBand = (forecastData.upper_q90 || []).map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
+    const lowerBand = (forecastData.lower_q10 || []).map((m: any) => ({ time: m.date, value: Number(m.price) || 0 }))
+
+    const targetPrice = predicted[predicted.length - 1].value
+    const expectedReturn = currentPrice > 0 ? ((targetPrice - currentPrice) / currentPrice) * 100 : 0
+    const direction = expectedReturn > 1 ? "up" : expectedReturn < -1 ? "down" : "neutral"
+
     return {
-      ticker,
-      name: ticker,
-      currentPrice: 0,
-      targetPrice: 0,
-      horizonDays: 30,
-      confidence: 0,
-      direction: "neutral" as const,
-      expectedReturn: 0,
-      model: "N/A",
-      history: [],
-      predicted: [],
-      upperBand: [],
-      lowerBand: [],
-      updatedAt: new Date().toISOString(),
+      ticker: real.ticker || ticker,
+      // Tên phải đến từ backend hoặc chính mã đang xem — không bao giờ mượn
+      // tên của một tài sản khác.
+      name: real.name || ticker,
+      currentPrice,
+      targetPrice,
+      horizonDays: real.days || 30,
+      // KHÔNG BỊA ĐỘ TIN CẬY.
+      //
+      // Bản cũ: `70 + Math.floor(Math.random() * 20)` khi backend không trả
+      // research.confidence. Giao diện vì thế hiện "Confidence 83%" — một con
+      // số ngẫu nhiên, đổi mỗi lần refetch, trình bày y hệt số liệu của mô
+      // hình. Trong một đồ án tài chính đây là số liệu giả.
+      confidence: real?.research?.confidence != null
+        ? (real.research.confidence <= 1 ? Math.round(real.research.confidence * 100) : real.research.confidence)
+        : null,
+      direction,
+      expectedReturn,
+      model: real.model || "TFT",
+      // Lịch sử chỉ lấy từ backend. Mượn `fallback.history` là ghép dữ liệu
+      // của tài sản khác vào biểu đồ của mã đang xem.
+      history: real.historical?.length > 0
+        ? real.historical.map((h: any) => ({ time: h.date, value: h.close }))
+        : [],
+      predicted,
+      upperBand,
+      lowerBand,
+      updatedAt: real.generated_at || new Date().toISOString()
     }
   },
 
@@ -288,14 +277,18 @@ export const api = {
     return real || []
   },
 
+  // Hai hàm dưới dùng `apiFetch` (NÉM lỗi). Bản cũ lùi về hằng `RESEARCH` trong
+  // lib/data.ts — các báo cáo phân tích VIẾT SẴN, kèm sentiment và confidence bịa.
+  // Hiển thị chúng như phân tích thật của mô hình là điều không chấp nhận được
+  // trong một ứng dụng tài chính, và là đúng thứ mục review "giao diện hiển thị
+  // số bịa" yêu cầu loại bỏ.
   async getResearch(): Promise<ResearchReport[]> {
-    const real = await tryFetch<any>("/research/reports")
-    return Array.isArray(real) ? real : RESEARCH
+    const real = await apiFetch<any>("/research/reports")
+    return Array.isArray(real) ? real : []
   },
 
   async getResearchReport(ticker: string): Promise<ResearchReport | undefined> {
-    const real = await tryFetch<ResearchReport>(`/research/${ticker}`)
-    return real || RESEARCH.find((r) => r.ticker === ticker.toUpperCase())
+    return await apiFetch<ResearchReport>(`/research/${ticker}`)
   },
 
   async getResearchHistory(params: { limit?: number; offset?: number; ticker?: string; sentiment?: string } = {}): Promise<{ items: ResearchReport[]; count: number }> {
@@ -330,7 +323,11 @@ export const api = {
   },
 
   async getPortfolio(): Promise<Portfolio> {
-    const real = await tryFetch<any>("/admin/portfolio")
+    // `apiFetch` (NÉM lỗi). Bản cũ lùi về `buildPortfolio()` — một danh mục BỊA
+    // hoàn toàn (số dư, vị thế, lãi/lỗ). Người dùng thật nhìn thấy số dư và P&L
+    // của một tài khoản không tồn tại mà không có cách nào biết. Đây là dạng sai
+    // nghiêm trọng nhất trong nhóm "hiển thị số bịa".
+    const real = await apiFetch<any>("/admin/portfolio")
     if (real) {
       // Get history alongside portfolio
       // We use the chart endpoint to get the trade-by-trade chart which is better than daily snapshots
@@ -397,7 +394,9 @@ export const api = {
       
       if (investedValue > 0) {
         holdings.forEach(h => {
-          h.allocation = (h.marketValue / investedValue) * 100
+          // Tử số cũng phải quy về USD: `investedValue` đã là USD, nếu tử số vẫn
+          // là VND thì tỷ trọng của mã .VN bị thổi lên hàng vạn phần trăm.
+          h.allocation = (toUsd(h.marketValue, h.ticker) / investedValue) * 100
         })
       }
 
@@ -424,14 +423,17 @@ export const api = {
         started_at: real.started_at ?? null,
       }
     }
-    return buildPortfolio()
+    throw new ApiError("Máy chủ không trả về dữ liệu danh mục.", 0)
   },
 
   async getTransactions(): Promise<Transaction[]> {
-    const real = await tryFetch<any>("/admin/portfolio")
+    // Bản cũ lùi về hằng `TRANSACTIONS` — lịch sử lệnh bịa.
+    const real = await apiFetch<any>("/admin/portfolio")
     if (real && real.recent_trades) {
       return real.recent_trades.map((t: any) => ({
-        id: t.id?.toString() || Math.random().toString(),
+        // Khoá phải ỔN ĐỊNH giữa các lần refetch. `Math.random()` sinh khoá mới
+        // mỗi 15 giây nên React tháo và dựng lại toàn bộ bảng — bảng nhấp nháy.
+        id: t.id?.toString() || `${t.ticker}-${t.trade_time}-${t.action}`,
         ticker: t.ticker,
         action: t.action,
         quantity: t.quantity,
@@ -441,7 +443,7 @@ export const api = {
         createdAt: t.trade_time
       }))
     }
-    return TRANSACTIONS
+    return []
   },
 
   async getBotConfig(): Promise<{
@@ -585,17 +587,21 @@ export const api = {
           .filter((r) => r.error_pct != null)
           .map((r) => Number(r.error_pct))
 
-        const mae = diffs.length ? diffs.reduce((s, d) => s + Math.abs(d), 0) / diffs.length : 0
-        const rmse = diffs.length ? Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length) : 0
         const mape = errs.length ? errs.reduce((s, e) => s + e, 0) / errs.length : 0
 
         return {
           model,
           ticker,
           // Quy ước "độ chính xác = 100 − MAPE", ở thang 0–100 đúng như ConfidencePill mong đợi.
-          accuracy: errs.length ? Math.max(0, 100 - mape) : 0,
-          mae: Number(mae.toFixed(4)),
-          rmse: Number(rmse.toFixed(4)),
+          // `null` = CHƯA ĐO ĐƯỢC. Trả 0 khiến giao diện hiện "0%", tức là
+          // "mô hình sai 100%" — sai hẳn về nghĩa so với "chưa có phép đo nào".
+          accuracy: errs.length ? Math.max(0, 100 - mape) : null,
+          mae: diffs.length
+            ? Number((diffs.reduce((s, d) => s + Math.abs(d), 0) / diffs.length).toFixed(4))
+            : null,
+          rmse: diffs.length
+            ? Number(Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length).toFixed(4))
+            : null,
           // Không tính được từ dữ liệu hiện có: bảng model_accuracy chỉ lưu giá dự
           // báo và giá thực tế của ĐÚNG phiên đó, không lưu giá phiên liền trước
           // nên không suy ra được chiều tăng/giảm. Để null thay vì bịa số 0.
@@ -626,13 +632,15 @@ export const api = {
     return []
   },
 
+  // Hai hàm dưới là thao tác GHI: dùng `apiFetch` để lỗi thật sự nổi lên thay vì
+  // biến thành `false` mà mutation vẫn resolve (giao diện báo thành công giả).
   async addWatchlist(ticker: string): Promise<boolean> {
-    const real = await tryFetch<{success: boolean}>(`/admin/watchlist?ticker=${ticker}`, { method: "POST" })
+    const real = await apiFetch<{success: boolean}>(`/admin/watchlist?ticker=${ticker}`, { method: "POST" })
     return real?.success ?? false
   },
 
   async removeWatchlist(ticker: string): Promise<boolean> {
-    const real = await tryFetch<{success: boolean}>(`/admin/watchlist/${ticker}`, { method: "DELETE" })
+    const real = await apiFetch<{success: boolean}>(`/admin/watchlist/${ticker}`, { method: "DELETE" })
     return real?.success ?? false
   },
 
@@ -802,13 +810,16 @@ export const api = {
 
   // ── Price Alerts ─────────────────────────────────────────────────────────
 
+  // Cả ba hàm dùng `apiFetch`: với `tryFetch`, máy chủ từ chối cũng chỉ thành
+  // `false` trong khi mutation vẫn resolve, nên giao diện báo "Đã tạo cảnh báo ✓"
+  // dù chẳng có gì được lưu.
   async getPriceAlerts(): Promise<import("./types").PriceAlert[]> {
-    const res = await tryFetch<{ alerts: import("./types").PriceAlert[] }>("/alerts")
+    const res = await apiFetch<{ alerts: import("./types").PriceAlert[] }>("/alerts")
     return res?.alerts || []
   },
 
   async createPriceAlert(ticker: string, condition: "above" | "below", targetPrice: number): Promise<boolean> {
-    const res = await tryFetch<{ success: boolean }>("/alerts", {
+    const res = await apiFetch<{ success: boolean }>("/alerts", {
       method: "POST",
       body: JSON.stringify({ ticker, condition, target_price: targetPrice }),
     })
@@ -816,7 +827,7 @@ export const api = {
   },
 
   async deletePriceAlert(alertId: number): Promise<boolean> {
-    const res = await tryFetch<{ success: boolean }>(`/alerts/${alertId}`, { method: "DELETE" })
+    const res = await apiFetch<{ success: boolean }>(`/alerts/${alertId}`, { method: "DELETE" })
     return res?.success || false
   },
 

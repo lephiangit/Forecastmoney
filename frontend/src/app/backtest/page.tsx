@@ -161,7 +161,7 @@ export default function BacktestPage() {
               />
               <StatCard
                 label={t("sharpeRatio")}
-                value={result.summary.sharpe_ratio}
+                value={result.summary.return_to_volatility_ratio}
                 format={(n) => n.toFixed(2)}
                 icon={Activity}
                 delay={0.15}
@@ -174,26 +174,26 @@ export default function BacktestPage() {
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={result.equity_curve}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis
                       dataKey="date"
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                      tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                       tickFormatter={(v: string) => v.slice(5)}
                     />
                     <YAxis
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                      tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                       tickFormatter={(v: number) => formatCurrency(v, { compact: true })}
                     />
                     <Tooltip
-                      contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px" }}
-                      labelStyle={{ color: "hsl(var(--foreground))" }}
+                      contentStyle={{ backgroundColor: "var(--card)", borderColor: "var(--border)", borderRadius: "8px" }}
+                      labelStyle={{ color: "var(--foreground)" }}
                       formatter={(val: any) => [formatCurrency(Number(val)), "Balance"]}
                     />
-                    <ReferenceLine y={result.summary.initial_balance} stroke="hsl(var(--muted-foreground))" strokeDasharray="5 5" label="" />
+                    <ReferenceLine y={result.summary.initial_balance} stroke="var(--muted-foreground)" strokeDasharray="5 5" label="" />
                     <Line
                       type="monotone"
                       dataKey="balance"
-                      stroke="hsl(var(--primary))"
+                      stroke="var(--primary)"
                       strokeWidth={2}
                       dot={false}
                     />
@@ -231,7 +231,8 @@ export default function BacktestPage() {
                         </td>
                         <td className="py-2 pr-3 text-right font-mono">{formatCurrency(trade.price, { currency: ticker })}</td>
                         <td className="py-2 pr-3 text-right font-mono">{trade.quantity}</td>
-                        <td className="py-2 pr-3 text-right font-mono">{formatCurrency(trade.total)}</td>
+                        {/* Thiếu `currency` thì tổng giá trị lệnh của mã .VN bị định dạng như USD. */}
+                        <td className="py-2 pr-3 text-right font-mono">{formatCurrency(trade.total, { currency: ticker })}</td>
                         <td className="py-2 text-xs text-muted-foreground max-w-[200px] truncate">{trade.reason}</td>
                       </tr>
                     ))}

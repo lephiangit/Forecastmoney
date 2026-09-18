@@ -107,6 +107,9 @@ def get_portfolio(user=Depends(get_current_user)):
     # — kể cả khi giá đã tăng 30% so với giá mua. Người dùng tưởng vị thế đi ngang.
     from backend.models.forecaster import get_live_quote
 
+    # Cộng dồn giá trị thị trường của các vị thế đang mở để tính vốn chủ sở hữu.
+    holdings_value = 0.0
+
     for ticker, pos in positions.items():
         try:
             quote = get_live_quote(ticker)
@@ -118,14 +121,27 @@ def get_portfolio(user=Depends(get_current_user)):
             qty = float(pos.get("qty") or 0.0)
             pos["market_value"] = qty * price
             pos["unrealized_pnl"] = pos["market_value"] - float(pos.get("total_cost") or 0.0)
+            holdings_value += pos["market_value"]
+        else:
+            # Không lấy được giá → tạm dùng giá vốn, để equity không hụt hẳn vị thế.
+            holdings_value += float(pos.get("total_cost") or 0.0)
 
     win_trades = config.get("win_trades", 0) or 0
     loss_trades = config.get("loss_trades", 0) or 0
 
+    # LÃI/LỖ TỔNG phải tính trên VỐN CHỦ SỞ HỮU = tiền mặt + giá trị vị thế đang mở.
+    # `config["total_pnl"]` dưới DB được ghi bằng (tiền mặt − vốn ban đầu), nên mỗi
+    # lệnh MUA bị ghi thành khoản lỗ đúng bằng số tiền vừa bỏ ra mua.
+    initial_balance = float(config.get("initial_balance", 0.0) or 0.0)
+    current_balance = float(config.get("current_balance", 0.0) or 0.0)
+    equity = current_balance + holdings_value
+
     return {
-        "initial_balance": config.get("initial_balance", 0.0),
-        "current_balance": config.get("current_balance", 0.0),
-        "total_pnl": config.get("total_pnl", 0.0),
+        "initial_balance": initial_balance,
+        "current_balance": current_balance,
+        "holdings_value": round(holdings_value, 2),
+        "equity": round(equity, 2),
+        "total_pnl": round(equity - initial_balance, 2),
         "win_rate": compute_win_rate(win_trades, loss_trades),
         "win_trades": win_trades,
         "loss_trades": loss_trades,
@@ -186,12 +202,34 @@ def get_pnl_report(user=Depends(get_current_user)):
 
     initial = float(config.get("initial_balance", 0.0) or 0.0)
     current = float(config.get("current_balance", 0.0) or 0.0)
-    total_pnl = current - initial
+
+    # Cùng định nghĩa với /portfolio: lãi/lỗ tính trên VỐN CHỦ SỞ HỮU
+    # (tiền mặt + giá trị thị trường vị thế đang mở). Lấy riêng tiền mặt trừ vốn
+    # ban đầu sẽ ghi mỗi lệnh MUA thành khoản lỗ bằng đúng số tiền đã mua.
+    from backend.models.forecaster import get_live_quote
+
+    holdings_value = 0.0
+    for ticker, pos in compute_positions(sort_trades_ascending(get_all_trades(user_id))).items():
+        try:
+            quote = get_live_quote(ticker)
+        except Exception:
+            quote = None
+        price = float(quote["price"]) if quote and quote.get("price") else None
+        holdings_value += (
+            float(pos.get("qty") or 0.0) * price
+            if price is not None
+            else float(pos.get("total_cost") or 0.0)
+        )
+
+    equity = current + holdings_value
+    total_pnl = equity - initial
 
     return {
         "initial_balance": initial,
         "current_balance": current,
-        "total_pnl": total_pnl,
+        "holdings_value": round(holdings_value, 2),
+        "equity": round(equity, 2),
+        "total_pnl": round(total_pnl, 2),
         "pnl_pct": round(total_pnl / initial * 100, 2) if initial > 0 else 0.0,
         "win_trades": config.get("win_trades", 0),
         "loss_trades": config.get("loss_trades", 0),
@@ -259,8 +297,18 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
         total_value=total,
         model_signal="MANUAL",
     ):
-        # Hoàn lại số dư về đúng giá trị trước giao dịch.
-        update_balance_cas(user_id, new_balance, balance)
+        # Hoàn lại số dư về đúng giá trị trước giao dịch. Phép hoàn tiền này cũng
+        # có thể thất bại (số dư đã bị request khác đổi, hoặc DB lỗi) — bản cũ bỏ
+        # qua giá trị trả về rồi vẫn báo "đã hoàn lại", nên user tin là an toàn
+        # trong khi tiền đang bị treo.
+        if not update_balance_cas(user_id, new_balance, balance):
+            print(
+                f"[!!] user {user_id}: hoàn tiền THẤT BẠI, treo {total} — cần đối soát thủ công"
+            )
+            raise HTTPException(
+                500,
+                "Giao dịch không hoàn tất và số dư chưa khớp. Vui lòng liên hệ quản trị viên.",
+            )
         raise HTTPException(503, "Không ghi được giao dịch. Số dư đã được hoàn lại.")
 
     return {
@@ -281,7 +329,12 @@ def execute_trade(req: TradeRequest, user=Depends(get_current_user)):
 @router.post("/trading/start")
 def start_auto_trading(
     req: StartTradingRequest,
-    background_tasks: BackgroundTasks,
+    # `background_tasks` đã được GỠ: nó chỉ tồn tại để gọi
+    # `background_tasks.add_task(run_auto_trade)`, mà lời gọi đó đã bị bỏ (xem ghi
+    # chú ở cuối hàm — run_auto_trade là job TOÀN CỤC, vòng lặp 60 giây trong
+    # main.py đã chạy nó). Giữ lại tham số không dùng khiến FastAPI vẫn dựng một
+    # đối tượng BackgroundTasks cho mỗi request và làm người đọc tưởng hàm còn
+    # kích hoạt việc gì đó ở nền.
     user=Depends(get_current_user),
 ):
     """
@@ -315,7 +368,9 @@ def start_auto_trading(
     from backend.database import save_bot_config
 
     user_id = user["user_id"]
-    assets = [validate_ticker_format(a) for a in req.assets]
+    # Khử trùng lặp nhưng giữ nguyên thứ tự: mã trùng làm bot xử lý cùng một vị
+    # thế hai lần trong một lượt chạy.
+    assets = list(dict.fromkeys(validate_ticker_format(a) for a in req.assets))
 
     config = get_admin_config(user_id)  # Đảm bảo bản ghi cấu hình đã tồn tại
     balance = float(config.get("current_balance", 0.0) or 0.0)
@@ -359,10 +414,9 @@ def start_auto_trading(
         },
     )
 
-    from backend.cron_auto_trader import run_auto_trade
-
-    background_tasks.add_task(run_auto_trade)
-
+    # KHÔNG kích hoạt run_auto_trade() ở đây: đó là job TOÀN CỤC (quét mọi user
+    # đang bật bot), vòng lặp 60 giây trong main.py đã chạy nó rồi. Để một user
+    # thường châm thêm một lượt chạy toàn cục là không cần thiết và dễ chạy chồng.
     return {
         "message": "Đã bật bot auto-trade",
         "is_running": True,
@@ -377,11 +431,36 @@ def stop_auto_trading(user=Depends(get_current_user)):
     user_id = user["user_id"]
     update_admin_config(user_id, {"is_running": False})
     config = get_admin_config(user_id)
+
+    # Tính lãi/lỗ NGAY TẠI ĐÂY thay vì đọc cột `total_pnl` trong DB.
+    #
+    # Cột đó nay chỉ được job snapshot làm mới mỗi giờ (xem main.py), nên đọc thẳng
+    # sẽ trả về con số của tối đa một giờ trước — đúng vào lúc người dùng vừa dừng
+    # bot và muốn biết kết quả. Dùng chung định nghĩa với `/admin/portfolio`:
+    # vốn chủ sở hữu = tiền mặt + giá trị thị trường vị thế đang mở.
+    from backend.models.forecaster import get_live_quote
+
+    cash = float(config.get("current_balance") or 0.0)
+    initial = float(config.get("initial_balance") or 0.0)
+    holdings_value = 0.0
+    for ticker, pos in compute_positions(sort_trades_ascending(get_all_trades(user_id))).items():
+        qty = float(pos.get("qty") or 0.0)
+        if qty <= 0:
+            continue
+        try:
+            quote = get_live_quote(ticker)
+        except Exception:
+            quote = None
+        price = float(quote["price"]) if quote and quote.get("price") else None
+        holdings_value += qty * price if price else float(pos.get("total_cost") or 0.0)
+
     return {
         "message": "Đã dừng bot auto-trade",
         "is_running": False,
-        "final_balance": config.get("current_balance"),
-        "total_pnl": config.get("total_pnl"),
+        "final_balance": cash,
+        "holdings_value": round(holdings_value, 2),
+        "equity": round(cash + holdings_value, 2),
+        "total_pnl": round(cash + holdings_value - initial, 2),
     }
 
 
@@ -410,7 +489,8 @@ def save_auto_trading_config(req: BotConfigRequest, user=Depends(get_current_use
     from backend.database import get_bot_config, save_bot_config
 
     user_id = user["user_id"]
-    assets = [validate_ticker_format(a) for a in req.assets]
+    # Khử trùng lặp, giữ nguyên thứ tự (xem /trading/start).
+    assets = list(dict.fromkeys(validate_ticker_format(a) for a in req.assets))
     existing = get_bot_config(user_id) or {}
 
     ok = save_bot_config(
@@ -490,8 +570,12 @@ def remove_from_watchlist_api(ticker: str, user=Depends(get_current_user)):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/leaderboard")
-def get_leaderboard():
-    """Top 10 tài khoản theo lãi/lỗ. Tên đăng nhập được che bớt để giữ riêng tư."""
+def get_leaderboard(user=Depends(get_current_user)):
+    """Top 10 tài khoản theo lãi/lỗ. Tên đăng nhập được che bớt để giữ riêng tư.
+
+    Yêu cầu đăng nhập: bảng này lộ tên tài khoản (dù đã che) và số liệu lãi/lỗ,
+    không nên để công khai cho khách vãng lai thu thập.
+    """
     c = _get_client()
     if c is None:
         return []
@@ -511,8 +595,9 @@ def get_leaderboard():
     leaderboard = []
     for idx, row in enumerate(res.data or []):
         raw_username = (row.get("users") or {}).get("username", "unknown")
-        # Che phần định danh: giữ 4 ký tự đầu, ẩn phần còn lại kể cả domain email.
-        masked = (raw_username[:4] if len(raw_username) > 4 else raw_username) + "***"
+        # Che phần định danh: chỉ giữ 2 ký tự đầu, ẩn phần còn lại kể cả domain
+        # email. 4 ký tự đầu của email thường đã đủ để đoán ra người thật.
+        masked = f"{raw_username[:2]}***"
 
         win = row.get("win_trades", 0) or 0
         loss = row.get("loss_trades", 0) or 0

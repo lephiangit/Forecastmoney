@@ -21,6 +21,11 @@ export function useRealtimePrices(tickers: string[]) {
   const wsRef = useRef<WebSocket | null>(null)
   const retriesRef = useRef(0)
   const maxRetries = 5
+  // Đã dọn dẹp (unmount / đổi hook) hay chưa. Nếu không có cờ này thì chính lệnh
+  // `close()` lúc dọn dẹp lại kích hoạt `onclose` → hẹn giờ kết nối lại → mỗi lần
+  // rời trang lại sinh thêm một WebSocket mồ côi, tích luỹ dần.
+  const closedRef = useRef(false)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const tickersRef = useRef<string[]>(tickers)
   const tickersStr = JSON.stringify(tickers)
@@ -30,6 +35,7 @@ export function useRealtimePrices(tickers: string[]) {
   }, [tickersStr])
 
   const connect = useCallback(() => {
+    closedRef.current = false
     const baseUrl = process.env.NEXT_PUBLIC_API_URL
     if (!baseUrl) return
 
@@ -71,11 +77,13 @@ export function useRealtimePrices(tickers: string[]) {
       ws.onclose = () => {
         setConnected(false)
         wsRef.current = null
+        // Chỉ hẹn giờ kết nối lại khi KHÔNG phải do dọn dẹp.
+        if (closedRef.current) return
         // Reconnect with exponential backoff
         if (retriesRef.current < maxRetries) {
           const delay = Math.min(1000 * Math.pow(2, retriesRef.current), 30000)
           retriesRef.current++
-          setTimeout(connect, delay)
+          retryTimerRef.current = setTimeout(connect, delay)
         }
       }
 
@@ -90,7 +98,15 @@ export function useRealtimePrices(tickers: string[]) {
   useEffect(() => {
     connect()
     return () => {
+      // Thứ tự quan trọng: đánh dấu đã đóng và huỷ hẹn giờ TRƯỚC, gỡ onclose rồi
+      // mới close() — nếu không, close() sẽ kích hoạt onclose và mở kết nối mới.
+      closedRef.current = true
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = null
+      }
       if (wsRef.current) {
+        wsRef.current.onclose = null
         wsRef.current.close()
         wsRef.current = null
       }

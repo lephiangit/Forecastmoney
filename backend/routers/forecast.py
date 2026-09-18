@@ -30,18 +30,21 @@ from backend.models.forecaster import (
 from backend.security import validate_ticker_format
 
 
-def _require_auth_for_refresh(refresh: bool, authorization: Optional[str]) -> None:
+def _require_auth_for_compute(authorization: Optional[str]) -> None:
     """
-    `refresh=true` bỏ qua cache và chạy lại toàn bộ pipeline: tải RSS + gọi LLM +
-    inference TFT — endpoint đắt nhất hệ thống. Bản cũ cho phép người dùng ẩn danh
-    làm việc đó 20 lần/phút/IP, tức 28.800 lượt gọi LLM mỗi ngày từ một IP, và mỗi
+    Cổng xác thực cho MỌI lượt TÍNH LẠI (tải RSS + gọi LLM + inference TFT) —
+    đường đắt nhất hệ thống.
+
+    LỖI ĐÃ SỬA — cổng cũ (`_require_auth_for_refresh`) vòng qua được. Nó chỉ kiểm
+    tra khi `refresh=true`, trong khi nhánh `if not refresh:` lại CHỈ trả về khi
+    TRÚNG cache. Trượt cache thì vẫn chạy full pipeline mà không cần token: khách
+    vãng lai chỉ cần gọi `?days=1..30` là có 30 lượt chạy đầy đủ cho mỗi mã, mỗi
     lượt lại INSERT thêm một dòng vào `forecast_cache` (bảng không có UNIQUE và
     không có job dọn) cho tới khi Supabase free tier đầy.
 
-    Người dùng đã đăng nhập vẫn dùng được bình thường; khách vãng lai đọc cache.
+    Nay điều kiện đổi từ "có refresh không" sang "sắp phải TÍNH lại hay không".
+    Khách vãng lai vẫn ĐỌC được cache như ý định ban đầu.
     """
-    if not refresh:
-        return
     from backend.routers.auth import get_current_user
 
     get_current_user(authorization)  # ném 401 nếu thiếu/sai token
@@ -83,13 +86,15 @@ def combined_forecast(
     from backend.database import get_forecast_cache, save_forecast_cache
 
     clean_ticker = validate_ticker_format(ticker)
-    _require_auth_for_refresh(refresh, authorization)
 
-    if not refresh:
-        cached = get_forecast_cache(clean_ticker, days)
-        if cached:
-            cached["cached"] = True
-            return cached
+    cached = None if refresh else get_forecast_cache(clean_ticker, days)
+    if cached:
+        cached["cached"] = True
+        return cached
+
+    # Từ đây trở xuống là đường TÍNH LẠI — luôn cần đăng nhập, kể cả khi chỉ vì
+    # trượt cache chứ không phải do người dùng yêu cầu refresh.
+    _require_auth_for_compute(authorization)
 
     from backend.agents.research_agent import analyze_market
 

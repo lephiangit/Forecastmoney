@@ -1,0 +1,22 @@
+# Không đóng gói secret vào image.
+# Dockerfile có `COPY backend/ ./backend/`, mà .gitignore KHÔNG áp dụng cho docker
+# build — nên khi chưa có file này, `backend/.env` (chứa khoá ký JWT, khoá
+# Supabase service role, GROQ_API_KEY) được copy thẳng vào layer của image và
+# bất kỳ ai pull được image đều đọc được.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+node_modules/
+frontend/
+data/
+data_backup*/
+scratch/
+venv/

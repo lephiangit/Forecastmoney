@@ -93,28 +93,34 @@ export function TechnicalChart({ ticker, period = "1y" }: TechnicalChartProps) {
       </div>
 
       {/* Main Price Chart with MA + BB overlays */}
+      {/*
+        MÀU DÙNG `var(--token)` TRẦN, KHÔNG BỌC `hsl(...)`.
+        globals.css định nghĩa các token này bằng mã HEX (`--border: #262c35`),
+        nên `hsl(var(--border))` nở ra thành `hsl(#262c35)` — CSS không hợp lệ.
+        Trình duyệt bỏ qua cả thuộc tính, và nét lưới/chữ trục/tooltip biến mất.
+      */}
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={ohlcv}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis
               dataKey="date"
-              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
               tickFormatter={(v: string) => v.slice(5)}
               interval="preserveStartEnd"
             />
             <YAxis
-              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
               domain={["auto", "auto"]}
               tickFormatter={(v: number) => v > 1000 ? `${(v/1000).toFixed(0)}k` : v.toFixed(2)}
             />
             <Tooltip
-              contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+              contentStyle={{ backgroundColor: "var(--card)", borderColor: "var(--border)", borderRadius: "8px", fontSize: "12px" }}
               formatter={(val: any, name: any) => [typeof val === "number" ? val.toFixed(4) : val, name]}
             />
 
             {/* Price line */}
-            <Line type="monotone" dataKey="close" stroke="hsl(var(--foreground))" strokeWidth={1.5} dot={false} name="Price" />
+            <Line type="monotone" dataKey="close" stroke="var(--foreground)" strokeWidth={1.5} dot={false} name="Price" />
 
             {/* MA overlays */}
             {activeIndicators.has("ma") && (
@@ -141,11 +147,11 @@ export function TechnicalChart({ ticker, period = "1y" }: TechnicalChartProps) {
           <p className="mb-1 text-xs font-semibold text-muted-foreground">RSI (14)</p>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={ohlcv}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="date" tick={false} axisLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} ticks={[30, 50, 70]} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--muted-foreground)" }} ticks={[30, 50, 70]} />
               <Tooltip
-                contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                contentStyle={{ backgroundColor: "var(--card)", borderColor: "var(--border)", borderRadius: "8px", fontSize: "12px" }}
                 formatter={(val: any) => [Number(val).toFixed(1), "RSI"]}
               />
               <Line type="monotone" dataKey="rsi" stroke="#ec4899" strokeWidth={1.5} dot={false} />
@@ -163,11 +169,11 @@ export function TechnicalChart({ ticker, period = "1y" }: TechnicalChartProps) {
           <p className="mb-1 text-xs font-semibold text-muted-foreground">MACD</p>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={ohlcv}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="date" tick={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+              <YAxis tick={{ fontSize: 9, fill: "var(--muted-foreground)" }} />
               <Tooltip
-                contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                contentStyle={{ backgroundColor: "var(--card)", borderColor: "var(--border)", borderRadius: "8px", fontSize: "12px" }}
                 formatter={(val: any, name: any) => [Number(val).toFixed(4), name]}
               />
               <Line type="monotone" dataKey="macd" stroke="#10b981" strokeWidth={1.5} dot={false} name="MACD" />

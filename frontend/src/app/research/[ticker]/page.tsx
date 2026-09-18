@@ -151,6 +151,18 @@ export default function ResearchDetailPage({ params }: { params: Promise<{ ticke
               )}
             </div>
 
+            {/* `translateMut` không có nhánh lỗi: khi backend từ chối, nút VI chỉ
+                ngừng quay và tuyệt đối không có gì xảy ra. */}
+            {translateMut.isError && (
+              <p
+                role="alert"
+                className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              >
+                {(translateMut.error as Error)?.message ||
+                  "Không dịch được báo cáo. Vui lòng thử lại sau."}
+              </p>
+            )}
+
             <div className="mt-5">
               <Markdown content={body} />
             </div>

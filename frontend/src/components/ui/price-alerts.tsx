@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Bell, BellRing, ChevronUp, ChevronDown, Trash2, Plus, Check } from "lucide-react"
@@ -21,6 +21,13 @@ export function PriceAlerts({ defaultTicker = "", className }: PriceAlertsProps)
   const { user } = useAuthStore()
 
   const [ticker, setTicker] = useState(defaultTicker)
+
+  // `useState(defaultTicker)` chỉ dùng giá trị ở lần render ĐẦU. Khi điều hướng
+  // giữa hai trang cùng route động (ví dụ /research/BTC-USD → /research/NVDA),
+  // component không bị tháo ra nên ô mã vẫn giữ mã cũ — người dùng tạo cảnh báo
+  // cho NHẦM mã mà không hề biết.
+  useEffect(() => setTicker(defaultTicker), [defaultTicker])
+
   const [condition, setCondition] = useState<"above" | "below">("above")
   const [targetPrice, setTargetPrice] = useState("")
   const [showForm, setShowForm] = useState(false)
@@ -121,6 +128,16 @@ export function PriceAlerts({ defaultTicker = "", className }: PriceAlertsProps)
                 {created ? t("alertCreated") : t("createAlert")}
               </button>
             </div>
+            {/* `api.createPriceAlert` nay NÉM lỗi thay vì trả `false` im lặng —
+                hiển thị lý do máy chủ từ chối thay vì báo thành công giả. */}
+            {createMut.isError && (
+              <p
+                role="alert"
+                className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              >
+                {(createMut.error as Error)?.message || "Không tạo được cảnh báo. Vui lòng thử lại."}
+              </p>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -149,10 +166,12 @@ export function PriceAlerts({ defaultTicker = "", className }: PriceAlertsProps)
                   {alert.condition === "above" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                   {alert.condition === "above" ? t("alertAbove") : t("alertBelow")}
                 </span>
-                <span className="font-mono text-sm">{formatCurrency(alert.target_price)}</span>
+                {/* Thiếu `currency` thì giá đích của mã .VN bị định dạng như USD. */}
+                <span className="font-mono text-sm">{formatCurrency(alert.target_price, { currency: alert.ticker })}</span>
               </div>
               <button
                 onClick={() => deleteMut.mutate(alert.id)}
+                aria-label={`Xoá cảnh báo ${alert.ticker}`}
                 className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -173,10 +192,11 @@ export function PriceAlerts({ defaultTicker = "", className }: PriceAlertsProps)
                 <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary">
                   {t("alertTriggered")} ✓
                 </span>
-                <span className="font-mono text-sm text-muted-foreground">{formatCurrency(alert.target_price)}</span>
+                <span className="font-mono text-sm text-muted-foreground">{formatCurrency(alert.target_price, { currency: alert.ticker })}</span>
               </div>
               <button
                 onClick={() => deleteMut.mutate(alert.id)}
+                aria-label={`Xoá cảnh báo ${alert.ticker}`}
                 className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />

@@ -76,7 +76,9 @@ def get_notifications(user: dict = Depends(get_current_user)):
             c.table("notifications")
             .select("*")
             .gte("created_at", cutoff)
-            .or_(f"user_id.eq.{user_id},user_id.is.null")
+            # `int(...)`: user_id được nội suy thẳng vào chuỗi bộ lọc PostgREST,
+            # nên ép kiểu để không có gì ngoài chữ số lọt vào câu lọc.
+            .or_(f"user_id.eq.{int(user_id)},user_id.is.null")
             .order("created_at", desc=True)
             .limit(50)
             .execute()

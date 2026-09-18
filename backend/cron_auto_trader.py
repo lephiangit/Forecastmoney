@@ -29,6 +29,7 @@ Chiến lược:
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -43,6 +44,9 @@ from backend.database import (
 )
 from backend.models.forecaster import get_live_quote, run_combined_forecast
 from backend.services.portfolio import compute_position_for, sort_trades_ascending
+
+# Khoá chống chạy chồng ở cấp tiến trình (xem run_auto_trade).
+_run_lock = threading.Lock()
 
 STRATEGY_PARAMS = {
     "conservative": {"min_confidence": 80, "min_expected_return": 3.0, "position_scale": 0.7},
@@ -283,15 +287,18 @@ class _UserSession:
         for _ in range(5):
             cfg = get_admin_config(self.user_id) or {}
             current = float(cfg.get("current_balance") or 0.0)
-            initial = float(cfg.get("initial_balance") or self.initial_balance)
             new_balance = current + delta
 
+            # KHÔNG ghi `total_pnl` nữa. Công thức cũ (tiền mặt − vốn ban đầu) bỏ
+            # qua giá trị thị trường của vị thế đang mở, nên mỗi lệnh MUA bị ghi
+            # thành khoản lỗ đúng bằng số tiền vừa bỏ ra. Ở đây không có giá live
+            # cho mọi mã nên không tính đúng được — thà không ghi còn hơn ghi sai.
+            # /admin/portfolio và /admin/pnl tính lãi/lỗ trên vốn chủ sở hữu.
             ok = update_balance_cas(
                 self.user_id,
                 expected_balance=current,
                 new_balance=new_balance,
                 extra={
-                    "total_pnl": new_balance - initial,
                     "win_trades": int(cfg.get("win_trades") or 0) + win_delta,
                     "loss_trades": int(cfg.get("loss_trades") or 0) + loss_delta,
                 },
@@ -320,9 +327,14 @@ def _check_risk_exit(
     position: dict,
     stop_loss_pct: float,
     take_profit_pct: float,
-) -> bool:
+) -> Optional[dict]:
     """
-    Kiểm tra và thực hiện cắt lỗ / chốt lời. Trả về True nếu đã bán.
+    Kiểm tra và thực hiện cắt lỗ / chốt lời.
+
+    Trả về BẢN GHI LỆNH vừa khớp (dict) nếu đã bán, None nếu không bán.
+    Bản cũ trả về bool nên điểm gọi không có gì để append vào `all_trades`:
+    watchlist trùng mã sẽ thấy lại vị thế cũ và cắt lỗ lần nữa trên cùng
+    một vị thế, cộng tiền nhiều lần.
 
     Cắt lỗ được kiểm tra TRƯỚC chốt lời: nếu vì lý do nào đó cả hai cùng thoả
     (dữ liệu giá nhảy bậc), ưu tiên bảo toàn vốn.
@@ -330,34 +342,44 @@ def _check_risk_exit(
     qty = position["qty"]
     avg_cost = position["avg_cost"]
     if qty <= 0 or avg_cost <= 0:
-        return False
+        return None
 
     price_change_pct = (current_price - avg_cost) / avg_cost * 100
     sell_value = current_price * qty
 
+    def _record(action_note: str) -> dict:
+        return {
+            "ticker": ticker,
+            "action": "SELL",
+            "quantity": qty,
+            "total_value": sell_value,
+            "trade_time": datetime.now().isoformat(),
+            "note": action_note,
+        }
+
     if stop_loss_pct > 0 and price_change_pct <= -stop_loss_pct:
         if not save_trade(session.user_id, ticker, "SELL", qty, current_price, sell_value, "AUTO_SL"):
             print(f"     [!] {ticker}: ghi lệnh cắt lỗ thất bại — giữ nguyên vị thế.")
-            return False
+            return None
         session.record_sell(sell_value, profitable=False)
         print(
             f"     [SL] User {session.user_id}: bán {qty:.4f} {ticker} @ {current_price:.2f} "
             f"({price_change_pct:.1f}%)"
         )
-        return True
+        return _record("AUTO_SL")
 
     if take_profit_pct > 0 and price_change_pct >= take_profit_pct:
         if not save_trade(session.user_id, ticker, "SELL", qty, current_price, sell_value, "AUTO_TP"):
             print(f"     [!] {ticker}: ghi lệnh chốt lời thất bại — giữ nguyên vị thế.")
-            return False
+            return None
         session.record_sell(sell_value, profitable=True)
         print(
             f"     [TP] User {session.user_id}: bán {qty:.4f} {ticker} @ {current_price:.2f} "
             f"(+{price_change_pct:.1f}%)"
         )
-        return True
+        return _record("AUTO_TP")
 
-    return False
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -365,7 +387,22 @@ def _check_risk_exit(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_auto_trade() -> None:
-    """Chạy một lượt giao dịch tự động cho toàn bộ user đang bật bot."""
+    """Chạy một lượt giao dịch tự động cho toàn bộ user đang bật bot.
+
+    Khoá chống chạy chồng: một lượt có thể kéo dài hàng phút (gọi LLM + TFT),
+    trong khi vòng lặp nền ở main.py gọi lại mỗi 60 giây. Hai lượt chạy song
+    song sẽ đọc cùng một số dư và khớp lệnh trùng nhau.
+    """
+    if not _run_lock.acquire(blocking=False):
+        print("[skip] run_auto_trade dang chay, bo qua luot nay")
+        return
+    try:
+        _run_auto_trade()
+    finally:
+        _run_lock.release()
+
+
+def _run_auto_trade() -> None:
     c = _get_client()
     if not c:
         print("[auto-trade] Không có kết nối cơ sở dữ liệu.")
@@ -415,7 +452,9 @@ def _process_user(config: dict, forecast_cache: Dict[str, Optional[Dict]]) -> No
     watchlist: List[str] = bot_cfg.get("assets") or get_watchlist(user_id)
     if not watchlist:
         return
-    watchlist = [t.upper() for t in watchlist][:MAX_TICKERS_PER_USER]
+    # dict.fromkeys: khử trùng lặp mà vẫn giữ nguyên thứ tự. Watchlist trùng mã
+    # làm bot xử lý cùng một vị thế hai lần trong một lượt.
+    watchlist = list(dict.fromkeys(t.upper() for t in watchlist))[:MAX_TICKERS_PER_USER]
 
     session = _UserSession(config)
     # TOÀN BỘ lịch sử, không phải 500 lệnh gần nhất — xem ghi chú ở
@@ -440,9 +479,13 @@ def _process_user(config: dict, forecast_cache: Dict[str, Optional[Dict]]) -> No
 
         # ── Bước 1: quản trị rủi ro trên vị thế đang mở ──
         if position["qty"] > 0:
-            if _check_risk_exit(
+            sold = _check_risk_exit(
                 session, ticker, current_price, position, stop_loss_pct, take_profit_pct
-            ):
+            )
+            if sold:
+                # Phải vào sổ cục bộ, nếu không compute_position_for() vẫn thấy
+                # vị thế cũ ở lượt sau và cắt lỗ/chốt lời lại lần nữa.
+                all_trades.append(sold)
                 continue
 
         # ── Bước 2: dự báo ──

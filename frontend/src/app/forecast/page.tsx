@@ -18,6 +18,10 @@ export default function ForecastIndexPage() {
   const t = useT()
   const [search, setSearch] = useState("")
   const [adding, setAdding] = useState(false)
+  // `api.addWatchlist` / `api.removeWatchlist` dùng `apiFetch`, tức là NÉM lỗi.
+  // Không bắt thì lỗi rơi vào unhandled rejection: nút không phản hồi, không có
+  // thông báo nào, và `setAdding(false)` không bao giờ chạy (nút kẹt vĩnh viễn).
+  const [watchlistError, setWatchlistError] = useState<string | null>(null)
   const { data, isError, refetch } = useQuery({ queryKey: ["forecasts"], queryFn: api.getForecasts })
   const { user } = useAuthStore()
   const { data: watchlist = [], refetch: refetchWatchlist } = useQuery({ queryKey: ["watchlist"], queryFn: api.getWatchlist, enabled: !!user })
@@ -25,11 +29,19 @@ export default function ForecastIndexPage() {
   const handleAddNew = async () => {
     if (!search || !user) return
     setAdding(true)
-    await api.addWatchlist(search.toUpperCase())
-    setSearch("")
-    refetchWatchlist()
-    refetch()
-    setAdding(false)
+    setWatchlistError(null)
+    try {
+      await api.addWatchlist(search.toUpperCase())
+      setSearch("")
+      refetchWatchlist()
+      refetch()
+    } catch (err) {
+      setWatchlistError((err as Error)?.message || "Không thêm được mã vào danh sách theo dõi.")
+    } finally {
+      // Phải nằm ở `finally`: nếu không, một lỗi bất kỳ sẽ để nút kẹt ở trạng
+      // thái "đang thêm" cho tới khi người dùng tải lại trang.
+      setAdding(false)
+    }
   }
 
   const filtered = (data ?? []).filter(
@@ -56,6 +68,15 @@ export default function ForecastIndexPage() {
           />
         </div>
       </div>
+
+      {watchlistError && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-negative"
+        >
+          {watchlistError}
+        </div>
+      )}
 
       {isError ? (
         <ErrorCard onRetry={() => refetch()} />
@@ -138,11 +159,17 @@ export default function ForecastIndexPage() {
                           onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
-                            if (watchlist.includes(f.ticker)) {
-                              api.removeWatchlist(f.ticker).then(() => { refetchWatchlist(); refetch() })
-                            } else {
-                              api.addWatchlist(f.ticker).then(() => { refetchWatchlist(); refetch() })
-                            }
+                            setWatchlistError(null)
+                            const op = watchlist.includes(f.ticker)
+                              ? api.removeWatchlist(f.ticker)
+                              : api.addWatchlist(f.ticker)
+                            op
+                              .then(() => { refetchWatchlist(); refetch() })
+                              .catch((err) =>
+                                setWatchlistError(
+                                  (err as Error)?.message || "Không cập nhật được danh sách theo dõi.",
+                                ),
+                              )
                           }}
                           className="text-muted-foreground hover:text-primary transition-colors"
                         >

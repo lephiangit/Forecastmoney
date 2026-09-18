@@ -183,7 +183,9 @@ export const translations = {
     months6: "6 months",
     year1: "1 year",
     maxDrawdown: "Max Drawdown",
-    sharpeRatio: "Sharpe Ratio",
+    // Không gọi là "Sharpe": rf = 0 và tài khoản phần lớn là tiền mặt (xem
+    // return_to_volatility_ratio ở backend/routers/backtest.py).
+    sharpeRatio: "Return / Volatility",
     equityCurve: "Equity Curve",
     tradeHistory: "Trade History",
     finalBalance: "Final Balance",
@@ -377,7 +379,7 @@ export const translations = {
     months6: "6 tháng",
     year1: "1 năm",
     maxDrawdown: "Sụt giảm tối đa",
-    sharpeRatio: "Tỷ lệ Sharpe",
+    sharpeRatio: "Lợi nhuận / Biến động",
     equityCurve: "Đường vốn",
     tradeHistory: "Lịch sử giao dịch",
     finalBalance: "Số dư cuối",

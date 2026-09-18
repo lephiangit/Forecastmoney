@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
@@ -9,6 +9,28 @@ import { api } from "@/lib/api"
 import { useAuthStore, useT } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { signInWithGoogle } from "@/lib/supabase"
+
+/**
+ * Câu chữ cho các mã lỗi mà CHÍNH ứng dụng đẩy vào query string khi đá người dùng
+ * về trang này (`?error=` / `?reason=`).
+ *
+ * Bản cũ không bao giờ đọc chúng, nên mọi lần bị đá về đây đều IM LẶNG: người
+ * dùng bấm "Đăng nhập với Google", màn hình nhấp nháy rồi quay lại đúng form
+ * đăng nhập, không một dòng giải thích — đúng trải nghiệm mà sự cố Google đang
+ * tạo ra.
+ */
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  google_auth_failed:
+    "Đăng nhập bằng Google không thành công. Có thể bạn đã huỷ ở cửa sổ Google, hoặc tài khoản Google này chưa được cấp quyền. Hãy thử lại, hoặc đăng nhập bằng email và mật khẩu.",
+  auth_timeout:
+    "Quá thời gian chờ máy chủ xác thực. Máy chủ có thể đang khởi động lại — vui lòng đợi khoảng một phút rồi thử lại.",
+  session_error:
+    "Không tạo được phiên đăng nhập. Hãy kiểm tra xem trình duyệt có đang chặn cookie/bộ nhớ cục bộ của trang này không, rồi thử lại.",
+  callback_error:
+    "Có lỗi khi xử lý phản hồi từ Google. Vui lòng thử đăng nhập lại; nếu vẫn lỗi, hãy dùng email và mật khẩu.",
+  session_expired:
+    "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục.",
+}
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -47,6 +69,15 @@ export default function LoginPage() {
   const [forgotEmail, setForgotEmail] = useState("")
   const [forgotLoading, setForgotLoading] = useState(false)
   const [forgotSuccess, setForgotSuccess] = useState(false)
+
+  // Đọc lý do bị đá về trang đăng nhập. Chạy trong useEffect vì `window` không
+  // tồn tại lúc render phía máy chủ.
+  const [authError, setAuthError] = useState<string | null>(null)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get("error") || params.get("reason")
+    if (code) setAuthError(AUTH_ERROR_MESSAGES[code] || null)
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -104,6 +135,15 @@ export default function LoginPage() {
         <div className="rounded-xl border border-border bg-card p-6 shadow-xl sm:p-8">
           <h1 className="text-xl font-bold text-card-foreground">{t("welcomeBack")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("howIsMyAccount")}</p>
+
+          {authError && (
+            <p
+              role="alert"
+              className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {authError}
+            </p>
+          )}
 
           <button
             type="button"

@@ -38,6 +38,7 @@ from backend.models.feature_engineering import (  # noqa: E402
     LEGACY_FEATURE_COLUMNS,
     TARGET_COLUMN,
     add_technical_indicators,
+    clean_price_history,
     get_feature_columns,
 )
 
@@ -88,7 +89,12 @@ def analyse(max_tickers: int | None, csv_out: str | None) -> None:
         files = files[::step][:max_tickers]
 
     new_cols = get_feature_columns()
-    old_cols = LEGACY_FEATURE_COLUMNS
+    # ĐO TẬP CŨ PHẢI GỒM CẢ "Close".
+    # LEGACY_FEATURE_COLUMNS không liệt kê Close, nhưng train_tft bản cũ vẫn đưa
+    # Close vào đầu vào — và đó chính là cột PHI DỪNG NGHIÊM TRỌNG NHẤT. Bỏ nó ra
+    # khỏi phép đo nghĩa là con số "22 đặc trưng" trong báo cáo không có phép đo
+    # nào đứng sau, và còn làm tập cũ trông đỡ tệ hơn thực tế.
+    old_cols = ["Close"] + [c for c in LEGACY_FEATURE_COLUMNS if c != "Close"]
 
     acc = {"old": [], "new": []}
     acc_z = {"old": [], "new": []}
@@ -102,7 +108,10 @@ def analyse(max_tickers: int | None, csv_out: str | None) -> None:
         if df.empty or TARGET_COLUMN not in df.columns:
             continue
 
-        featured = add_technical_indicators(df.sort_index())
+        # Phải làm sạch ĐÚNG như train_tft làm, nếu không phép đo chạy trên một
+        # phân phối dữ liệu khác với dữ liệu mô hình thật sự được huấn luyện.
+        df = clean_price_history(df.sort_index())
+        featured = add_technical_indicators(df)
         featured = featured.replace([np.inf, -np.inf], np.nan)
 
         row = {}

@@ -13,8 +13,23 @@ SECURITY NOTES
 from typing import List, Optional
 
 import hashlib
+import re
 
 from pydantic_settings import BaseSettings
+
+# Dạng origin hợp lệ mà trình duyệt thực sự gửi: scheme://host[:port], không path.
+#
+# Lớp ký tự phải rộng hơn [a-z0-9.\-]. Cổng kiểm tra này CHẶN KHỞI ĐỘNG ở
+# production, nên một origin hợp lệ bị bắt nhầm sẽ làm cả dịch vụ không lên được —
+# hỏng nặng hơn hẳn thứ nó định phòng. Hai trường hợp bị bắt nhầm đã kiểm chứng:
+#
+#   - gạch dưới trong hostname (`https://my_app.example.com`): không hợp chuẩn
+#     DNS nhưng tồn tại thật ở môi trường nội bộ, và trình duyệt vẫn gửi nguyên.
+#   - IPv6 dạng ngoặc vuông (`http://[::1]:3000`), đúng chuẩn RFC 6454.
+#
+# Mục tiêu của cổng này là bắt các lỗi cấu hình THÔ (thiếu scheme, thừa đường dẫn,
+# thừa dấu /, sai scheme) — không phải thẩm định tên miền.
+_ORIGIN_RE = re.compile(r"^https?://(\[[0-9a-f:]+\]|[a-z0-9._\-]+)(:\d+)?$")
 
 # Các giá trị secret mặc định — chỉ dùng được ở môi trường dev.
 # Nếu gặp lại các giá trị này ở production, app sẽ dừng khởi động.
@@ -157,7 +172,20 @@ class Settings(BaseSettings):
 
     @property
     def origin_list(self) -> List[str]:
-        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+        out: List[str] = []
+        for raw in self.allowed_origins.split(","):
+            o = raw.strip().rstrip("/")
+            if not o:
+                continue
+            # Trình duyệt luôn gửi scheme+host chữ thường và KHÔNG có dấu / ở cuối.
+            # Chuẩn hoá để cấu hình viết hoa hay thừa dấu / vẫn khớp, thay vì chết
+            # CORS trong im lặng (header thiếu, log server không báo gì).
+            if "://" in o:
+                scheme, _, rest = o.partition("://")
+                host, slash, path = rest.partition("/")
+                o = f"{scheme.lower()}://{host.lower()}" + (slash + path if path else "")
+            out.append(o)
+        return out
 
     @property
     def docs_enabled(self) -> bool:
@@ -215,6 +243,20 @@ class Settings(BaseSettings):
                 "https://ten-mien-cua-ban.com — nếu không, trình duyệt sẽ chặn toàn bộ "
                 "request và giao diện chỉ hiển thị dữ liệu mẫu."
             )
+
+        # Origin sai định dạng (thừa đường dẫn, thiếu scheme, có dấu cách, hay ghi
+        # "domain.com" thay vì "https://domain.com") KHÔNG bao giờ khớp chuỗi
+        # `Origin` trình duyệt gửi. Bản cũ vẫn cho app khởi động bình thường rồi
+        # chết CORS âm thầm — bắt ngay lúc khởi động để còn biết đường mà sửa.
+        for o in self.origin_list:
+            if o == "*":
+                continue  # Đã báo ở nhánh trên.
+            if not _ORIGIN_RE.match(o):
+                problems.append(
+                    f'ALLOWED_ORIGINS chứa giá trị sai định dạng: "{o}". Mỗi origin phải '
+                    "đúng dạng scheme://host[:port], không kèm đường dẫn hay dấu / ở cuối "
+                    "(ví dụ: https://ten-mien-cua-ban.com)."
+                )
 
         return problems
 

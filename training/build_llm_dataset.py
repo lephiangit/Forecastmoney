@@ -456,7 +456,15 @@ def generate_synthetic(count: int, data_dir: str) -> Iterator[Dict]:
         # khác mẫu thật (chạy `--source both` trước đây cho ra dataset hai dạng
         # prompt lẫn lộn).
         headline_dicts = [{"title": h, "summary": "", "source": "synthetic"} for h in headlines]
-        price_info = f"Giá: {current:,.4f}"
+        # NHÃN PHẢI CÓ CĂN CỨ TRONG INPUT.
+        # Bản cũ chỉ đưa giá vào prompt, trong khi nhãn đích lại chứa hai con số
+        # CHÍNH XÁC (`change_pct`, `volatility`) mà prompt hoàn toàn không nhắc
+        # tới. Đó là dạy model bịa số — và số bịa đó sau này được ghi thẳng vào
+        # `research_reports` rồi hiện ra giao diện như phân tích thật.
+        price_info = (
+            f"Giá: {current:,.4f} | Biến động phiên gần nhất: {change_pct:+.2f}% "
+            f"| Độ biến động 20 phiên: {volatility:.2f}%"
+        )
         user_prompt = build_analysis_prompt(ticker, headline_dicts, price_info)
 
         yield {
@@ -530,30 +538,66 @@ def write_splits(samples: List[Dict], output_dir: str, review_sample: int = 0,
             )
             return
 
-    # ── Chia THEO THỜI GIAN ──
-    # Mẫu không có created_at (dữ liệu tổng hợp) xếp trước, nên chúng luôn nằm ở
-    # phần train và không bao giờ làm bẩn tập test.
-    samples.sort(key=lambda it: it.get("created_at") or "")
-
+    # ── Chia THEO NGUỒN, rồi THEO THỜI GIAN ──
+    #
+    # LỖI ĐÃ SỬA: bản cũ chỉ sort theo `created_at` rồi cắt 80/10/10. Mẫu tổng hợp
+    # có `created_at` rỗng nên dồn về đầu, nhưng với `--source both` (mặc định)
+    # chúng chiếm phần lớn dataset — nên tập VALIDATION hoàn toàn có thể gồm 100%
+    # mẫu tổng hợp. Mà validation chính là tập dùng để CHỌN CHECKPOINT tốt nhất:
+    # chọn bằng dữ liệu tự sinh nghĩa là chọn ra model giỏi bắt chước quy tắc sinh
+    # dữ liệu, không phải model giỏi phân tích tin tức thật.
+    #
+    # Nay: `validation` và `test` CHỈ lấy từ mẫu thật (`supabase`), chia theo thời
+    # gian; mẫu `synthetic` chỉ được vào `train`.
     n = len(samples)
-    n_train = int(n * 0.8)
-    n_val = int(n * 0.1)
+    synthetic = [it for it in samples if it.get("origin") == "synthetic"]
+    real = [it for it in samples if it.get("origin") != "synthetic"]
+    real.sort(key=lambda it: it.get("created_at") or "")
+
+    n_real = len(real)
+    n_val = int(n_real * 0.1)
+    n_test = int(n_real * 0.1)
+    n_real_train = n_real - n_val - n_test
 
     splits = {
-        "train": samples[:n_train],
-        "validation": samples[n_train : n_train + n_val],
-        "test": samples[n_train + n_val :],
+        "train": synthetic + real[:n_real_train],
+        "validation": real[n_real_train : n_real_train + n_val],
+        "test": real[n_real_train + n_val :],
     }
 
-    # Cảnh báo nếu tập test chứa mẫu tổng hợp — khi đó số liệu đánh giá vô nghĩa.
-    synth_in_test = sum(1 for it in splits["test"] if it.get("origin") == "synthetic")
-    if synth_in_test:
+    # Mẫu thật quá ít thì validation/test gần như rỗng — vẫn ghi, nhưng phải nói to.
+    if n_real < 30:
         print(
-            f"\nCẢNH BÁO: {synth_in_test}/{len(splits['test'])} mẫu trong tập TEST là dữ "
-            "liệu TỔNG HỢP (tin tức sinh ra từ dấu biến động giá, nhãn cũng suy từ chính\n"
-            "dấu giá đó). Mọi chỉ số đo trên tập này không có giá trị khoa học — đừng đưa\n"
-            "vào báo cáo. Dùng --source supabase khi đã đủ dữ liệu thật."
+            "\n" + "=" * 70 + "\n"
+            f"CẢNH BÁO LỚN: chỉ có {n_real} mẫu THẬT (supabase) trong toàn bộ dataset.\n"
+            f"Tập validation ({len(splits['validation'])} mẫu) và test "
+            f"({len(splits['test'])} mẫu) quá nhỏ để đo được bất cứ điều gì.\n"
+            "Việc chọn checkpoint sẽ gần như ngẫu nhiên, và mọi con số đo trên tập\n"
+            "test KHÔNG được đưa vào báo cáo. Hãy thu thập thêm dữ liệu thật trước.\n"
+            + "=" * 70
         )
+
+    # Cảnh báo ĐỐI XỨNG cho cả validation lẫn test: cả hai đều mất giá trị nếu
+    # lẫn mẫu tổng hợp (tin tức sinh ra từ dấu biến động giá, nhãn cũng suy từ
+    # chính dấu giá đó).
+    for split_name, label in (("validation", "VALIDATION"), ("test", "TEST")):
+        rows = splits[split_name]
+        synth_count = sum(1 for it in rows if it.get("origin") == "synthetic")
+        if synth_count:
+            print(
+                f"\nCẢNH BÁO: {synth_count}/{len(rows)} mẫu trong tập {label} là dữ "
+                "liệu TỔNG HỢP.\nMọi chỉ số đo trên tập này không có giá trị khoa học "
+                "— đừng đưa vào báo cáo.\nDùng --source supabase khi đã đủ dữ liệu thật."
+            )
+        elif not rows:
+            print(
+                f"\nCẢNH BÁO: tập {label} RỖNG (không có mẫu thật nào để chia). "
+                + (
+                    "Không thể chọn checkpoint theo dữ liệu thật."
+                    if split_name == "validation"
+                    else "Không thể báo cáo bất kỳ chỉ số đánh giá nào."
+                )
+            )
 
     os.makedirs(output_dir, exist_ok=True)
 

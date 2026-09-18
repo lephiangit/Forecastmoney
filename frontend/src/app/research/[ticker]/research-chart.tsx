@@ -58,8 +58,8 @@ export function ResearchChart({ sentiment, confidence }: ResearchChartProps) {
             </Pie>
             <Tooltip 
               formatter={(val: any) => [`${val}%`, t("confidence")]} 
-              contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
-              itemStyle={{ color: 'hsl(var(--foreground))' }}
+              contentStyle={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)', borderRadius: '8px' }}
+              itemStyle={{ color: 'var(--foreground)' }}
             />
           </PieChart>
         </ResponsiveContainer>

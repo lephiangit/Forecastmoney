@@ -234,6 +234,11 @@ def verify_token(token: str) -> Optional[dict]:
             return None
         if "user_id" not in payload or "username" not in payload:
             return None
+        # `user_id` phải là số nguyên: nó được dùng làm khoá tra cứu và được nội
+        # suy vào bộ lọc PostgREST ở nhiều nơi. Chỉ kiểm tra "có mặt" là chưa đủ.
+        # `bool` là subclass của `int` nên phải loại riêng.
+        if not isinstance(payload.get("user_id"), int) or isinstance(payload.get("user_id"), bool):
+            return None
         return payload
     except Exception:
         # Token hỏng là chuyện bình thường (hết hạn, bị sửa) — không cần log ồn ào.

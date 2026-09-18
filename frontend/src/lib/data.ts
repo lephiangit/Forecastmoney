@@ -221,8 +221,15 @@ export const MARKET_ASSETS: MarketAsset[] = [
   },
 ]
 
-export function buildForecast(ticker: string): Forecast {
-  const asset = MARKET_ASSETS.find((a) => a.ticker === ticker) ?? MARKET_ASSETS[0]
+/**
+ * Dự báo mẫu cho mã có trong MARKET_ASSETS. Trả `null` với mã không biết.
+ *
+ * Bản cũ có `?? MARKET_ASSETS[0]`, nghĩa là MỌI mã lạ đều nhận về dự báo của
+ * FPT.VN — giá, tên và lịch sử của một tài sản hoàn toàn khác, hiển thị như thật.
+ */
+export function buildForecast(ticker: string): Forecast | null {
+  const asset = MARKET_ASSETS.find((a) => a.ticker === ticker)
+  if (!asset) return null
   const seed = ticker.split("").reduce((a, c) => a + c.charCodeAt(0), 0)
   const history = genSeries(asset.price * 0.92, 60, 0.04, 0.0015, seed)
   const last = history[history.length - 1].value

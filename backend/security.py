@@ -233,7 +233,11 @@ def verify_cron_secret(x_cron_secret: Optional[str] = Header(default=None)) -> b
     Dùng `hmac.compare_digest` để so sánh trong thời gian hằng định, tránh
     timing attack cho phép dò từng ký tự của secret.
     """
-    expected = settings.cron_secret_key
-    if not x_cron_secret or not hmac.compare_digest(x_cron_secret, expected):
+    # So sánh trên BYTES. `hmac.compare_digest` ném TypeError khi chuỗi có ký tự
+    # ngoài ASCII, nên một header chứa ký tự Unicode bất kỳ sẽ tạo ra lỗi 500
+    # ngay trong lớp xác thực — một đường 500 không cần xác thực.
+    provided = (x_cron_secret or "").encode("utf-8", "ignore")
+    expected = (settings.cron_secret_key or "").encode("utf-8")
+    if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True

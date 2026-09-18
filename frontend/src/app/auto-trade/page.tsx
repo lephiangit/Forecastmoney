@@ -111,10 +111,6 @@ export default function AutoTradePage() {
     }
   })
 
-  useEffect(() => {
-    // config state is already initialized
-  }, [])
-
   function update<K extends keyof AutoTradeConfig>(key: K, value: AutoTradeConfig[K]) {
     setConfig((c) => ({ ...c, [key]: value }))
     setSaved(false)
@@ -317,7 +313,14 @@ export default function AutoTradePage() {
             <div className="rounded-lg border border-border bg-card p-5">
               <h3 className="font-semibold text-card-foreground">Risk Parameters</h3>
               <div className="mt-4 space-y-5">
-                <SliderRow icon={Percent} label={t("maxPositionSize")} value={config.maxPositionSize} suffix="%" min={5} max={50} onChange={(v) => update("maxPositionSize", v)} />
+                {/* ĐÃ GỠ thanh trượt "Max Position Size".
+                    Backend KHÔNG có trường tương ứng: bảng `bot_configs` không có
+                    cột nào cho nó, `BotConfigRequest` cũng không nhận, và trần tỷ
+                    trọng thực tế là hằng số cứng `MAX_POSITION_PCT = 0.30` trong
+                    backend/cron_auto_trader.py. Giá trị người dùng kéo ở đây không
+                    bao giờ rời khỏi trình duyệt, nhưng giao diện vẫn báo
+                    "Configuration saved". Thêm cột mới cần migration trên DB thật
+                    nên gỡ thanh trượt là đường trung thực và an toàn nhất. */}
                 <SliderRow icon={Target} label={t("minConfidence")} value={config.minConfidence} suffix="%" min={50} max={95} onChange={(v) => update("minConfidence", v)} />
                 <SliderRow icon={Shield} label={t("stopLoss")} value={config.stopLoss} suffix="%" min={2} max={25} onChange={(v) => update("stopLoss", v)} />
                 <SliderRow icon={TrendingUp} label={t("takeProfit")} value={config.takeProfit} suffix="%" min={5} max={50} onChange={(v) => update("takeProfit", v)} />

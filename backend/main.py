@@ -112,23 +112,80 @@ ws_manager = PriceWSManager()
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _take_portfolio_snapshots():
-    """Lưu snapshot số dư hằng ngày cho mọi user."""
-    from backend.database import _get_client, save_portfolio_snapshot
+    """Lưu snapshot vốn chủ sở hữu hằng giờ, và làm mới cột `admin_config.total_pnl`.
+
+    ĐÂY LÀ NƠI DUY NHẤT còn ghi `total_pnl` xuống DB.
+
+    Trước đây `cron_auto_trader._UserSession.flush()` ghi cột này bằng công thức
+    (tiền mặt − vốn ban đầu) — bỏ qua hoàn toàn giá trị thị trường của vị thế đang
+    mở, nên mỗi lệnh MUA bị ghi thành khoản lỗ đúng bằng số tiền vừa bỏ ra. Công
+    thức đó đã được gỡ. Nhưng gỡ xong mà không ai ghi thay thì cột bị ĐÓNG BĂNG:
+    bảng xếp hạng hiện 0 cho mọi người, `/trading/stop` trả số cũ, và chính job này
+    ghi số 0 vào `portfolio_snapshots` mỗi giờ — dữ liệu lịch sử hỏng dần và không
+    hoàn tác được.
+
+    Nên job này tự tính lấy, theo ĐÚNG định nghĩa mà `/admin/portfolio` đang dùng:
+        vốn chủ sở hữu = tiền mặt + giá trị thị trường các vị thế đang mở
+        lãi/lỗ tổng    = vốn chủ sở hữu − vốn ban đầu
+    Không lấy được giá của mã nào thì tạm dùng giá vốn của mã đó, để vốn chủ sở hữu
+    không hụt hẳn một vị thế (thà lệch một chút còn hơn báo lỗ giả).
+
+    `get_live_quote` có cache TTL dùng chung nên nhiều user giữ cùng một mã chỉ tốn
+    một lượt gọi mạng.
+    """
+    from backend.database import _get_client, get_all_trades, save_portfolio_snapshot
+    from backend.models.forecaster import get_live_quote
+    from backend.services.portfolio import compute_positions, sort_trades_ascending
 
     c = _get_client()
     if not c:
         return
+
     try:
-        res = c.table("admin_config").select("user_id, current_balance, total_pnl").execute()
-        for row in res.data or []:
-            save_portfolio_snapshot(
-                user_id=row["user_id"],
-                balance=row.get("current_balance", 0),
-                total_pnl=row.get("total_pnl", 0),
-            )
-        print(f"[snapshot] Đã lưu snapshot cho {len(res.data or [])} user.")
+        res = c.table("admin_config").select(
+            "user_id, current_balance, initial_balance"
+        ).execute()
     except Exception as e:
-        print(f"[snapshot] Lỗi: {e}")
+        print(f"[snapshot] Lỗi đọc admin_config: {e}")
+        return
+
+    saved = 0
+    for row in res.data or []:
+        user_id = row.get("user_id")
+        if user_id is None:
+            continue
+        try:
+            cash = float(row.get("current_balance") or 0.0)
+            initial = float(row.get("initial_balance") or 0.0)
+
+            positions = compute_positions(sort_trades_ascending(get_all_trades(user_id)))
+
+            holdings_value = 0.0
+            for ticker, pos in positions.items():
+                qty = float(pos.get("qty") or 0.0)
+                if qty <= 0:
+                    continue
+                try:
+                    quote = get_live_quote(ticker)
+                except Exception:
+                    quote = None
+                price = float(quote["price"]) if quote and quote.get("price") else None
+                if price:
+                    holdings_value += qty * price
+                else:
+                    holdings_value += float(pos.get("total_cost") or 0.0)
+
+            total_pnl = round(cash + holdings_value - initial, 2)
+
+            c.table("admin_config").update({"total_pnl": total_pnl}).eq(
+                "user_id", user_id
+            ).execute()
+            save_portfolio_snapshot(user_id=user_id, balance=cash, total_pnl=total_pnl)
+            saved += 1
+        except Exception as e:
+            print(f"[snapshot] user {user_id}: {e}")
+
+    print(f"[snapshot] Đã lưu snapshot cho {saved} user.")
 
 
 def _evaluate_model_predictions():
@@ -471,8 +528,45 @@ async def observability_middleware(request: Request, call_next):
 # header" — nhìn giống lỗi cấu hình CORS, nhưng bản chất là request bị rate-limit
 # (429) và mất header vì thứ tự middleware sai. Đặt CORSMiddleware add_middleware()
 # ở đây (sau hai middleware kia) để nó luôn là lớp NGOÀI CÙNG, đảm bảo mọi response
-# — kể cả 429 từ rate limiter, kể cả 500 từ exception handler — đều được gắn đúng
-# header CORS trước khi trả về trình duyệt.
+# — kể cả 429 từ rate limiter — đều được gắn đúng header CORS trước khi trả về
+# trình duyệt.
+#
+# BỔ SUNG — vì sao 500 vẫn MẤT header CORS dù CORSMiddleware đã ở ngoài cùng:
+# `@app.exception_handler(Exception)` KHÔNG chạy trong `user_middleware`. Starlette
+# gắn nó vào `ServerErrorMiddleware`, lớp mà chính Starlette đặt ở NGOÀI CÙNG TUYỆT
+# ĐỐI — ngoài cả CORSMiddleware. Nghĩa là response 500 do handler đó tạo ra được
+# sinh SAU khi đã đi hết lớp CORS, nên không bao giờ được gắn header.
+# Đã đo trên bản cũ: 200/404/429 đều có `Access-Control-Allow-Origin`, riêng 500
+# thì `None`. Hậu quả: mọi lỗi 500 hiện lên trình duyệt thành "lỗi CORS", che mất
+# lỗi thật và làm việc chẩn đoán đi sai hướng hoàn toàn.
+#
+# Cách sửa: thêm `catch_all_middleware` ngay DƯỚI ĐÂY — vì nó được add TRƯỚC
+# CORSMiddleware nên nằm ở lớp TRONG CORS, response 500 nó tạo ra vẫn đi ngược
+# qua CORSMiddleware và được gắn header đầy đủ.
+# `@app.exception_handler(Exception)` bên dưới được GIỮ NGUYÊN làm lưới cuối cho
+# những gì thoát khỏi lớp middleware (ví dụ lỗi trong chính CORSMiddleware).
+
+@app.middleware("http")
+async def catch_all_middleware(request: Request, call_next):
+    """Bắt mọi exception chưa xử lý ở lớp TRONG CORSMiddleware để 500 vẫn có header CORS."""
+    try:
+        return await call_next(request)
+    except StarletteHTTPException:
+        # HTTPException do code chủ động raise — để handler chuyên trách xử lý,
+        # không biến thành 500.
+        raise
+    except Exception as exc:
+        print(f"[UNHANDLED] {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
+        if not settings.is_production:
+            import traceback
+
+            traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Đã có lỗi xảy ra phía máy chủ. Vui lòng thử lại sau."},
+        )
+
+
 _origins = settings.origin_list
 _allow_credentials = "*" not in _origins
 
@@ -611,6 +705,9 @@ async def health():
         "llm_configured": bool(settings.groq_api_key),
         "tft_loaded": is_tft_loaded(),
         "ws_clients": len(ws_manager.connections),
+        # Không phải secret, và là cách DUY NHẤT chẩn đoán lỗi CORS từ xa khi
+        # không đọc được dashboard hosting.
+        "allowed_origins": settings.origin_list,
     }
 
 

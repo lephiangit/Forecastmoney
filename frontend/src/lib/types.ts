@@ -7,8 +7,10 @@ export interface MarketAsset {
   price: number
   change: number
   changePercent: number
-  high24h: number
-  low24h: number
+  // `null` khi backend không trả biên độ ngày — KHÔNG lùi về `price`, vì như vậy
+  // là bịa ra một biên độ bằng 0.
+  high24h: number | null
+  low24h: number | null
   volume: number
   marketCap?: number
   sparkline: number[]
@@ -139,9 +141,10 @@ export interface AdminUser {
 export interface ModelAccuracy {
   model: string
   ticker: string
-  accuracy: number
-  mae: number
-  rmse: number
+  // `null` = chưa đo được (không có bản ghi nào để tính), khác hẳn với giá trị 0.
+  accuracy: number | null
+  mae: number | null
+  rmse: number | null
   directionAccuracy: number | null
   predictions: number
   trend: { time: string; value: number }[]
@@ -224,7 +227,11 @@ export interface BacktestSummary {
   loss_trades: number
   win_rate: number
   max_drawdown: number
-  sharpe_ratio: number
+  // Backend đổi tên từ `sharpe_ratio`: lãi suất phi rủi ro = 0 và tài khoản phần
+  // lớn là tiền mặt, nên đây không phải tỷ lệ Sharpe theo đúng định nghĩa.
+  return_to_volatility_ratio: number
+  capital_deployed_pct?: number
+  warnings?: string[]
 }
 
 export interface BacktestResult {

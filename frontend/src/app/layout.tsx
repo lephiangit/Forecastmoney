@@ -88,9 +88,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    // lang khớp với giá trị mặc định của useLangStore ("en"). Người dùng đổi
-    // ngôn ngữ ở phía client; giữ nguyên ở đây để trình đọc màn hình không bị
-    // lệch giữa lần render đầu trên server và trạng thái sau khi hydrate.
+    // lang khớp với giá trị mặc định của useLangStore ("en") cho lần render trên
+    // server, để không lệch giữa server và client lúc hydrate. Sau khi hydrate,
+    // `ThemeSync` trong providers.tsx cập nhật `document.documentElement.lang`
+    // theo ngôn ngữ thật — nếu không, giao diện tiếng Việt vẫn khai báo lang="en"
+    // và trình đọc màn hình đọc sai hoàn toàn.
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} bg-background`}

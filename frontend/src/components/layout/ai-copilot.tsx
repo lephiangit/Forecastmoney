@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { Sparkles, X, ArrowUp, Bot } from "lucide-react"
 import { useT, useLangStore } from "@/lib/store"
-import { MARKET_ASSETS } from "@/lib/data"
+import { useBackendStore } from "@/lib/use-backend-status"
 
 interface Msg {
   role: "user" | "assistant"
@@ -26,15 +26,19 @@ export function AiCopilot() {
   const [messages, setMessages] = useState<Msg[]>([])
   const endRef = useRef<HTMLDivElement>(null)
 
+  const backendStatus = useBackendStore((s) => s.status)
+
   useEffect(() => {
-    setMessages([
-      {
-        role: "assistant",
-        text: lang === "vi"
-          ? "Xin chào! Tôi là trợ lý AI của bạn. Bạn muốn tôi phân tích hoặc dự báo mã nào hôm nay?"
-          : "Hello! I am your AI assistant. Which asset would you like me to analyze or forecast today?"
-      }
-    ])
+    const greeting: Msg = {
+      role: "assistant",
+      text: lang === "vi"
+        ? "Xin chào! Tôi là trợ lý AI của bạn. Bạn muốn tôi phân tích hoặc dự báo mã nào hôm nay?"
+        : "Hello! I am your AI assistant. Which asset would you like me to analyze or forecast today?",
+    }
+    // CHỈ thay tin nhắn chào, không xoá sạch hội thoại. Bản cũ `setMessages([...])`
+    // vô điều kiện, nên chỉ cần bấm nút đổi ngôn ngữ là toàn bộ đoạn chat đang dở
+    // biến mất không báo trước.
+    setMessages((m) => (m.length <= 1 ? [greeting] : m))
   }, [lang])
 
   useEffect(() => {
@@ -111,7 +115,26 @@ export function AiCopilot() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-popover-foreground">{t("aiCopilot")}</p>
-                <p className="text-[11px] text-positive">● Online</p>
+                {/* Trạng thái thật từ vòng thăm dò /health — bản cũ luôn hiện
+                    "● Online" kể cả khi backend đang ngủ hoặc chưa cấu hình. */}
+                <p
+                  className={
+                    backendStatus === "online"
+                      ? "text-[11px] text-positive"
+                      : backendStatus === "checking"
+                        ? "text-[11px] text-muted-foreground"
+                        : "text-[11px] text-negative"
+                  }
+                >
+                  ●{" "}
+                  {backendStatus === "online"
+                    ? "Online"
+                    : backendStatus === "checking"
+                      ? lang === "vi" ? "Đang kiểm tra..." : "Checking..."
+                      : backendStatus === "not-configured"
+                        ? lang === "vi" ? "Chưa cấu hình máy chủ" : "Server not configured"
+                        : "Offline"}
+                </p>
               </div>
             </div>
 

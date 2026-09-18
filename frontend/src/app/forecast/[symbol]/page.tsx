@@ -90,7 +90,9 @@ export default function ForecastPage({ params }: { params: Promise<{ symbol: str
                 <h2 className="font-semibold text-card-foreground">{t("priceForecast")}</h2>
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                <Legend color="#eaecef" label={t("historical")} />
+                {/* Cùng biến CSS với đường lịch sử trong ForecastChart, để chú giải
+                    không lệch màu khi đổi nền sáng/tối. */}
+                <Legend color="var(--card-foreground)" label={t("historical")} />
                 <Legend color={f.direction === "down" ? "#f6465d" : "#0ecb81"} label={t("predicted")} dashed />
                 <Legend color="rgba(56,97,251,0.5)" label={t("confidenceBand")} />
               </div>

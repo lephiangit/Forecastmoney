@@ -21,7 +21,10 @@ const EXCHANGE_RATE_TIMEOUT = 5_000
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
-  const bare = BARE_ROUTES.includes(pathname)
+  // Thêm tiền tố /auth/: trang callback và reset-password không được kéo theo
+  // Navbar/MarketTicker/Copilot cùng các vòng polling của chúng — mỗi request
+  // 401 ở đó có thể phá phiên Supabase mà callback đang dùng để đổi lấy JWT.
+  const bare = BARE_ROUTES.includes(pathname) || pathname.startsWith("/auth/")
   const { lastFetched, setExchangeRate } = useCurrencyStore()
 
   // Vòng thăm dò trạng thái backend được gắn MỘT LẦN duy nhất ở đây.

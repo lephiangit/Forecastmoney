@@ -122,7 +122,9 @@ class BacktestSummary(BaseModel):
     loss_trades: int
     win_rate: float
     max_drawdown: float
-    sharpe_ratio: float
+    # KHÔNG gọi là "sharpe_ratio": lãi suất phi rủi ro được coi là 0 và tài khoản
+    # phần lớn là tiền mặt, nên đây không phải tỷ lệ Sharpe theo đúng định nghĩa.
+    return_to_volatility_ratio: float
 
     # ── Bổ sung: những thứ khiến con số đọc được ──
     signal_source: str = "model"
@@ -130,7 +132,11 @@ class BacktestSummary(BaseModel):
     total_fees: float = 0.0
     total_slippage_cost: float = 0.0
     pnl_before_costs: float = 0.0
+    # Buy-and-hold tính trên CÙNG số vốn và CÙNG mẫu số `initial_balance` như
+    # total_pnl_pct, để hai con số so sánh được với nhau.
     buy_and_hold_pnl_pct: float = 0.0
+    # Bao nhiêu phần trăm tài khoản thực sự được đưa vào thị trường mỗi lệnh.
+    capital_deployed_pct: float = 0.0
     warnings: List[str] = []
 
 
@@ -473,6 +479,11 @@ def run_backtest(req: BacktestRequest):
     balance = req.initial_balance
     position_qty = 0.0
     position_avg_cost = 0.0
+    # Giá vốn ĐÃ GỒM PHÍ của vị thế đang mở. Phân loại thắng/thua phải so trên số
+    # tiền thực nhận (gross − phí bán) với số tiền thực bỏ ra (gross + phí mua);
+    # so giá gộp với giá gộp bỏ qua cả hai đầu phí, nên win_rate cao hơn thực tế
+    # một cách hệ thống và đứng ngay cạnh một total_pnl âm.
+    position_cost_basis = 0.0
     trades: List[BacktestTrade] = []
     equity_curve: List[dict] = []
     win_trades = loss_trades = 0
@@ -507,6 +518,12 @@ def run_backtest(req: BacktestRequest):
         signal = int(sig["signal"].iloc[k])
         reason = str(sig["reason"].iloc[k] or "")
 
+        # ĐƯỜNG VỐN ĐƯỢC GHI TRƯỚC KHỐI KHỚP LỆNH.
+        # Các lệnh bên dưới khớp ở giá MỞ CỬA của phiên k+1, nhưng bản cũ lại ghi
+        # kết quả của chúng vào ô của phiên k — đường vốn lệch đúng một phiên, làm
+        # méo cả max_drawdown lẫn tỷ lệ lợi nhuận/biến động.
+        equity_curve.append({"date": date_str, "balance": round(balance + position_qty * close, 2)})
+
         # Phiên cuối không có phiên kế tiếp để khớp lệnh.
         next_date = dates[k + 1] if k + 1 < len(dates) else None
 
@@ -527,7 +544,7 @@ def run_backtest(req: BacktestRequest):
                     balance += gross - fee
                     total_fees += fee
                     total_slippage += px * position_qty * slip_rate / (1 - slip_rate)
-                    if px >= position_avg_cost:
+                    if gross - fee >= position_cost_basis:
                         win_trades += 1
                     else:
                         loss_trades += 1
@@ -539,6 +556,7 @@ def run_backtest(req: BacktestRequest):
                     ))
                     position_qty = 0.0
                     position_avg_cost = 0.0
+                    position_cost_basis = 0.0
 
         # ── Tín hiệu ──
         if signal == 1 and position_qty == 0 and next_date is not None:
@@ -553,6 +571,7 @@ def run_backtest(req: BacktestRequest):
                     total_slippage += gross * slip_rate / (1 + slip_rate)
                     position_qty = qty
                     position_avg_cost = px
+                    position_cost_basis = gross + fee
                     trades.append(BacktestTrade(
                         date=str(next_date.date()) if hasattr(next_date, "date") else str(next_date),
                         action="BUY", price=round(px, 4), quantity=qty,
@@ -568,7 +587,7 @@ def run_backtest(req: BacktestRequest):
                 balance += gross - fee
                 total_fees += fee
                 total_slippage += gross * slip_rate / (1 - slip_rate)
-                if px >= position_avg_cost:
+                if gross - fee >= position_cost_basis:
                     win_trades += 1
                 else:
                     loss_trades += 1
@@ -580,8 +599,7 @@ def run_backtest(req: BacktestRequest):
                 ))
                 position_qty = 0.0
                 position_avg_cost = 0.0
-
-        equity_curve.append({"date": date_str, "balance": round(balance + position_qty * close, 2)})
+                position_cost_basis = 0.0
 
     # ── Đóng vị thế còn lại ở giá cuối ──
     if position_qty > 0:
@@ -591,7 +609,10 @@ def run_backtest(req: BacktestRequest):
         fee = gross * fee_rate
         balance += gross - fee
         total_fees += fee
-        if px >= position_avg_cost:
+        # Ba nhánh bán kia đều cộng trượt giá; nhánh này bản cũ bỏ sót, nên tổng
+        # chi phí giao dịch báo cáo bị thiếu đúng phần của lệnh đóng bắt buộc.
+        total_slippage += gross * slip_rate / (1 - slip_rate)
+        if gross - fee >= position_cost_basis:
             win_trades += 1
         else:
             loss_trades += 1
@@ -630,14 +651,26 @@ def run_backtest(req: BacktestRequest):
         if daily.size > 1 and daily.std() > 0:
             sharpe = float(daily.mean() / daily.std() * np.sqrt(252))
 
-    # Mua-và-giữ trên cùng cửa sổ: mốc so sánh tối thiểu mà mọi chiến lược phải
-    # vượt qua thì mới đáng gọi là chiến lược.
+    # MUA-VÀ-GIỮ PHẢI CÙNG MẪU SỐ VỚI CHIẾN LƯỢC.
+    #
+    # Bản cũ tính buy-and-hold trên GIÁ tài sản ((last−first)/first), còn
+    # total_pnl_pct lại tính trên initial_balance — hai mẫu số khác hẳn nhau nhưng
+    # được in cạnh nhau và so sánh trực tiếp. Với mặc định (vốn 10.000, cỡ lệnh
+    # 500) chỉ 5% vốn từng vào thị trường, nên cảnh báo "Chiến lược THUA
+    # mua-và-giữ" bật gần như luôn luôn, kể cả khi chiến lược thực sự thắng.
+    #
+    # Nay mốc so sánh là: bỏ ĐÚNG `trade_amount` mua ở phiên đầu, giữ tới phiên
+    # cuối, rồi chia lãi/lỗ cho chính `initial_balance`.
     buy_hold_pct = 0.0
+    capital_deployed_pct = (
+        (trade_amount / req.initial_balance * 100) if req.initial_balance > 0 else 0.0
+    )
     try:
         first_px = float(closes_raw.loc[dates[0]])
         last_px = float(closes_raw.loc[dates[-1]])
-        if first_px > 0:
-            buy_hold_pct = (last_px - first_px) / first_px * 100
+        if first_px > 0 and req.initial_balance > 0:
+            bh_pnl = trade_amount * (last_px - first_px) / first_px
+            buy_hold_pct = bh_pnl / req.initial_balance * 100
     except (KeyError, IndexError, TypeError, ValueError):
         pass
 
@@ -646,11 +679,19 @@ def run_backtest(req: BacktestRequest):
             "Không có giao dịch nào khớp trong cửa sổ này — ngưỡng chiến lược có thể "
             "quá chặt so với biên độ của mã. Thử strategy=aggressive hoặc kéo dài days_back."
         )
+    # Hai vế nay cùng mẫu số `initial_balance` nên so sánh được trực tiếp.
     if total_pnl_pct < buy_hold_pct:
         warnings.append(
             f"Chiến lược ({total_pnl_pct:+.2f}%) THUA mua-và-giữ ({buy_hold_pct:+.2f}%) "
-            "trên cùng giai đoạn. Đây là con số phải nêu trung thực trong báo cáo."
+            f"trên cùng giai đoạn và cùng số vốn ({capital_deployed_pct:.1f}% tài khoản). "
+            "Đây là con số phải nêu trung thực trong báo cáo."
         )
+    warnings.append(
+        f"'Tỷ lệ lợi nhuận/biến động' KHÔNG phải tỷ lệ Sharpe: lãi suất phi rủi ro "
+        f"được coi là 0 và chỉ khoảng {capital_deployed_pct:.1f}% tài khoản từng "
+        "tham gia thị trường, phần còn lại nằm im dưới dạng tiền mặt nên độ biến "
+        "động của đường vốn bị nén xuống."
+    )
 
     summary = BacktestSummary(
         ticker=ticker,
@@ -665,7 +706,8 @@ def run_backtest(req: BacktestRequest):
         loss_trades=loss_trades,
         win_rate=round(win_rate, 1),
         max_drawdown=round(max_dd, 2),
-        sharpe_ratio=round(float(sharpe), 2),
+        return_to_volatility_ratio=round(float(sharpe), 2),
+        capital_deployed_pct=round(capital_deployed_pct, 2),
         signal_source=req.signal_source,
         # Số phiên THỰC SỰ mô phỏng, không phải con số người dùng gửi lên — bản cũ
         # trả lại đúng `days_back` kể cả khi chỉ chạy trên 63 phiên.

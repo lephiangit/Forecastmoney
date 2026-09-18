@@ -29,7 +29,10 @@ export default function AuthCallbackPage() {
         if (res.token) {
           // Store the CUSTOM JWT (not the Supabase token)
           localStorage.setItem("forecast_ai_token", res.token)
-          login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username)
+          // Tham số thứ 5 `isOAuth` phải là true: đây chính là đường đăng nhập
+          // Google. Bỏ trống thì nó mặc định false và giao diện tưởng đây là tài
+          // khoản email/mật khẩu thường.
+          login(res.name || res.username, res.role || "user", res.user_id?.toString(), res.username, true)
           setStatus("Đăng nhập thành công! Đang chuyển hướng...")
           router.push("/")
         } else {

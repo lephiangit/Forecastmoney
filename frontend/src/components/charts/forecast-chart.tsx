@@ -11,6 +11,7 @@ import {
   LineStyle,
 } from "lightweight-charts"
 import type { Forecast } from "@/lib/types"
+import { useThemeStore } from "@/lib/store"
 
 function toTime(iso: string): UTCTimestamp {
   return (new Date(iso).getTime() / 1000) as UTCTimestamp
@@ -18,11 +19,18 @@ function toTime(iso: string): UTCTimestamp {
 
 export function ForecastChart({ forecast, height = 380 }: { forecast: Forecast; height?: number }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const theme = useThemeStore((s) => s.theme)
 
   useEffect(() => {
     if (!containerRef.current) return
     const up = forecast.direction !== "down"
     const predColor = up ? "#0ecb81" : "#f6465d"
+
+    // Đường lịch sử trước đây gán cứng "#eaecef" — đúng màu `--card-foreground`
+    // của nền TỐI, nhưng ở nền sáng `--card` là #ffffff nên đường gần như vô
+    // hình. Đọc token theo theme hiện tại thay vì đoán.
+    const css = getComputedStyle(document.documentElement)
+    const histColor = css.getPropertyValue("--card-foreground").trim() || "#eaecef"
 
     const chart = createChart(containerRef.current, {
       height,
@@ -64,7 +72,7 @@ export function ForecastChart({ forecast, height = 380 }: { forecast: Forecast; 
 
     // Historical line
     const hist = chart.addSeries(LineSeries, {
-      color: "#eaecef",
+      color: histColor,
       lineWidth: 2,
       priceLineVisible: false,
     })
@@ -100,7 +108,9 @@ export function ForecastChart({ forecast, height = 380 }: { forecast: Forecast; 
       ro.disconnect()
       chart.remove()
     }
-  }, [forecast, height])
+    // `theme` nằm trong mảng phụ thuộc để chart được dựng lại khi đổi nền —
+    // nếu không, đường lịch sử giữ màu của theme cũ và có thể biến mất.
+  }, [forecast, height, theme])
 
   return <div ref={containerRef} className="w-full" style={{ height }} />
 }
