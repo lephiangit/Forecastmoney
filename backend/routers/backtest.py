@@ -186,6 +186,7 @@ def _model_signals(
     df: pd.DataFrame,
     n_trading_bars: int,
     params: dict,
+    ticker: str = "",
 ) -> pd.DataFrame:
     """
     Sinh tín hiệu từ dự báo quantile 1 bước của TFT.
@@ -246,8 +247,19 @@ def _model_signals(
             "Cửa sổ backtest chiếm gần hết lịch sử nên không còn dữ liệu để khớp "
             "scaler mà không rò rỉ. Giảm days_back.",
         )
-    scaler = FeatureScaler()
-    scaler.fit(fit_rows)
+    # Ưu tiên ĐÚNG scaler lúc train/serve (xem forecaster.get_ticker_scaler), để
+    # backtest đo chính hệ thống đang chạy. Chỉ dùng được khi dữ liệu fit của nó kết
+    # thúc TRƯỚC phiên đầu cửa sổ mô phỏng; nếu không, rơi về fit trên phần trước
+    # cửa sổ như cũ — thà lệch với serve còn hơn rò rỉ tương lai.
+    if ticker:
+        from backend.models.forecaster import get_ticker_scaler
+
+        scaler, scaler_info = get_ticker_scaler(
+            ticker, feature_cols, fallback_rows=fit_rows, must_end_before=frame.index[start]
+        )
+    else:
+        scaler = FeatureScaler().fit(fit_rows)
+        scaler_info = {"source": "fallback", "fit_rows": int(len(fit_rows))}
     scaled = scaler.transform(frame[feature_cols].values).astype(np.float32)
 
     # Dựng toàn bộ cửa sổ rồi predict MỘT LẦN theo lô — nhanh hơn hàng chục lần so
@@ -271,6 +283,7 @@ def _model_signals(
     out["q90"] = q[:, 2]
     out["signal"] = 0
     out["reason"] = ""
+    out.attrs["scaler_info"] = scaler_info
 
     min_ret = params["min_expected_return"]
     need_q10 = params["require_lower_quantile_positive"]
@@ -446,8 +459,21 @@ def run_backtest(req: BacktestRequest):
     # ── Sinh tín hiệu ────────────────────────────────────────────────────────
     if req.signal_source == "model":
         params = MODEL_STRATEGY_PARAMS.get(req.strategy, MODEL_STRATEGY_PARAMS["balanced"])
-        sig = _model_signals(df_raw, req.days_back, params)
+        sig = _model_signals(df_raw, req.days_back, params, ticker=ticker)
         position_scale = params["position_scale"]
+
+        scaler_info = sig.attrs.get("scaler_info") or {}
+        if scaler_info.get("source") == "fallback":
+            why = (
+                "cửa sổ backtest bắt đầu trước khi vùng dữ liệu fit scaler lúc train "
+                f"kết thúc ({scaler_info.get('rejected_fit_end')})"
+                if scaler_info.get("rejected")
+                else "không có thống kê scaler lúc train cho mã này"
+            )
+            warnings.append(
+                f"Scaler được fit riêng trên phần dữ liệu trước cửa sổ backtest vì {why}. "
+                "Đầu vào mô hình vì thế hơi khác với lúc hệ thống chạy thật."
+            )
 
         _warn_if_in_training_window(ticker, sig, warnings)
         warnings.append(

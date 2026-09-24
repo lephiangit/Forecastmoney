@@ -226,15 +226,17 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
     """
     Thu thập các cửa sổ dữ liệu gần nhất của những mã vừa được đánh giá.
 
-    Scaler được khớp tại chỗ trên chính lịch sử của từng mã — nhất quán với cách
-    `forecaster.py` chuẩn hoá lúc inference, nên mô hình được fine-tune trên đúng
-    phân phối dữ liệu mà nó sẽ gặp khi chạy thật.
+    Scaler lấy qua `forecaster.get_ticker_scaler` — CÙNG thang đo với lúc train và
+    lúc serve, nên mô hình được fine-tune trên đúng phân phối đầu vào mà nó sẽ gặp
+    khi chạy thật. (Bản cũ fit lại trên 1 năm gần nhất: một thang đo thứ tư, khác
+    cả train lẫn serve.)
     """
     from backend.models.feature_engineering import (
         TARGET_COLUMN,
-        FeatureScaler,
         build_model_frame,
+        clean_price_history,
     )
+    from backend.models.forecaster import get_ticker_scaler
 
     all_X, all_Y, all_T = [], [], []
     ticker_order: List[str] = []
@@ -245,7 +247,9 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
             continue
 
         try:
-            df_clean, available = build_model_frame(df)
+            # Làm sạch giống hệt train/serve: một dòng giá rác từ yfinance sinh ra
+            # Return_1d hàng nghìn % và một nhãn fine-tune vô nghĩa.
+            df_clean, available = build_model_frame(clean_price_history(df))
         except ValueError:
             continue
 
@@ -305,8 +309,18 @@ def _collect_recent_samples(tickers: List[str], look_back: int, expected_feature
         cut = max(1, int(len(valid_windows) * 0.8))
         fit_end = valid_windows[cut - 1][0] + look_back  # hết cửa sổ train cuối cùng
 
-        scaler = FeatureScaler()
-        scaler.fit(feat_values[:fit_end])
+        # Dữ liệu fit scaler phải kết thúc TRƯỚC phiên đầu tiên của vùng holdout,
+        # nếu không cổng kiểm chứng bị rò rỉ (xem trên). Scaler lúc train fit trên
+        # 70% đầu lịch sử nên thường thoả; mã mới lên sàn thì rơi về fit tại chỗ.
+        holdout_start = (
+            df_clean.index[valid_windows[cut][0]] if cut < len(valid_windows) else None
+        )
+        scaler, _scaler_info = get_ticker_scaler(
+            ticker,
+            available,
+            fallback_rows=feat_values[:fit_end],
+            must_end_before=holdout_start,
+        )
         scaled = scaler.transform(feat_values)
 
         n_before = len(all_X)

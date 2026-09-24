@@ -133,9 +133,8 @@ def _take_portfolio_snapshots():
     `get_live_quote` có cache TTL dùng chung nên nhiều user giữ cùng một mã chỉ tốn
     một lượt gọi mạng.
     """
-    from backend.database import _get_client, get_all_trades, save_portfolio_snapshot
-    from backend.models.forecaster import get_live_quote
-    from backend.services.portfolio import compute_positions, sort_trades_ascending
+    from backend.database import _get_client, save_portfolio_snapshot
+    from backend.services.portfolio import compute_live_equity
 
     c = _get_client()
     if not c:
@@ -155,27 +154,12 @@ def _take_portfolio_snapshots():
         if user_id is None:
             continue
         try:
-            cash = float(row.get("current_balance") or 0.0)
-            initial = float(row.get("initial_balance") or 0.0)
-
-            positions = compute_positions(sort_trades_ascending(get_all_trades(user_id)))
-
-            holdings_value = 0.0
-            for ticker, pos in positions.items():
-                qty = float(pos.get("qty") or 0.0)
-                if qty <= 0:
-                    continue
-                try:
-                    quote = get_live_quote(ticker)
-                except Exception:
-                    quote = None
-                price = float(quote["price"]) if quote and quote.get("price") else None
-                if price:
-                    holdings_value += qty * price
-                else:
-                    holdings_value += float(pos.get("total_cost") or 0.0)
-
-            total_pnl = round(cash + holdings_value - initial, 2)
+            # Định nghĩa dùng chung với /trading/stop và bảng xếp hạng.
+            eq = compute_live_equity(
+                user_id, row.get("current_balance"), row.get("initial_balance")
+            )
+            cash = eq["cash"]
+            total_pnl = eq["total_pnl"]
 
             c.table("admin_config").update({"total_pnl": total_pnl}).eq(
                 "user_id", user_id

@@ -361,14 +361,55 @@ class FeatureScaler:
     def __init__(self, clip_sigma: float = CLIP_SIGMA):
         self.clip_sigma = clip_sigma
         self._scaler = StandardScaler()
+        self.mean_ = None
+        self.scale_ = None
 
     def fit(self, X) -> "FeatureScaler":
         self._scaler.fit(np.asarray(X, dtype=np.float64))
+        # Giữ riêng mean/scale để lưu ra file và nạp lại được (to_dict/from_dict).
+        # `scale_` của sklearn đã thay độ lệch chuẩn 0 bằng 1 cho cột hằng, nên phép
+        # chia bên dưới không bao giờ chia cho 0.
+        self.mean_ = np.array(self._scaler.mean_, dtype=np.float64)
+        self.scale_ = np.array(self._scaler.scale_, dtype=np.float64)
         return self
 
     def transform(self, X) -> np.ndarray:
-        out = self._scaler.transform(np.asarray(X, dtype=np.float64))
+        if self.mean_ is None or self.scale_ is None:
+            raise RuntimeError("FeatureScaler chưa được fit hoặc nạp từ file.")
+        X = np.asarray(X, dtype=np.float64)
+        if X.shape[-1] != self.mean_.shape[0]:
+            raise ValueError(
+                f"Scaler được fit trên {self.mean_.shape[0]} đặc trưng nhưng nhận "
+                f"{X.shape[-1]}."
+            )
+        # Đúng phép tính của StandardScaler.transform: (X - mean) / scale.
+        out = (X - self.mean_) / self.scale_
         return np.clip(out, -self.clip_sigma, self.clip_sigma)
+
+    def to_dict(self) -> dict:
+        """Thống kê đủ để tái tạo CHÍNH XÁC scaler này (JSON-serializable)."""
+        if self.mean_ is None or self.scale_ is None:
+            raise RuntimeError("FeatureScaler chưa được fit.")
+        return {
+            "mean": [float(v) for v in self.mean_],
+            "scale": [float(v) for v in self.scale_],
+            "clip_sigma": float(self.clip_sigma),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FeatureScaler":
+        """Nạp lại scaler đã lưu lúc huấn luyện. Từ chối thống kê hỏng thay vì âm
+        thầm chuẩn hoá sai."""
+        scaler = cls(clip_sigma=float(data.get("clip_sigma", CLIP_SIGMA)))
+        mean = np.asarray(data["mean"], dtype=np.float64)
+        scale = np.asarray(data["scale"], dtype=np.float64)
+        if mean.ndim != 1 or mean.shape != scale.shape:
+            raise ValueError("Thống kê scaler sai kích thước.")
+        if not (np.all(np.isfinite(mean)) and np.all(np.isfinite(scale)) and np.all(scale > 0)):
+            raise ValueError("Thống kê scaler chứa NaN/inf hoặc độ lệch chuẩn <= 0.")
+        scaler.mean_ = mean
+        scaler.scale_ = scale
+        return scaler
 
     def fit_transform(self, X) -> np.ndarray:
         return self.fit(X).transform(X)

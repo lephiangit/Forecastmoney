@@ -21,6 +21,8 @@ threadpool — các lời gọi Supabase và yfinance là blocking, nếu chạy
 trên event loop sẽ làm đơ toàn bộ server.
 """
 
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -39,6 +41,7 @@ from backend.metrics import metrics
 from backend.routers.auth import get_current_admin, get_current_user
 from backend.security import log_and_raise, validate_ticker_format, verify_cron_secret
 from backend.services.portfolio import (
+    compute_live_equity,
     compute_position_for,
     compute_positions,
     compute_win_rate,
@@ -432,35 +435,18 @@ def stop_auto_trading(user=Depends(get_current_user)):
     update_admin_config(user_id, {"is_running": False})
     config = get_admin_config(user_id)
 
-    # Tính lãi/lỗ NGAY TẠI ĐÂY thay vì đọc cột `total_pnl` trong DB.
-    #
-    # Cột đó nay chỉ được job snapshot làm mới mỗi giờ (xem main.py), nên đọc thẳng
-    # sẽ trả về con số của tối đa một giờ trước — đúng vào lúc người dùng vừa dừng
-    # bot và muốn biết kết quả. Dùng chung định nghĩa với `/admin/portfolio`:
-    # vốn chủ sở hữu = tiền mặt + giá trị thị trường vị thế đang mở.
-    from backend.models.forecaster import get_live_quote
-
-    cash = float(config.get("current_balance") or 0.0)
-    initial = float(config.get("initial_balance") or 0.0)
-    holdings_value = 0.0
-    for ticker, pos in compute_positions(sort_trades_ascending(get_all_trades(user_id))).items():
-        qty = float(pos.get("qty") or 0.0)
-        if qty <= 0:
-            continue
-        try:
-            quote = get_live_quote(ticker)
-        except Exception:
-            quote = None
-        price = float(quote["price"]) if quote and quote.get("price") else None
-        holdings_value += qty * price if price else float(pos.get("total_cost") or 0.0)
-
+    # Tính lãi/lỗ NGAY TẠI ĐÂY thay vì đọc cột `total_pnl` trong DB — cột đó chỉ
+    # được job snapshot làm mới mỗi giờ. Định nghĩa dùng chung: compute_live_equity.
+    eq = compute_live_equity(
+        user_id, config.get("current_balance"), config.get("initial_balance")
+    )
     return {
         "message": "Đã dừng bot auto-trade",
         "is_running": False,
-        "final_balance": cash,
-        "holdings_value": round(holdings_value, 2),
-        "equity": round(cash + holdings_value, 2),
-        "total_pnl": round(cash + holdings_value - initial, 2),
+        "final_balance": eq["cash"],
+        "holdings_value": eq["holdings_value"],
+        "equity": eq["equity"],
+        "total_pnl": eq["total_pnl"],
     }
 
 
@@ -569,6 +555,11 @@ def remove_from_watchlist_api(ticker: str, user=Depends(get_current_user)):
 #  LEADERBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 
+LEADERBOARD_TTL = 60  # giây
+_leaderboard_lock = threading.Lock()
+_leaderboard_cache: dict = {"at": 0.0, "data": None}
+
+
 @router.get("/leaderboard")
 def get_leaderboard(user=Depends(get_current_user)):
     """Top 10 tài khoản theo lãi/lỗ. Tên đăng nhập được che bớt để giữ riêng tư.
@@ -576,24 +567,49 @@ def get_leaderboard(user=Depends(get_current_user)):
     Yêu cầu đăng nhập: bảng này lộ tên tài khoản (dù đã che) và số liệu lãi/lỗ,
     không nên để công khai cho khách vãng lai thu thập.
     """
+    now = time.time()
+    with _leaderboard_lock:
+        if _leaderboard_cache["data"] is not None and now - _leaderboard_cache["at"] < LEADERBOARD_TTL:
+            return _leaderboard_cache["data"]
+
     c = _get_client()
     if c is None:
         return []
 
+    # LỖI ĐÃ SỬA: bản cũ `.order("total_pnl")` trên cột DB — cột chỉ được job
+    # snapshot làm mới mỗi giờ, nên thứ hạng và con số lãi/lỗ trễ tới một giờ và lệch
+    # với trang danh mục của chính người đó. Nay tính trực tiếp theo giá hiện tại cho
+    # mọi tài khoản rồi mới xếp hạng; kết quả cache ngắn để một lượt tải trang không
+    # kéo theo N lượt đọc lệnh.
     try:
         res = (
             c.table("admin_config")
-            .select("id, total_pnl, win_trades, loss_trades, users!inner(username)")
-            .order("total_pnl", desc=True)
-            .limit(10)
+            .select(
+                "id, user_id, current_balance, initial_balance, total_pnl, "
+                "win_trades, loss_trades, users!inner(username)"
+            )
             .execute()
         )
     except Exception as e:
         print(f"[admin] Lỗi lấy leaderboard: {e}")
         return []
 
+    ranked = []
+    for row in res.data or []:
+        try:
+            pnl = compute_live_equity(
+                row.get("user_id"), row.get("current_balance"), row.get("initial_balance")
+            )["total_pnl"]
+        except Exception as e:
+            # Một tài khoản lỗi không được làm hỏng cả bảng: rơi về số của job
+            # snapshot gần nhất cho riêng tài khoản đó.
+            print(f"[admin] leaderboard: không tính được lãi/lỗ trực tiếp: {e}")
+            pnl = float(row.get("total_pnl") or 0.0)
+        ranked.append((pnl, row))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+
     leaderboard = []
-    for idx, row in enumerate(res.data or []):
+    for idx, (pnl, row) in enumerate(ranked[:10]):
         raw_username = (row.get("users") or {}).get("username", "unknown")
         # Che phần định danh: chỉ giữ 2 ký tự đầu, ẩn phần còn lại kể cả domain
         # email. 4 ký tự đầu của email thường đã đủ để đoán ra người thật.
@@ -606,12 +622,16 @@ def get_leaderboard(user=Depends(get_current_user)):
                 "id": str(row.get("id") or idx),
                 "rank": idx + 1,
                 "username": masked,
-                "total_pnl": row.get("total_pnl", 0),
+                "total_pnl": pnl,
                 "win_trades": win,
                 "loss_trades": loss,
                 "win_rate": compute_win_rate(win, loss),
             }
         )
+
+    with _leaderboard_lock:
+        _leaderboard_cache["at"] = time.time()
+        _leaderboard_cache["data"] = leaderboard
     return leaderboard
 
 

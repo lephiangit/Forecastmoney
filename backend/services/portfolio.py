@@ -90,3 +90,50 @@ def compute_win_rate(win_trades: int, loss_trades: int) -> float:
 def sort_trades_ascending(trades: List[dict]) -> List[dict]:
     """Chuẩn hoá thứ tự giao dịch về tăng dần theo thời gian."""
     return sorted(trades, key=lambda t: t.get("trade_time") or "")
+
+
+def compute_live_equity(user_id, cash: float, initial: float) -> Dict[str, float]:
+    """
+    Vốn chủ sở hữu và lãi/lỗ tổng của một tài khoản, tính NGAY theo giá hiện tại.
+
+        vốn chủ sở hữu = tiền mặt + giá trị thị trường các vị thế đang mở
+        lãi/lỗ tổng    = vốn chủ sở hữu − vốn ban đầu
+
+    Định nghĩa DUY NHẤT, dùng chung cho `/trading/stop`, bảng xếp hạng và job
+    snapshot hằng giờ — trước đây mỗi nơi chép lại một bản, và bảng xếp hạng thì
+    đọc cột `admin_config.total_pnl` (chỉ được làm mới mỗi giờ).
+
+    Không lấy được giá của mã nào thì tạm dùng giá vốn của mã đó, để vốn chủ sở hữu
+    không hụt hẳn một vị thế (thà lệch một chút còn hơn báo lỗ giả). `get_live_quote`
+    có cache TTL dùng chung nên nhiều tài khoản giữ cùng một mã chỉ tốn một lượt gọi.
+    """
+    from backend.database import get_all_trades
+    from backend.models.forecaster import get_live_quote
+
+    cash = float(cash or 0.0)
+    initial = float(initial or 0.0)
+    holdings_value = 0.0
+    priced_at_cost: List[str] = []
+    for ticker, pos in compute_positions(sort_trades_ascending(get_all_trades(user_id))).items():
+        qty = float(pos.get("qty") or 0.0)
+        if qty <= 0:
+            continue
+        try:
+            quote = get_live_quote(ticker)
+        except Exception:
+            quote = None
+        price = float(quote["price"]) if quote and quote.get("price") else None
+        if price:
+            holdings_value += qty * price
+        else:
+            holdings_value += float(pos.get("total_cost") or 0.0)
+            priced_at_cost.append(ticker)
+
+    equity = cash + holdings_value
+    return {
+        "cash": cash,
+        "holdings_value": round(holdings_value, 2),
+        "equity": round(equity, 2),
+        "total_pnl": round(equity - initial, 2),
+        "priced_at_cost": priced_at_cost,
+    }

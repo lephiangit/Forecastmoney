@@ -316,6 +316,183 @@ def is_tft_loaded() -> bool:
     return "tft" in _model_cache
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCALER DÙNG CHUNG — train / serve / backtest / online learning
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# LỖI ĐÃ SỬA — BỐN NƠI, BỐN CỬA SỔ FIT SCALER.
+#
+# Mô hình học trên đặc trưng chuẩn hoá bằng mean/std của 70% ĐẦU lịch sử mỗi mã
+# (train_tft). Nhưng lúc chạy thật thì:
+#   - serve (run_tft_forecast)      fit lại trên 2 năm gần nhất,
+#   - backtest                      fit trên toàn bộ dữ liệu trước cửa sổ mô phỏng,
+#   - online learning               fit trên 1 năm gần nhất.
+# Cùng một phiên giao dịch nhưng mỗi nơi đưa vào mạng một z-score khác nhau (đo
+# được lệch tới ~4,8σ ở vài đặc trưng). Mô hình vẫn chạy, không có lỗi nào — chỉ là
+# con số trong báo cáo đánh giá mô tả một hệ thống khác với hệ thống đang phục vụ.
+#
+# Nay mọi nơi đi qua `get_ticker_scaler()`:
+#   1. train_saved — thống kê CHÍNH XÁC lúc train, đọc từ models/tft_scalers.json
+#                    (train_tft ghi ra, gắn với checkpoint qua `trained_at`).
+#   2. train_rule  — mã zero-shot, hoặc checkpoint cũ chưa có file: áp ĐÚNG quy tắc
+#                    train (clean → build_model_frame → split_indices → fit phần
+#                    train) lên toàn bộ lịch sử tải được.
+#   3. fallback    — hành vi cũ (fit trên dữ liệu nơi gọi đưa vào), chỉ khi hai
+#                    cách trên không có, hoặc khi cửa sổ fit của chúng chạm vào vùng
+#                    nơi gọi cấm nhìn thấy (`must_end_before`, chống lookahead).
+
+SCALERS_FILENAME = "tft_scalers.json"
+SCALER_CACHE_TTL = 6 * 3600  # giây — quy tắc train dùng lịch sử dài, đổi rất chậm
+
+_scaler_lock = threading.Lock()
+_saved_scalers_state: Dict[str, object] = {"key": None, "doc": None}
+_rule_scaler_cache: Dict[str, tuple] = {}
+
+
+def _fmt_date(ts) -> str:
+    return pd.Timestamp(ts).strftime("%Y-%m-%d")
+
+
+def _load_saved_scalers() -> Optional[dict]:
+    """Đọc tft_scalers.json nếu nó thuộc ĐÚNG checkpoint hiện tại (so `trained_at`
+    với tft_meta.json). Cache theo mtime của cả hai file."""
+    import json
+
+    path = os.path.join(MODELS_DIR, SCALERS_FILENAME)
+    meta_path = os.path.join(MODELS_DIR, "tft_meta.json")
+    try:
+        key = (os.path.getmtime(path), os.path.getmtime(meta_path))
+    except OSError:
+        return None
+
+    with _scaler_lock:
+        if _saved_scalers_state["key"] == key:
+            return _saved_scalers_state["doc"]  # type: ignore[return-value]
+
+        doc = None
+        try:
+            with open(path, encoding="utf-8") as f:
+                candidate = json.load(f)
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            if candidate.get("trained_at") and candidate.get("trained_at") == meta.get("trained_at"):
+                doc = candidate
+            else:
+                print(
+                    f"[tft] {SCALERS_FILENAME} không thuộc checkpoint hiện tại "
+                    "(trained_at lệch tft_meta.json) — bỏ qua, dùng quy tắc train."
+                )
+        except Exception as e:
+            print(f"[tft] Không đọc được {SCALERS_FILENAME}: {e}")
+
+        _saved_scalers_state["key"] = key
+        _saved_scalers_state["doc"] = doc
+        return doc
+
+
+def _train_rule_scaler(ticker: str, feature_cols: List[str]):
+    """Scaler theo ĐÚNG quy tắc lúc train, tính trên toàn bộ lịch sử tải được.
+    Cache cả kết quả thất bại để không gọi yfinance dồn dập."""
+    from backend.models.feature_engineering import (
+        FeatureScaler,
+        build_model_frame,
+        clean_price_history,
+    )
+
+    now = time.time()
+    with _scaler_lock:
+        hit = _rule_scaler_cache.get(ticker)
+        if hit and now - hit[0] < SCALER_CACHE_TTL and hit[3] == tuple(feature_cols):
+            return hit[1], (dict(hit[2]) if hit[1] is not None else None)
+
+    scaler, info = None, None
+    try:
+        # Import muộn: train_tft kéo theo tensorflow — tiến trình serve vốn đã nạp.
+        from backend.train_tft import split_indices
+
+        df = fetch_ohlcv(ticker, period="max")
+        if df is not None and not df.empty:
+            frame, cols = build_model_frame(clean_price_history(df))
+            if list(cols) == list(feature_cols):
+                train_end = split_indices(len(frame))[0]
+                if train_end >= LOOK_BACK + 10:
+                    fit_part = frame.iloc[:train_end]
+                    scaler = FeatureScaler().fit(fit_part[cols].values)
+                    info = {
+                        "source": "train_rule",
+                        "fit_start": _fmt_date(fit_part.index[0]),
+                        "fit_end": _fmt_date(fit_part.index[-1]),
+                        "fit_rows": int(train_end),
+                    }
+    except Exception as e:
+        print(f"[tft] {ticker}: không dựng được scaler theo quy tắc train: {e}")
+        scaler, info = None, None
+
+    with _scaler_lock:
+        _rule_scaler_cache[ticker] = (now, scaler, info or {}, tuple(feature_cols))
+    return scaler, info
+
+
+def get_ticker_scaler(
+    ticker: str,
+    feature_cols: List[str],
+    fallback_rows=None,
+    must_end_before=None,
+):
+    """
+    Trả về (FeatureScaler, info) cho một mã — xem khối chú thích ở trên.
+
+    `fallback_rows`: ma trận đặc trưng để fit khi không có scaler lúc train.
+    `must_end_before`: mốc thời gian mà dữ liệu dùng để fit PHẢI kết thúc trước đó
+    (backtest: phiên đầu cửa sổ mô phỏng; online learning: phiên đầu vùng holdout).
+    `info["source"]` là "train_saved" | "train_rule" | "fallback".
+    """
+    from backend.models.feature_engineering import FeatureScaler
+
+    cols = list(feature_cols)
+    cutoff = pd.Timestamp(must_end_before) if must_end_before is not None else None
+    rejected: Optional[dict] = None
+
+    def _allowed(info: dict) -> bool:
+        return cutoff is None or (bool(info.get("fit_end")) and pd.Timestamp(info["fit_end"]) < cutoff)
+
+    doc = _load_saved_scalers()
+    if doc and list(doc.get("feature_columns") or []) == cols:
+        entry = (doc.get("tickers") or {}).get(ticker)
+        if entry:
+            try:
+                scaler = FeatureScaler.from_dict(entry)
+                info = {
+                    "source": "train_saved",
+                    "fit_start": entry.get("fit_start"),
+                    "fit_end": entry.get("fit_end"),
+                    "fit_rows": entry.get("fit_rows"),
+                }
+                if _allowed(info):
+                    return scaler, info
+                rejected = info
+            except Exception as e:
+                print(f"[tft] {ticker}: thống kê scaler đã lưu không dùng được: {e}")
+
+    # Có thống kê lúc train mà bị loại vì chạm vùng cấm thì quy tắc train (cùng cửa
+    # sổ, lịch sử còn dài hơn) chắc chắn cũng bị loại — không cần tải thêm.
+    if rejected is None:
+        scaler, info = _train_rule_scaler(ticker, cols)
+        if scaler is not None and info is not None:
+            if _allowed(info):
+                return scaler, info
+            rejected = info
+
+    if fallback_rows is None or len(fallback_rows) == 0:
+        raise ValueError(f"Không có scaler cho {ticker} và nơi gọi không đưa dữ liệu dự phòng.")
+    scaler = FeatureScaler().fit(fallback_rows)
+    info = {"source": "fallback", "fit_rows": int(len(fallback_rows))}
+    if rejected is not None:
+        info["rejected"] = rejected.get("source")
+        info["rejected_fit_end"] = rejected.get("fit_end")
+    return scaler, info
+
+
 # Giữ tên cũ để các đoạn code/notebook cũ không vỡ.
 _load_tft_model = load_tft_model
 
@@ -447,8 +624,17 @@ def run_tft_forecast(
         # Khớp lại ở từng bước sẽ làm thang đo trôi và kết quả mất tính so sánh.
         # Chỉ ma trận đặc trưng đi qua scaler; cột giá thô chỉ dùng làm mốc quy đổi
         # % return -> giá.
-        scaler = FeatureScaler()
-        scaler.fit(history_clean[feature_cols].values)
+        # Scaler dùng chung với train/evaluate/backtest — xem `get_ticker_scaler`.
+        # Khớp MỘT LẦN và giữ nguyên suốt vòng lặp nhiều bước: khớp lại ở từng bước
+        # sẽ làm thang đo trôi.
+        scaler, scaler_info = get_ticker_scaler(
+            ticker, feature_cols, fallback_rows=history_clean[feature_cols].values
+        )
+        if scaler_info.get("source") == "fallback":
+            print(
+                f"[tft] {ticker}: không có scaler lúc train — dùng scaler dự phòng fit "
+                f"trên {scaler_info.get('fit_rows')} phiên gần nhất (lệch với lúc train)."
+            )
 
         working_df = df.copy()
         forecast_dates = build_forecast_dates(ticker, df.index[-1], days)
@@ -583,12 +769,18 @@ def compute_feature_importance(
         return None
 
     try:
-        history_clean, feature_cols = build_model_frame(df)
+        # Cùng đường tiền xử lý với run_tft_forecast: làm sạch dữ liệu rác rồi mới
+        # dựng đặc trưng, và dùng chung scaler — nếu không, độ quan trọng đo được là
+        # của một đầu vào khác với đầu vào mô hình thật sự nhận khi dự báo.
+        from backend.models.feature_engineering import clean_price_history
+
+        history_clean, feature_cols = build_model_frame(clean_price_history(df))
         if len(history_clean) < LOOK_BACK:
             return None
 
-        scaler = FeatureScaler()
-        scaler.fit(history_clean[feature_cols].values)
+        scaler, _ = get_ticker_scaler(
+            ticker, feature_cols, fallback_rows=history_clean[feature_cols].values
+        )
 
         window = history_clean.tail(LOOK_BACK)
         scaled = scaler.transform(window[feature_cols].values)

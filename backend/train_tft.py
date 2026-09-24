@@ -485,6 +485,17 @@ def create_tft_dataset(verbose: bool = True, max_tickers: int | None = None):
         report["tickers_used"].append(
             {"ticker": ticker, "train_samples": len(tr_targets), "val_samples": len(va_targets)}
         )
+        # Lưu thống kê scaler của mã này để serve / backtest / online-learning chuẩn
+        # hoá bằng ĐÚNG thang đo mà mô hình đã học và đã được đánh giá (xem
+        # `forecaster.get_ticker_scaler`). Trước đây ba nơi đó tự fit lại trên ba cửa
+        # sổ dữ liệu khác nhau, nên con số trong báo cáo đánh giá không mô tả đúng
+        # hệ thống đang chạy.
+        report.setdefault("scalers", {})[ticker] = {
+            **scaler.to_dict(),
+            "fit_start": pd.Timestamp(train_slice.index[0]).strftime("%Y-%m-%d"),
+            "fit_end": pd.Timestamp(train_slice.index[-1]).strftime("%Y-%m-%d"),
+            "fit_rows": int(len(train_slice)),
+        }
         if verbose:
             print(f"  {ticker}: {len(tr_targets)} mẫu train, {len(va_targets)} mẫu validation")
 
@@ -658,6 +669,7 @@ def train_tft(fresh: bool = False, max_tickers: int | None = None, epochs: int |
         "feature_set_version": FEATURE_SET_VERSION,
         "target_column_in_features": False,
         "scaler": "StandardScaler + clip +/-5 sigma (per-ticker, fit on train only)",
+        "scaler_stats_file": "tft_scalers.json",
         "batch_size": BATCH_SIZE,
         "train_samples": int(len(train_ds.index)),
         "val_samples": int(len(val_ds.index)),
@@ -665,6 +677,26 @@ def train_tft(fresh: bool = False, max_tickers: int | None = None, epochs: int |
         "trained_at": datetime.now().isoformat(),
         "best_val_loss": float(min(history.history.get("val_loss", [float("nan")]))),
     }
+
+    # Thống kê scaler theo mã — gắn với checkpoint này qua `trained_at`. Serve chỉ
+    # dùng file khi `trained_at` khớp tft_meta.json, nên ghi TRƯỚC meta: nếu tiến
+    # trình chết giữa hai lần ghi thì hai file lệch nhau và serve tự bỏ qua file
+    # này (rơi về quy tắc tính lại), không bao giờ dùng thống kê của checkpoint khác.
+    scalers_doc = {
+        "trained_at": meta["trained_at"],
+        "feature_set_version": FEATURE_SET_VERSION,
+        "feature_columns": meta["feature_columns"],
+        "tickers": {
+            t: report.get("scalers", {})[t]
+            for t in meta["tickers_used"]
+            if t in report.get("scalers", {})
+        },
+    }
+    scalers_path = os.path.join(MODELS_DIR, "tft_scalers.json")
+    tmp_path = scalers_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(scalers_doc, f, ensure_ascii=False)
+    os.replace(tmp_path, scalers_path)
 
     with open(os.path.join(MODELS_DIR, "tft_meta.pkl"), "wb") as f:
         pickle.dump(meta, f)

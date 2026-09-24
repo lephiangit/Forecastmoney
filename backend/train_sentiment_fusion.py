@@ -24,6 +24,11 @@ mạnh hơn theo hướng đó; confidence thấp thì gần như bỏ qua, gi�
 Research Agent lúc inference — hàm ánh xạ (confidence -> mức độ tin tưởng) được
 học từ đây vẫn đúng, dù lúc train sentiment là giả lập.
 
+ĐỘ CHÍNH XÁC GIẢ LẬP ĐƯỢC ĐO: xác suất "đoán đúng hướng" theo confidence không còn là
+hằng số tự đặt (0.45) mà được đo trên research_reports thật của LLM khi đủ mẫu — xem
+`measure_sentiment_accuracy`. Giá trị đã dùng được ghi vào
+models/sentiment_fusion_<days>d_meta.json để trích vào báo cáo.
+
 GIỚI HẠN CẦN NÊU RÕ TRONG BÁO CÁO: vì sentiment lúc train là tổng hợp, model
 không học được MỐI LIÊN HỆ GIỮA NỘI DUNG TIN TỨC CỤ THỂ và biến động giá (việc đó
 là nhiệm vụ của LLM Research Agent, không phải của tầng fusion này) — tầng fusion
@@ -98,9 +103,130 @@ from backend.models.sentiment_fusion import MAX_ADJUSTMENT, normalize_price_sequ
 #  SINH SENTIMENT BÁN TỔNG HỢP
 # ══════════════════════════════════════════════════════════════════════════════
 
-def synth_sentiment(rng: np.random.Generator, actual_direction: int) -> tuple[float, float]:
+# ── ĐỘ CHÍNH XÁC CỦA SENTIMENT GIẢ LẬP: ĐO, KHÔNG GIẢ ĐỊNH ────────────────────
+#
+# LỖI PHƯƠNG PHÁP ĐÃ SỬA: `synth_sentiment()` từng dùng cứng
+#     P(sentiment đúng hướng) = 0.5 + 0.45 × confidence
+# tức sentiment confidence 0.98 đoán đúng hướng giá 7 phiên tới 94% số lần. Không
+# có số đo nào đứng sau con số 0.45 đó. Tầng fusion học đúng thứ nó được cho: "tin
+# sentiment gần như tuyệt đối khi confidence cao" — rồi đem niềm tin ấy áp lên
+# sentiment THẬT của LLM lúc chạy, thứ chắc chắn kém xa 94%. Đây là phần "học kèm
+# đáp án" còn sót lại của tầng fusion.
+#
+# Nay hệ số đó được ĐO trên chính `research_reports` thật (báo cáo do LLM sinh ra,
+# đã đủ `days` phiên để biết giá đi đâu). Chưa đủ mẫu thì mới dùng giả định cũ, và
+# in cảnh báo rõ để không ai nhầm đó là số đo.
+ASSUMED_ACCURACY_SLOPE = 0.45
+MAX_ACCURACY_SLOPE = 0.45          # trần: không bao giờ tin hơn giả định cũ
+MIN_CALIBRATION_SAMPLES = 100
+REAL_SENTIMENT_SOURCES = ("groq", "custom", "local")  # KHÔNG gồm 'keyword'
+
+
+def measure_sentiment_accuracy(days: int = FORECAST_DAYS, min_move: float = 0.002) -> dict | None:
+    """
+    Đo sentiment THẬT trong `research_reports` đoán đúng hướng giá `days` phiên sau
+    bao nhiêu phần trăm, theo từng mức confidence, rồi khớp đúng dạng mà
+    `synth_sentiment` dùng: P(đúng) = 0.5 + slope × confidence.
+
+    Chỉ lấy nguồn LLM thật (groq/custom/local) — bản ghi 'keyword' là bộ đếm từ khoá,
+    đo nó rồi gán cho LLM là sai đối tượng. Trả về None nếu không đọc được DB.
+    """
+    from backend.database import _get_client
+    from backend.models.forecaster import fetch_ohlcv
+
+    c = _get_client()
+    if c is None:
+        print("  [calibrate] Không kết nối được Supabase — bỏ qua bước đo.")
+        return None
+
+    rows, page = [], 1000
+    try:
+        start = 0
+        while True:
+            res = (
+                c.table("research_reports")
+                .select("ticker, sentiment_score, confidence, source, created_at")
+                .in_("source", list(REAL_SENTIMENT_SOURCES))
+                .order("created_at")
+                .range(start, start + page - 1)
+                .execute()
+            )
+            batch = res.data or []
+            rows.extend(batch)
+            if len(batch) < page:
+                break
+            start += page
+    except Exception as e:
+        print(f"  [calibrate] Lỗi đọc research_reports: {e}")
+        return None
+
+    by_ticker: dict = {}
+    for r in rows:
+        by_ticker.setdefault(r.get("ticker"), []).append(r)
+
+    confs, hits = [], []
+    for ticker, reports in by_ticker.items():
+        if not ticker:
+            continue
+        prices = fetch_ohlcv(ticker, period="6mo", use_cache=False)
+        if prices is None or prices.empty:
+            continue
+        closes = prices["Close"].astype(float)
+        idx = pd.DatetimeIndex(closes.index).normalize()
+        for r in reports:
+            try:
+                score = float(r.get("sentiment_score") or 0.0)
+                conf = float(r.get("confidence") or 0.0)
+                day = pd.to_datetime(r["created_at"], utc=True).tz_convert(None).normalize()
+            except Exception:
+                continue
+            if score == 0.0:
+                continue
+            base = int(idx.searchsorted(day, side="right")) - 1   # phiên cuối <= ngày báo cáo
+            fut = base + days
+            if base < 0 or fut >= len(closes):
+                continue                                          # chưa đủ `days` phiên
+            p0, p1 = float(closes.iloc[base]), float(closes.iloc[fut])
+            if p0 <= 0:
+                continue
+            ret = (p1 - p0) / p0
+            if abs(ret) < min_move:
+                continue                                          # giống synth: không có "đáp án"
+            confs.append(min(max(conf, 0.0), 1.0))
+            hits.append(1.0 if (ret > 0) == (score > 0) else 0.0)
+
+    n = len(hits)
+    if n == 0:
+        return {"n": 0}
+    confs_a, hits_a = np.asarray(confs), np.asarray(hits)
+    denom = float(np.sum(confs_a ** 2))
+    slope = float(np.sum(confs_a * (hits_a - 0.5)) / denom) if denom > 0 else 0.0
+    buckets = {}
+    for lo, hi in ((0.0, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.01)):
+        m = (confs_a >= lo) & (confs_a < hi)
+        if m.any():
+            buckets[f"{lo:.1f}-{min(hi, 1.0):.1f}"] = {
+                "n": int(m.sum()), "hit_rate": round(float(hits_a[m].mean()), 4)
+            }
+    return {
+        "n": n,
+        "hit_rate": round(float(hits_a.mean()), 4),
+        "slope_raw": round(slope, 4),
+        "slope": round(float(np.clip(slope, 0.0, MAX_ACCURACY_SLOPE)), 4),
+        "by_confidence": buckets,
+    }
+
+
+def synth_sentiment(
+    rng: np.random.Generator,
+    actual_direction: int,
+    accuracy_slope: float = ASSUMED_ACCURACY_SLOPE,
+) -> tuple[float, float]:
     """
     Sinh (sentiment_score, confidence) có kiểm soát độ chính xác theo confidence.
+
+    `accuracy_slope`: P(đúng hướng) = 0.5 + accuracy_slope × confidence. Lấy từ
+    `measure_sentiment_accuracy()` khi đủ dữ liệu thật — xem khối chú thích ở trên.
 
     `actual_direction`: +1 nếu giá thật sau đó tăng, -1 nếu giảm, 0 nếu gần như
     đứng yên (trường hợp này sentiment không có "đáp án đúng" rõ ràng — sinh ngẫu
@@ -115,7 +241,7 @@ def synth_sentiment(rng: np.random.Generator, actual_direction: int) -> tuple[fl
     # Xác suất sentiment "đoán đúng hướng" tỉ lệ thuận với confidence được sinh ra.
     # Ở confidence ~0: gần như đoán ngẫu nhiên (50/50). Ở confidence ~1: gần như
     # luôn đoán đúng hướng. Đây là giả định cốt lõi của cách tiếp cận.
-    correct_prob = 0.5 + 0.45 * confidence
+    correct_prob = 0.5 + accuracy_slope * confidence
     is_correct = rng.random() < correct_prob
 
     direction = actual_direction if is_correct else -actual_direction
@@ -171,6 +297,7 @@ def build_dataset(
     anchors_per_ticker: int,
     days: int = FORECAST_DAYS,
     seed: int = 42,
+    accuracy_slope: float = ASSUMED_ACCURACY_SLOPE,
 ):
     """
     Với mỗi mã, chọn nhiều mốc thời gian (anchor) trong lịch sử, tại mỗi mốc:
@@ -266,20 +393,12 @@ def build_dataset(
         usable_end = fusion_train_end
 
         # CẢNH BÁO PHƯƠNG PHÁP CÒN LẠI (phải nêu trong báo cáo):
-        # `synth_sentiment()` sinh sentiment TỪ hướng giá thật của tương lai, nên tầng
-        # fusion vẫn được học kèm đáp án. Chỉ số của fusion do đó KHÔNG so sánh trực
-        # tiếp được với chỉ số của TFT. Cách sửa triệt để là dùng sentiment THẬT từ
-        # research_reports tại đúng mốc thời gian của anchor — phụ thuộc lượng dữ liệu
-        # backfill tích luỹ được.
-
-        # CẢNH BÁO PHƯƠNG PHÁP (chưa sửa được bằng code, phải nêu trong báo cáo):
-        # anchor nằm trong vùng TEST của TFT, và nhãn `target` lấy từ giá tương lai
-        # của chính vùng đó. Nghĩa là mọi số liệu báo cáo cho pipeline kết hợp
-        # "TFT + SentimentFusion" đo trên tập test đều đo trên dữ liệu mà tầng fusion
-        # đã học thuộc. Thêm nữa `synth_sentiment()` sinh sentiment TỪ hướng giá thật
-        # của tương lai, nên tầng fusion được học kèm đáp án. Cách sửa đúng là cắt
-        # vùng test làm hai nửa: nửa đầu huấn luyện fusion, nửa sau giữ lại để đánh
-        # giá end-to-end — xem kế hoạch nâng cấp.
+        # sentiment huấn luyện vẫn được SINH từ hướng giá thật của tương lai — không
+        # có sentiment lịch sử thật cho các mốc này. Mức "đoán đúng" của nó nay được
+        # ĐO trên research_reports thật (xem measure_sentiment_accuracy) thay vì giả
+        # định 94%, nên tầng fusion không còn học cách tin sentiment hơn mức LLM thật
+        # xứng đáng. Nhưng chỉ số Val của fusion vẫn không so trực tiếp được với TFT.
+        # (Vấn đề anchor rơi vào vùng test đã xử lý ở trên: fusion chỉ học nửa đầu.)
 
         candidate_positions = np.arange(usable_start, usable_end, days)
         if len(candidate_positions) == 0:
@@ -305,7 +424,7 @@ def build_dataset(
             else:
                 actual_direction = 1 if actual_return_pct > 0 else -1
 
-            sentiment, confidence = synth_sentiment(rng, actual_direction)
+            sentiment, confidence = synth_sentiment(rng, actual_direction, accuracy_slope)
 
             try:
                 featured = add_technical_indicators(history_df)
@@ -381,6 +500,8 @@ def train_sentiment_fusion(
     anchors_per_ticker: int = 12,
     days: int = FORECAST_DAYS,
     epochs: int = 60,
+    accuracy_slope: float | None = None,
+    measure: bool = True,
 ) -> None:
     import tensorflow as tf
     from tensorflow.keras.callbacks import EarlyStopping
@@ -405,7 +526,35 @@ def train_sentiment_fusion(
     print("  (mỗi anchor chạy 1 lượt run_tft_forecast autoregressive — có thể mất nhiều phút)")
     print("=" * 70)
 
-    data, n_tickers = build_dataset(tickers, anchors_per_ticker, days=days)
+    # ── Độ chính xác của sentiment giả lập: ưu tiên số ĐO trên dữ liệu thật ──
+    calibration: dict = {"source": "assumed", "slope": ASSUMED_ACCURACY_SLOPE}
+    if accuracy_slope is not None:
+        calibration = {"source": "cli", "slope": float(np.clip(accuracy_slope, 0.0, MAX_ACCURACY_SLOPE))}
+    elif measure:
+        print("\nĐo độ chính xác sentiment THẬT trong research_reports...")
+        measured = measure_sentiment_accuracy(days=days)
+        if measured and measured.get("n", 0) >= MIN_CALIBRATION_SAMPLES:
+            calibration = {"source": "measured", **measured}
+            print(
+                f"  {measured['n']} báo cáo đủ {days} phiên — đúng hướng {measured['hit_rate']:.1%}; "
+                f"slope đo được {measured['slope_raw']:+.3f} → dùng {measured['slope']:.3f}"
+            )
+            for bucket, st in measured.get("by_confidence", {}).items():
+                print(f"    confidence {bucket}: {st['n']:>4} mẫu, đúng hướng {st['hit_rate']:.1%}")
+        else:
+            got = 0 if not measured else measured.get("n", 0)
+            print(
+                f"  CẢNH BÁO: chỉ có {got} báo cáo LLM thật đủ điều kiện (cần "
+                f"{MIN_CALIBRATION_SAMPLES}). Dùng GIẢ ĐỊNH slope={ASSUMED_ACCURACY_SLOPE} — "
+                "sentiment confidence cao được coi là đúng hướng tới ~94%, gần như chắc chắn\n"
+                "  lạc quan hơn LLM thật. Phải nêu đây là giả định trong báo cáo, hoặc chạy lại\n"
+                "  sau khi backfill đủ dữ liệu, hoặc đặt tay: --accuracy-slope 0.1"
+            )
+    print(f"  Slope dùng để sinh sentiment: {calibration['slope']} (nguồn: {calibration['source']})")
+
+    data, n_tickers = build_dataset(
+        tickers, anchors_per_ticker, days=days, accuracy_slope=calibration["slope"]
+    )
     if data is None:
         print("Không dựng được mẫu nào — kiểm tra lại models/global_tft.keras đã tồn tại chưa.")
         return
@@ -460,6 +609,26 @@ def train_sentiment_fusion(
 
     val_loss, val_mae = model.evaluate([Xp_val, Xs_val], Y_val, verbose=0)
 
+    # Ghi lại giả định sentiment đã dùng — con số này quyết định tầng fusion tin
+    # sentiment tới đâu, nên phải trích được vào báo cáo.
+    import json
+    from datetime import datetime
+
+    with open(os.path.join(MODELS_DIR, f"sentiment_fusion_{days}d_meta.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "trained_at": datetime.now().isoformat(),
+                "sentiment_calibration": calibration,
+                "val_mse": float(val_loss),
+                "val_mae": float(val_mae),
+                "train_samples": int(len(Xp_train)),
+                "val_samples": int(len(Xp_val)),
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
     print("\n" + "=" * 70)
     print("HOÀN TẤT HUẤN LUYỆN SENTIMENT FUSION")
     print(f"  Mô hình:       {model_path}")
@@ -477,6 +646,14 @@ if __name__ == "__main__":
     parser.add_argument("--anchors-per-ticker", type=int, default=12, help="Số mốc thời gian lấy mẫu mỗi mã")
     parser.add_argument("--days", type=int, default=FORECAST_DAYS, help="Horizon dự báo (mặc định 7)")
     parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument(
+        "--accuracy-slope", type=float, default=None,
+        help="Đặt tay hệ số P(đúng)=0.5+slope*confidence cho sentiment giả lập (bỏ qua bước đo)",
+    )
+    parser.add_argument(
+        "--no-measure", action="store_true",
+        help="Không đo trên research_reports; dùng giả định cũ (0.45)",
+    )
     args = parser.parse_args()
 
     if args.tickers:
@@ -493,4 +670,6 @@ if __name__ == "__main__":
         anchors_per_ticker=args.anchors_per_ticker,
         days=args.days,
         epochs=args.epochs,
+        accuracy_slope=args.accuracy_slope,
+        measure=not args.no_measure,
     )
